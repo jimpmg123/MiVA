@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MiVA Web Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div class="header">
+          <div>
+            <p class="eyebrow">MiVA PoC</p>
+            <h1>로컬 AI 비서 연결 테스트</h1>
+          </div>
+          <button id="checkButton">상태 확인</button>
+        </div>
+
+        <div class="status-grid">
+          <div>
+            <span>Local Helper</span>
+            <strong id="helperStatus">확인 전</strong>
+          </div>
+          <div>
+            <span>Ollama</span>
+            <strong id="ollamaStatus">확인 전</strong>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>모델</span>
+          <select id="modelSelect">
+            <option value="llama3.2:3b">llama3.2:3b - 저사양 테스트</option>
+            <option value="qwen3:4b">qwen3:4b - 한국어 추천</option>
+            <option value="gemma3:4b">gemma3:4b - 경량 범용</option>
+            <option value="phi3:mini">phi3:mini - 초경량</option>
+          </select>
+        </label>
+
+        <div class="actions">
+          <button id="modelListButton">설치 모델 확인</button>
+          <button id="pullButton">선택 모델 다운로드</button>
+        </div>
+
+        <pre id="log" class="log"></pre>
+      </section>
+
+      <section class="panel chat-panel">
+        <h2>채팅 테스트</h2>
+        <div id="messages" class="messages"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="messageInput" autocomplete="off" placeholder="MiVA에게 물어보기" />
+          <button>전송</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
+

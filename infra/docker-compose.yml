@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: miva-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: miva
+      POSTGRES_PASSWORD: miva
+      POSTGRES_DB: miva
+    ports:
+      - "5432:5432"
+    volumes:
+      - miva-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  miva-postgres-data:
+

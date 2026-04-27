@@ -1,0 +1,15 @@
+{
+  "name": "miva",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first personal AI assistant workspace.",
+  "scripts": {
+    "dev:helper": "cd apps/local-helper && node src/server.mjs",
+    "dev:web": "cd apps/web && node server.mjs",
+    "dev:api": "cd apps/api && node src/server.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
