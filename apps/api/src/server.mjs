@@ -1,4 +1,5 @@
 import http from "node:http";
+import { lightweightModels } from "../../../packages/shared/src/index.js";
 
 const PORT = Number(process.env.MIVA_API_PORT || 4000);
 
@@ -25,32 +26,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && url.pathname === "/catalog/models") {
     sendJson(res, 200, {
-      models: [
-        {
-          id: "llama3.2-3b",
-          ollamaName: "llama3.2:3b",
-          label: "Low-spec test",
-          category: "lightweight"
-        },
-        {
-          id: "qwen3-4b",
-          ollamaName: "qwen3:4b",
-          label: "Korean recommended",
-          category: "lightweight"
-        },
-        {
-          id: "gemma3-4b",
-          ollamaName: "gemma3:4b",
-          label: "Light general model",
-          category: "lightweight"
-        },
-        {
-          id: "phi3-mini",
-          ollamaName: "phi3:mini",
-          label: "Tiny fallback",
-          category: "ultralight"
-        }
-      ]
+      models: lightweightModels
     });
     return;
   }
@@ -64,4 +40,3 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`MiVA API placeholder listening on http://localhost:${PORT}`);
 });
-

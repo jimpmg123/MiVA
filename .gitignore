@@ -25,6 +25,7 @@ coverage/
 .turbo/
 .vite/
 .cache/
+preview-*.png
 
 # Environment
 .env
@@ -41,3 +42,8 @@ pnpm-lock.yaml
 # Tauri / Rust
 target/
 src-tauri/target/
+
+# Local design exports
+stitch-samples/
+stitch_*.zip
+*.zip

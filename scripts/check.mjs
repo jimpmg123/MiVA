@@ -19,5 +19,28 @@ for (const file of files) {
   }
 }
 
-console.log("All checks passed.");
+const webChecks = [
+  {
+    label: "typecheck",
+    args: ["node_modules/typescript/bin/tsc", "--noEmit"]
+  },
+  {
+    label: "build",
+    args: ["node_modules/vite/bin/vite.js", "build"]
+  }
+];
 
+for (const check of webChecks) {
+  console.log(`Checking apps/web ${check.label}`);
+  const webResult = spawnSync(process.execPath, check.args, {
+    cwd: "apps/web",
+    stdio: "inherit",
+    shell: false
+  });
+
+  if (webResult.status !== 0) {
+    process.exit(webResult.status || 1);
+  }
+}
+
+console.log("All checks passed.");

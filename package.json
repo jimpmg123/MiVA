@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "description": "Local-first personal AI assistant workspace.",
   "scripts": {
-    "dev:helper": "cd apps/local-helper && node src/server.mjs",
-    "dev:web": "cd apps/web && node server.mjs",
-    "dev:api": "cd apps/api && node src/server.mjs",
+    "dev:helper": "node apps/local-helper/src/server.mjs",
+    "dev:web": "node apps/web/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173",
+    "dev:api": "node apps/api/src/server.mjs",
     "check": "node scripts/check.mjs"
   },
   "engines": {

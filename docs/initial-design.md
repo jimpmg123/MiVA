@@ -497,7 +497,19 @@ Current local-helper endpoints:
 ```text
 GET  /health
 GET  /ollama/status
+POST /ollama/start
+GET  /catalog/models
 GET  /models
 POST /models/pull
 POST /chat
 ```
+
+Current local-helper behavior:
+
+- Detects whether the Ollama CLI is available.
+- Detects whether the Ollama API is running.
+- Lists installed Ollama models.
+- Returns the lightweight MiVA model catalog with `installed` state.
+- Blocks model pulls for models outside the allowlist.
+- Blocks chat requests when the selected model is not installed.
+- Can attempt to start Ollama through `ollama serve`.
