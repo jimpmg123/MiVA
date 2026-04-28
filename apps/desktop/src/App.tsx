@@ -101,6 +101,7 @@ type ProviderKeyState = {
   gemini: string;
 };
 
+type AssistantProfileSyncState = "idle" | "syncing" | "synced" | "error";
 type LocalAssistantProfileStatus = "draft" | "finalized";
 type LocalAssistantProfileSource = "desktop-setup" | "runtime" | "web-sync";
 
@@ -177,6 +178,7 @@ type LocalAssistantProfileStore = {
 const PROVIDER_KEYS_STORAGE_KEY = "miva.providerKeys.v1";
 const ASSISTANT_PROFILE_STORAGE_KEY = "miva.assistantProfiles.v1";
 const RUNTIME_CHAT_STORAGE_KEY = "miva.runtimeChat.v1";
+const CLOUD_API_URL = "http://127.0.0.1:4000";
 const LOCAL_PROFILE_SCHEMA_VERSION = 1;
 const DEFAULT_LOCAL_PROFILE_ID = "local_default";
 const ACTIVE_LOCALE: Locale = "en";
@@ -1301,6 +1303,8 @@ function App() {
   const [assistantProfileLoaded, setAssistantProfileLoaded] = useState(false);
   const [assistantProfileSaveState, setAssistantProfileSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [assistantProfileError, setAssistantProfileError] = useState<string | null>(null);
+  const [assistantProfileSyncState, setAssistantProfileSyncState] = useState<AssistantProfileSyncState>("idle");
+  const [assistantProfileSyncMessage, setAssistantProfileSyncMessage] = useState<string | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [tauriRuntime] = useState(isTauriRuntime);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1501,6 +1505,110 @@ function App() {
       setAssistantProfileSaveState("error");
       log(`Assistant profile save failed: ${message}`);
       throw error;
+    }
+  }
+
+  async function persistLocalAssistantProfile(profile: LocalAssistantProfile) {
+    const nextStore: LocalAssistantProfileStore = {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      activeProfileId: profile.id,
+      profiles: [
+        profile,
+        ...assistantProfileStore.profiles.filter((item) => item.id !== profile.id),
+      ],
+      updatedAt: profile.updatedAt,
+    };
+
+    setAssistantProfileStore(nextStore);
+    setActiveLocalProfileId(profile.id);
+    const savedStore = await saveLocalAssistantProfileStore(nextStore);
+    setAssistantProfileStore(savedStore);
+    return savedStore;
+  }
+
+  function buildCloudAssistantProfilePayload(profile: LocalAssistantProfile) {
+    return {
+      id: profile.sync.cloudProfileId ?? profile.id,
+      name: profile.name || "MiVA Assistant",
+      description: profile.description || "Local MiVA assistant profile created from setup choices.",
+      useCase: profile.useCase ?? "daily",
+      answerStyle: profile.answerStyle ?? "moderate",
+      priority: profile.priority ?? "balanced",
+      languageUse: profile.languageUse ?? "korean",
+      localMode: profile.localMode ?? "hybrid",
+      provider: profile.provider ?? "ollama",
+      model: profile.model || "qwen3:4b",
+      futureFeatures: Array.isArray(profile.futureFeatures) ? profile.futureFeatures : [],
+      isDefault: true,
+      status: profile.status,
+      source: "desktop-setup",
+      completedAt: profile.completedAt,
+    };
+  }
+
+  async function sendProfileToCloud(profile: LocalAssistantProfile) {
+    const cloudProfileId = profile.sync.cloudProfileId;
+    const payload = buildCloudAssistantProfilePayload(profile);
+    const request = async (method: "POST" | "PATCH", url: string) => {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+      }
+
+      return response.json() as Promise<{ profile?: { id?: string } }>;
+    };
+
+    if (!cloudProfileId) {
+      return request("POST", `${CLOUD_API_URL}/assistant-profiles`);
+    }
+
+    try {
+      return await request("PATCH", `${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(cloudProfileId)}`);
+    } catch (error) {
+      if (String(error).includes("404")) {
+        return request("POST", `${CLOUD_API_URL}/assistant-profiles`);
+      }
+
+      throw error;
+    }
+  }
+
+  async function syncCurrentAssistantProfileToCloud() {
+    setAssistantProfileSyncState("syncing");
+    setAssistantProfileSyncMessage("Saving local profile before cloud sync...");
+
+    try {
+      const localProfile = await saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      setAssistantProfileSyncMessage("Sending assistant profile to MiVA API...");
+      const response = await sendProfileToCloud(localProfile);
+      const cloudProfileId = response.profile?.id ?? localProfile.sync.cloudProfileId ?? localProfile.id;
+      const syncedAt = new Date().toISOString();
+      const syncedProfile: LocalAssistantProfile = {
+        ...localProfile,
+        updatedAt: syncedAt,
+        sync: {
+          cloudEnabled: true,
+          cloudProfileId,
+          lastSyncedAt: syncedAt,
+        },
+      };
+
+      await persistLocalAssistantProfile(syncedProfile);
+      setAssistantProfileSyncState("synced");
+      setAssistantProfileSyncMessage(`Synced to web profile ${cloudProfileId}.`);
+      log(`Assistant profile synced to web: ${cloudProfileId}.`);
+    } catch (error) {
+      const message = `Cloud API offline or sync failed: ${String(error)}`;
+      setAssistantProfileSyncState("error");
+      setAssistantProfileSyncMessage(message);
+      log(message);
     }
   }
 
@@ -3559,6 +3667,105 @@ function App() {
       ],
     };
 
+    const renderStudioOverview = () => {
+      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const localChangesPending = Boolean(
+        activeLocalProfile &&
+        (
+          activeLocalProfile.provider !== profile.provider ||
+          activeLocalProfile.model !== profile.model ||
+          activeLocalProfile.useCase !== profile.useCase ||
+          activeLocalProfile.answerStyle !== profile.answerStyle ||
+          activeLocalProfile.priority !== profile.priority ||
+          activeLocalProfile.localMode !== profile.localMode
+        )
+      );
+      const syncBadgeTone = assistantProfileSyncState === "error"
+        ? "neutral"
+        : assistantProfileSyncState === "syncing"
+          ? "action"
+          : localChangesPending
+            ? "action"
+            : profile.sync.cloudEnabled
+            ? "success"
+            : "neutral";
+      const syncLabel = assistantProfileSyncState === "syncing"
+        ? "Syncing"
+        : assistantProfileSyncState === "error"
+          ? "Sync failed"
+          : localChangesPending
+            ? "Local changes"
+            : profile.sync.cloudEnabled
+            ? "Cloud synced"
+            : "Local only";
+
+      return (
+        <div className="grid gap-6 md:grid-cols-3">
+          <Panel className="min-h-[260px] md:col-span-2">
+            <div className="flex items-start justify-between gap-4">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                <span className="material-symbols-outlined text-[22px]">account_circle</span>
+              </span>
+              <Badge tone={syncBadgeTone}>{syncLabel}</Badge>
+            </div>
+
+            <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">{profile.name}</h3>
+            <p className="mt-2 text-sm leading-6 text-[#42474d]">{profile.description}</p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {[
+                ["Status", profile.status],
+                ["Provider", providerMeta[profile.provider]?.label ?? profile.provider],
+                ["Model", profile.modelLabel || profile.model],
+              ].map(([label, value]) => (
+                <div className="rounded-xl bg-[#f3f4f5] p-3" key={label}>
+                  <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">{label}</span>
+                  <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {profile.sync.lastSyncedAt && (
+              <p className="mt-4 text-xs leading-5 text-[#72787e]">
+                Last synced at {new Date(profile.sync.lastSyncedAt).toLocaleString()}.
+              </p>
+            )}
+
+            {assistantProfileSyncMessage && (
+              <p className={`mt-4 rounded-xl p-3 text-xs leading-5 ${
+                assistantProfileSyncState === "error" ? "bg-[#ffdad6] text-[#93000a]" : "bg-[#cae6ff]/45 text-[#1c4b69]"
+              }`}>
+                {assistantProfileSyncMessage}
+              </p>
+            )}
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <PrimaryButton
+                disabled={assistantProfileSyncState === "syncing"}
+                onClick={() => void syncCurrentAssistantProfileToCloud()}
+              >
+                {assistantProfileSyncState === "syncing" ? "Syncing..." : "Sync to Web"}
+              </PrimaryButton>
+              <SecondaryButton onClick={() => void saveCurrentLocalAssistantProfile(profile.status)}>
+                Save locally
+              </SecondaryButton>
+            </div>
+          </Panel>
+
+          {placeholderCards.overview.slice(1).map(([title, body, icon]) => (
+            <Panel className="min-h-[260px]" key={title}>
+              <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                <span className="material-symbols-outlined text-[22px]">{icon}</span>
+              </span>
+              <h3 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">{title}</h3>
+              <p className="mt-3 text-sm leading-6 text-[#42474d]">{body}</p>
+              <Badge>Placeholder</Badge>
+            </Panel>
+          ))}
+        </div>
+      );
+    };
+
     const renderModelStudio = () => (
       <div className="grid gap-6">
         <Panel>
@@ -3687,7 +3894,9 @@ function App() {
           </p>
         </header>
 
-        {studioSection === "models" ? (
+        {studioSection === "overview" ? (
+          renderStudioOverview()
+        ) : studioSection === "models" ? (
           renderModelStudio()
         ) : (
           <div className="grid gap-6 md:grid-cols-3">

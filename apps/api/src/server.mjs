@@ -5,6 +5,11 @@ const PORT = Number(process.env.MIVA_API_PORT || 4000);
 const seedTimestamp = new Date().toISOString();
 
 const allowedOrigins = new Set([
+  "http://localhost:1420",
+  "http://127.0.0.1:1420",
+  "tauri://localhost",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   `http://localhost:${PORT}`,
@@ -83,6 +88,25 @@ const devices = [
     appVersion: "0.1.0",
     status: "connected",
     lastSeenAt: seedTimestamp
+  }
+];
+
+const demoUsers = [
+  {
+    id: "dev_user",
+    email: "dev@miva.local",
+    password: "miva1234",
+    displayName: "MiVA User",
+    role: "user",
+    locale: "ko"
+  },
+  {
+    id: "admin_user",
+    email: "admin@miva.local",
+    password: "admin1234",
+    displayName: "MiVA Admin",
+    role: "admin",
+    locale: "ko"
   }
 ];
 
@@ -207,6 +231,31 @@ function recordUsageEvent(type, value) {
   });
 }
 
+function recordAssistantProfileSyncEvents(profile) {
+  recordUsageEvent("assistant_profile_synced", profile.id);
+  recordUsageEvent("assistant_use_case_selected", profile.useCase);
+  recordUsageEvent("provider_selected", profile.provider);
+  recordUsageEvent("model_selected", profile.model);
+  recordUsageEvent("local_mode_selected", profile.localMode);
+}
+
+function applyAssistantProfilePayload(profile, payload) {
+  Object.assign(profile, normalizeAssistantProfile({
+    ...profile,
+    ...payload,
+    id: profile.id,
+    createdAt: profile.createdAt
+  }));
+
+  if (profile.isDefault) {
+    assistantProfiles.forEach((item) => {
+      item.isDefault = item.id === profile.id;
+    });
+  }
+
+  return profile;
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -232,9 +281,36 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         id: "dev_user",
         email: "dev@miva.local",
-        displayName: "MiVA Dev User",
-        role: "admin",
+        displayName: "MiVA User",
+        role: "user",
         locale: "ko"
+      }, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/auth/login") {
+      const payload = await readJson(req);
+      const email = String(payload.email || "").trim().toLowerCase();
+      const password = String(payload.password || "");
+      const user = demoUsers.find((item) => item.email === email && item.password === password);
+
+      if (!user) {
+        sendJson(res, 401, {
+          error: "INVALID_CREDENTIALS",
+          message: "Use dev@miva.local / miva1234 or admin@miva.local / admin1234 for local testing."
+        }, origin);
+        return;
+      }
+
+      sendJson(res, 200, {
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          role: user.role,
+          locale: user.locale
+        },
+        token: `dev-token-${user.role}`
       }, origin);
       return;
     }
@@ -261,13 +337,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/assistant-profiles") {
-      const profile = normalizeAssistantProfile(await readJson(req));
-      assistantProfiles.unshift(profile);
-      recordUsageEvent("assistant_use_case_selected", profile.useCase);
-      recordUsageEvent("provider_selected", profile.provider);
-      recordUsageEvent("model_selected", profile.model);
-      recordUsageEvent("local_mode_selected", profile.localMode);
-      sendJson(res, 201, {
+      const payload = await readJson(req);
+      const existingProfile = payload.id
+        ? assistantProfiles.find((item) => item.id === payload.id)
+        : null;
+      const profile = existingProfile
+        ? applyAssistantProfilePayload(existingProfile, payload)
+        : normalizeAssistantProfile(payload);
+
+      if (!existingProfile) {
+        assistantProfiles.unshift(profile);
+        if (profile.isDefault) {
+          assistantProfiles.forEach((item) => {
+            item.isDefault = item.id === profile.id;
+          });
+        }
+      }
+
+      recordAssistantProfileSyncEvents(profile);
+      sendJson(res, existingProfile ? 200 : 201, {
         profile
       }, origin);
       return;
@@ -307,11 +395,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = await readJson(req);
-      Object.assign(profile, normalizeAssistantProfile({ ...profile, ...payload, id: profile.id }));
-      recordUsageEvent("assistant_use_case_selected", profile.useCase);
-      recordUsageEvent("provider_selected", profile.provider);
-      recordUsageEvent("model_selected", profile.model);
-      recordUsageEvent("local_mode_selected", profile.localMode);
+      applyAssistantProfilePayload(profile, payload);
+      recordAssistantProfileSyncEvents(profile);
       sendJson(res, 200, {
         profile
       }, origin);

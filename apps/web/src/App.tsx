@@ -29,9 +29,12 @@ import {
   getAdminStats,
   getAssistantProfiles,
   initialCloudState,
+  login,
   recordUsageEvent,
 } from './services/mivaApi';
 import type {
+  AuthRole,
+  AuthUser,
   AssistantProfileDraft,
   CloudState,
 } from './services/mivaApi';
@@ -39,6 +42,11 @@ import type {
 // --- Types ---
 type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'integrations' | 'voice' | 'admin' | 'settings';
 type ServiceStatus = 'checking' | 'connected' | 'offline';
+type AuthState = {
+  role: AuthRole;
+  user: AuthUser | null;
+  token: string | null;
+};
 
 const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
 const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
@@ -199,6 +207,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'admin', label: 'Admin Analytics', labelKr: '관리자 통계', icon: BarChart3 },
   { id: 'settings', label: 'Settings', labelKr: '설정', icon: Settings },
 ];
+
+const authStorageKey = 'miva.web.auth.v1';
 
 // --- Sub-components ---
 
@@ -699,6 +709,11 @@ const AssistantProfilesPage = ({
 }) => {
   const profiles = cloud.profiles;
   const activeProfile = profiles.find((profile) => profile.isDefault) || profiles[0];
+  const sourceLabel = (source?: string) => {
+    if (source === 'desktop-setup') return 'Desktop Sync';
+    if (source === 'web-console') return 'Web Console';
+    return source || 'Unknown';
+  };
   const createDefaultProfile = () => onCreateProfile({
     name: `Assistant Profile ${profiles.length + 1}`,
     description: 'A web-created MiVA assistant profile. Replace this with survey results or a custom profile editor later.',
@@ -751,6 +766,7 @@ const AssistantProfilesPage = ({
                                 <div>
                                     <h4 className="font-bold text-slate-900">{profile.name}</h4>
                                     <p className="text-xs text-slate-400">{profile.useCase} / {profile.localMode} / {profile.status || 'draft'}</p>
+                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">{sourceLabel(profile.source)}</p>
                                 </div>
                                 {active && <div className="ml-auto w-2 h-2 rounded-full bg-primary-container"></div>}
                             </div>
@@ -774,6 +790,9 @@ const AssistantProfilesPage = ({
                                 <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Profile Selected'}</h3>
                                 <Badge>{activeProfile?.isDefault ? 'Default' : 'Saved'}</Badge>
                                 <Badge variant={activeProfile?.status === 'finalized' ? 'success' : 'warning'}>{activeProfile?.status || 'draft'}</Badge>
+                                <Badge variant={activeProfile?.source === 'desktop-setup' ? 'success' : 'info'}>
+                                  {sourceLabel(activeProfile?.source)}
+                                </Badge>
                             </div>
                             <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant profile from the desktop setup survey or the web console.'}</p>
                         </div>
@@ -849,6 +868,159 @@ const TerminalIcon = ({ className }: { className?: string }) => (
         <line x1="12" y1="19" x2="20" y2="19" />
     </svg>
 );
+
+function loadAuthState(): AuthState {
+  try {
+    const saved = window.localStorage.getItem(authStorageKey);
+    if (!saved) {
+      return { role: 'guest', user: null, token: null };
+    }
+
+    const parsed = JSON.parse(saved) as Partial<AuthState>;
+    if ((parsed.role === 'user' || parsed.role === 'admin') && parsed.user && parsed.token) {
+      return {
+        role: parsed.role,
+        user: parsed.user,
+        token: parsed.token,
+      };
+    }
+  } catch {
+    // Fall back to guest state.
+  }
+
+  return { role: 'guest', user: null, token: null };
+}
+
+const LoginPage = ({
+  cloud,
+  loginError,
+  loginPending,
+  onLogin,
+}: {
+  cloud: CloudState;
+  loginError: string | null;
+  loginPending: boolean;
+  onLogin: (email: string, password: string) => Promise<void>;
+}) => {
+  const [email, setEmail] = useState('dev@miva.local');
+  const [password, setPassword] = useState('miva1234');
+
+  return (
+    <main className="min-h-screen bg-surface-bg text-slate-900 grid place-items-center p-8">
+      <section className="w-full max-w-[980px] grid gap-8 lg:grid-cols-[1fr_420px] items-center">
+        <div>
+          <div className="w-14 h-14 bg-primary-container rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary-container/30 mb-8">
+            <span className="font-display text-3xl font-black leading-none">M</span>
+          </div>
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">MiVA</p>
+          <h1 className="mt-4 text-5xl font-black font-display tracking-tight text-slate-950 leading-tight">
+            Make your own AI Assistant.
+          </h1>
+          <p className="mt-5 text-lg leading-8 text-slate-500 max-w-xl">
+            MiVA helps non-technical users set up a private AI assistant on their own computer. Start with local models, add cloud providers when needed, and later connect voice, characters, tools, and Google Workspace.
+          </p>
+
+          <div className="mt-8 grid gap-4 sm:grid-cols-3">
+            {[
+              ['Local-first setup', 'Install Ollama, choose a lightweight model, and test chat locally.'],
+              ['Assistant profiles', 'Save use case, answer style, provider, model, and future tool preferences.'],
+              ['Studio ready', 'Prepare prompts, TTS, 2D characters, integrations, and skills in one workspace.'],
+            ].map(([title, body]) => (
+              <div className="rounded-3xl border border-slate-100 bg-white/70 p-5 shadow-sm" key={title}>
+                <p className="text-sm font-black text-slate-900">{title}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">{body}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <button
+              className="rounded-2xl bg-primary-container px-7 py-4 text-sm font-black uppercase tracking-[0.12em] text-white shadow-xl shadow-primary-container/20 active:scale-[0.98]"
+              onClick={() => {
+                window.alert('MiVA desktop installer download will be connected after packaging.');
+              }}
+              type="button"
+            >
+              Download MiVA
+            </button>
+            <Badge variant={cloud.status === 'connected' ? 'success' : 'warning'}>Cloud API {statusLabel(cloud.status)}</Badge>
+          </div>
+        </div>
+
+        <Card className="p-8">
+          <h2 className="text-2xl font-bold font-display tracking-tight">Sign in to Console</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Local test accounts are available until real auth and database persistence are added.
+          </p>
+
+          <form
+            className="mt-8 space-y-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onLogin(email, password);
+            }}
+          >
+            <label className="block">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Email</span>
+              <input
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-primary-container focus:ring-4 focus:ring-primary-container/10"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Password</span>
+              <input
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-primary-container focus:ring-4 focus:ring-primary-container/10"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+
+            {loginError && (
+              <p className="rounded-2xl bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700">{loginError}</p>
+            )}
+
+            <button
+              className="w-full rounded-2xl bg-primary-container px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-white shadow-xl shadow-primary-container/20 active:scale-[0.98] disabled:opacity-50"
+              disabled={loginPending}
+              type="submit"
+            >
+              {loginPending ? 'Signing in...' : 'Sign in'}
+            </button>
+          </form>
+
+          <div className="mt-6 grid gap-3 rounded-2xl bg-slate-50 p-4 text-xs text-slate-500">
+            <button
+              className="flex items-center justify-between gap-4 text-left"
+              onClick={() => {
+                setEmail('dev@miva.local');
+                setPassword('miva1234');
+              }}
+              type="button"
+            >
+              <span>User login</span>
+              <span className="font-mono font-bold">dev@miva.local / miva1234</span>
+            </button>
+            <button
+              className="flex items-center justify-between gap-4 text-left"
+              onClick={() => {
+                setEmail('admin@miva.local');
+                setPassword('admin1234');
+              }}
+              type="button"
+            >
+              <span>Admin login</span>
+              <span className="font-mono font-bold">admin@miva.local / admin1234</span>
+            </button>
+          </div>
+        </Card>
+      </section>
+    </main>
+  );
+};
 
 // --- Main App Shell ---
 
@@ -1294,11 +1466,18 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard');
+  const [auth, setAuth] = useState<AuthState>(() => loadAuthState());
+  const [loginPending, setLoginPending] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [finalizingProfileId, setFinalizingProfileId] = useState<string | null>(null);
+  const visibleNavItems = useMemo(
+    () => NAV_ITEMS.filter((item) => item.id !== 'admin' || auth.role === 'admin'),
+    [auth.role]
+  );
 
   const refreshCloud = async () => {
     const next: CloudState = {
@@ -1323,6 +1502,54 @@ export default function App() {
     }
 
     setCloud(next);
+  };
+
+  const handleLogin = async (email: string, password: string) => {
+    setLoginPending(true);
+    setLoginError(null);
+
+    try {
+      const response = await login(email, password);
+      const nextAuth: AuthState = {
+        role: response.user.role,
+        user: response.user,
+        token: response.token,
+      };
+      window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
+      setAuth(nextAuth);
+      setActivePage('dashboard');
+      await refreshCloud();
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Sign in failed.');
+    } finally {
+      setLoginPending(false);
+    }
+  };
+
+  const handleLogout = () => {
+    window.localStorage.removeItem(authStorageKey);
+    setAuth({ role: 'guest', user: null, token: null });
+    setActivePage('dashboard');
+  };
+
+  const toggleTemporaryAdminRole = () => {
+    if (!auth.user || !auth.token) return;
+
+    const nextRole = auth.role === 'admin' ? 'user' : 'admin';
+    const nextAuth: AuthState = {
+      role: nextRole,
+      user: {
+        ...auth.user,
+        role: nextRole,
+        displayName: nextRole === 'admin' ? 'MiVA Admin' : 'MiVA User',
+      },
+      token: `dev-token-${nextRole}`,
+    };
+    window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
+    setAuth(nextAuth);
+    if (nextRole !== 'admin' && activePage === 'admin') {
+      setActivePage('dashboard');
+    }
   };
 
   const createCloudProfile = async (profile: AssistantProfileDraft) => {
@@ -1482,6 +1709,12 @@ export default function App() {
     void refreshCloud();
   }, []);
 
+  useEffect(() => {
+    if (auth.role !== 'admin' && activePage === 'admin') {
+      setActivePage('dashboard');
+    }
+  }, [activePage, auth.role]);
+
   const actions: WebConsoleActions = {
     refreshConnection,
     startOllama,
@@ -1531,11 +1764,22 @@ export default function App() {
       );
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
-      case 'admin': return <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} />;
+      case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'settings': return <SettingsPage />;
       default: return null;
     }
   };
+
+  if (auth.role === 'guest') {
+    return (
+      <LoginPage
+        cloud={cloud}
+        loginError={loginError}
+        loginPending={loginPending}
+        onLogin={handleLogin}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-surface-bg text-slate-900">
@@ -1544,7 +1788,7 @@ export default function App() {
         <div className="p-8">
           <div className="flex items-center gap-3 mb-12">
             <div className="w-10 h-10 bg-primary-container rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-container/30">
-              <RefreshCw className="w-5 h-5" />
+              <span className="font-display text-xl font-black leading-none">M</span>
             </div>
             <div>
               <h1 className="text-xl font-bold font-display tracking-tight text-slate-900">MiVA AI</h1>
@@ -1553,7 +1797,7 @@ export default function App() {
           </div>
 
           <nav className="space-y-1">
-            {NAV_ITEMS.map((item) => (
+            {visibleNavItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActivePage(item.id)}
@@ -1575,14 +1819,22 @@ export default function App() {
             <div className="relative">
               <img 
                 src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=100&auto=format&fit=crop" 
+                alt=""
                 className="w-10 h-10 rounded-full border-2 border-white shadow-sm"
               />
               <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-50 rounded-full"></div>
             </div>
-            <div>
-              <p className="text-sm font-bold text-slate-800">Admin User</p>
-              <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Premium Node</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-slate-800">{auth.user?.displayName || 'MiVA User'}</p>
+              <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{auth.role} account</p>
             </div>
+            <button
+              className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900"
+              onClick={handleLogout}
+              type="button"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </aside>
@@ -1602,6 +1854,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-8">
+            <button
+              className="rounded-full border border-dashed border-amber-300 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-amber-700 transition hover:bg-amber-100 active:scale-[0.98]"
+              onClick={toggleTemporaryAdminRole}
+              type="button"
+              title="Temporary dev-only role switch. Remove before release."
+            >
+              Dev: {auth.role === 'admin' ? 'Admin' : 'User'}
+            </button>
             <div className={`flex items-center gap-2.5 px-4 py-2 rounded-full ${topStatus.bg}`}>
               <span className={`w-2.5 h-2.5 rounded-full ${topStatus.dot}`}></span>
               <span className={`text-xs font-bold tracking-tight ${topStatus.text}`}>{topStatus.label}</span>

@@ -4,6 +4,15 @@ export type ProviderId = "ollama" | "openai" | "gemini";
 export type ServiceStatus = "checking" | "connected" | "offline";
 export type AssistantProfileStatus = "draft" | "finalized";
 export type AssistantProfileSource = "desktop-setup" | "web-console" | "api";
+export type AuthRole = "guest" | "user" | "admin";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: Exclude<AuthRole, "guest">;
+  locale: string;
+}
 
 export interface AssistantProfile {
   id: string;
@@ -93,6 +102,16 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
 
 export async function checkCloudApi() {
   return fetchJson<{ ok: boolean; service: string; note?: string }>(`${CLOUD_API_URL}/health`);
+}
+
+export async function login(email: string, password: string) {
+  return fetchJson<{ user: AuthUser; token: string }>(`${CLOUD_API_URL}/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 export async function getAssistantProfiles() {
