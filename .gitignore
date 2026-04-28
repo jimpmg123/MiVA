@@ -11,6 +11,10 @@ pids
 *.seed
 *.pid.lock
 .miva-dev-pids.json
+tmp/
+temp/
+*.tmp
+*.bak
 
 # Dependency directories
 node_modules/
@@ -26,6 +30,12 @@ coverage/
 .vite/
 .cache/
 preview-*.png
+*.tsbuildinfo
+
+# OS / editor metadata
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # Environment
 .env
@@ -47,3 +57,17 @@ src-tauri/target/
 stitch-samples/
 stitch_*.zip
 *.zip
+
+# Local reference repositories
+VtuberLLM/
+vtuberllm/
+
+# Local AI-coding planning docs
+docs/CODING_GUIDELINES.md
+docs/PRD.md
+docs/RULES.md
+docs/TODO.md
+
+# Local Codex/gstack generated skill packs
+.agents/skills/gstack*/
+.agents/skills/.gstack-codex-manifest.json

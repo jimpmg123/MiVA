@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -17,8 +17,10 @@ type StepId =
   | "hardware"
   | "recommendation"
   | "ollama"
+  | "clawCode"
   | "download"
   | "chat"
+  | "profile"
   | "settings";
 
 type UseCase = "daily" | "study" | "work" | "fast" | "character";
@@ -27,7 +29,9 @@ type AnswerStyle = "short" | "moderate" | "detailed";
 type LanguageUse = "korean" | "english" | "both";
 type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
-type AppMode = "setup" | "runtime";
+type AppMode = "setup" | "studio" | "runtime" | "auth";
+type SettingsSection = "general" | "aiModels" | "security" | "logs";
+type StudioSection = "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
 type ProviderId = "ollama" | "openai" | "gemini";
 type CloudProviderId = Exclude<ProviderId, "ollama">;
 type ProviderMode = "local" | "cloud";
@@ -65,6 +69,7 @@ type ModelInfo = {
   summary: Record<Locale, string>;
   bestFor: Record<Locale, string>;
   recommendedRamGb: number;
+  downloadSizeLabel?: string;
 };
 
 type CloudModelInfo = {
@@ -96,10 +101,95 @@ type ProviderKeyState = {
   gemini: string;
 };
 
+type LocalAssistantProfileStatus = "draft" | "finalized";
+type LocalAssistantProfileSource = "desktop-setup" | "runtime" | "web-sync";
+
+type LocalAssistantProfile = {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  description: string;
+  status: LocalAssistantProfileStatus;
+  source: LocalAssistantProfileSource;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  locale: Locale;
+  useCase: UseCase | null;
+  answerStyle: AnswerStyle | null;
+  priority: Priority | null;
+  languageUse: LanguageUse | null;
+  localMode: LocalMode | null;
+  futureFeatures: FutureFeature[];
+  provider: ProviderId;
+  providerMode: ProviderMode;
+  model: string;
+  modelLabel: string;
+  survey: SurveyState;
+  recommendation: {
+    localModel: string;
+    cloudModel: string;
+    selectedProvider: ProviderId;
+    selectedModel: string;
+    selectedCloudModel: string;
+    hardwareMemoryGb: number | null;
+  };
+  prompt: {
+    profileId: string;
+    systemPrompt: string;
+    variables: Record<string, unknown>;
+    overrides: {
+      persona: string | null;
+      instructions: string[];
+      guardrails: string[];
+    };
+  };
+  capabilities: {
+    voice: { enabled: boolean; sttProvider: string | null; ttsProvider: string | null };
+    character: { enabled: boolean; renderer: string | null; characterId: string | null };
+    googleWorkspace: { enabled: boolean; accountId: string | null; scopes: string[] };
+    files: { enabled: boolean; allowedRoots: string[] };
+    tools: { enabled: boolean; enabledToolIds: string[] };
+    mcp: { enabled: boolean; serverIds: string[] };
+    skills: { enabled: boolean; skillIds: string[] };
+    externalApis: { enabled: boolean; providerIds: string[] };
+  };
+  sync: {
+    cloudEnabled: boolean;
+    cloudProfileId: string | null;
+    lastSyncedAt: string | null;
+  };
+  metadata: {
+    setupStep: StepId;
+    appMode: AppMode;
+    appVersion: string;
+    hardwareSnapshot: HardwareInfo | null;
+  };
+};
+
+type LocalAssistantProfileStore = {
+  schemaVersion: 1;
+  activeProfileId: string | null;
+  profiles: LocalAssistantProfile[];
+  updatedAt: string | null;
+};
+
 const PROVIDER_KEYS_STORAGE_KEY = "miva.providerKeys.v1";
+const ASSISTANT_PROFILE_STORAGE_KEY = "miva.assistantProfiles.v1";
+const RUNTIME_CHAT_STORAGE_KEY = "miva.runtimeChat.v1";
+const LOCAL_PROFILE_SCHEMA_VERSION = 1;
+const DEFAULT_LOCAL_PROFILE_ID = "local_default";
+const ACTIVE_LOCALE: Locale = "en";
 const emptyProviderKeys: ProviderKeyState = {
   openai: "",
   gemini: "",
+};
+
+const emptyAssistantProfileStore: LocalAssistantProfileStore = {
+  schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+  activeProfileId: null,
+  profiles: [],
+  updatedAt: null,
 };
 
 const providerMeta: Record<ProviderId, { label: string; mode: ProviderMode; icon: string }> = {
@@ -110,36 +200,36 @@ const providerMeta: Record<ProviderId, { label: string; mode: ProviderMode; icon
 
 const providerUiCopy = {
   ko: {
-    localModeLocalOnlyTitle: "로컬로만 사용",
-    localModeLocalOnlyBody: "인터넷 없이 이 컴퓨터 안에서만 AI 비서를 실행합니다.",
-    localModeCloudOnlyTitle: "온라인 클라우드로 사용",
-    localModeCloudOnlyBody: "Ollama 설치 없이 OpenAI/Gemini 같은 외부 API로 시작합니다.",
-    localModeHybridTitle: "로컬 + 클라우드 복합",
-    localModeHybridBody: "기본은 로컬로 두고, 필요하면 외부 API와 Google Workspace를 연결합니다.",
-    recommended: "가장 추천",
-    localModels: "로컬 모델",
-    cloudModels: "클라우드 모델",
-    bestMatch: "추천 조합",
-    selected: "선택됨",
-    selectModel: "이 모델 선택",
-    comingSoon: "추후 지원",
-    customOllama: "사용자 Ollama 모델",
-    customOllamaBody: "모델 이름 직접 입력은 다음 단계에서 추가합니다.",
+    localModeLocalOnlyTitle: "濡쒖뺄濡쒕쭔 ?ъ슜",
+    localModeLocalOnlyBody: "?명꽣???놁씠 ??而댄벂???덉뿉?쒕쭔 AI 鍮꾩꽌瑜??ㅽ뻾?⑸땲??",
+    localModeCloudOnlyTitle: "?⑤씪???대씪?곕뱶濡??ъ슜",
+    localModeCloudOnlyBody: "Ollama ?ㅼ튂 ?놁씠 OpenAI/Gemini 媛숈? ?몃? API濡??쒖옉?⑸땲??",
+    localModeHybridTitle: "濡쒖뺄 + ?대씪?곕뱶 蹂듯빀",
+    localModeHybridBody: "湲곕낯? 濡쒖뺄濡??먭퀬, ?꾩슂?섎㈃ ?몃? API? Google Workspace瑜??곌껐?⑸땲??",
+    recommended: "媛??異붿쿇",
+    localModels: "濡쒖뺄 紐⑤뜽",
+    cloudModels: "?대씪?곕뱶 紐⑤뜽",
+    bestMatch: "異붿쿇 議고빀",
+    selected: "Selected",
+    selectModel: "??紐⑤뜽 ?좏깮",
+    comingSoon: "Coming soon",
+    customOllama: "?ъ슜??Ollama 紐⑤뜽",
+    customOllamaBody: "紐⑤뜽 ?대쫫 吏곸젒 ?낅젰? ?ㅼ쓬 ?④퀎?먯꽌 異붽??⑸땲??",
     provider: "Provider",
-    providerStatus: "Provider 상태",
+    providerStatus: "Provider ?곹깭",
     localHeader: "LOCAL",
     cloudHeader: "CLOUD",
-    localDataNotice: "데이터는 이 PC 안에서 처리됩니다.",
-    cloudDataNotice: "메시지는 선택한 외부 Provider로 전송됩니다.",
-    apiKeysNext: "클라우드 모델은 Ollama 설치를 건너뛰고 API 키 설정으로 이동합니다.",
-    continueToProviderSettings: "API 키 설정으로 이동",
-    continueToOllama: "Ollama 설정으로 이동",
-    cloudBackendPending: "클라우드 채팅 연결은 다음 단계에서 구현합니다.",
-    localRuntimeReady: "로컬 런타임",
-    cloudRuntimeReady: "클라우드 Provider",
-    hasOverride: "override 있음",
-    needsKey: "키 설정 필요",
-    defaultKey: "기본 .env",
+    localDataNotice: "?곗씠?곕뒗 ??PC ?덉뿉??泥섎━?⑸땲??",
+    cloudDataNotice: "硫붿떆吏???좏깮???몃? Provider濡??꾩넚?⑸땲??",
+    apiKeysNext: "?대씪?곕뱶 紐⑤뜽? Ollama ?ㅼ튂瑜?嫄대꼫?곌퀬 API ???ㅼ젙?쇰줈 ?대룞?⑸땲??",
+    continueToProviderSettings: "API ???ㅼ젙?쇰줈 ?대룞",
+    continueToOllama: "Ollama ?ㅼ젙?쇰줈 ?대룞",
+    cloudBackendPending: "?대씪?곕뱶 梨꾪똿 ?곌껐? ?ㅼ쓬 ?④퀎?먯꽌 援ы쁽?⑸땲??",
+    localRuntimeReady: "Local runtime",
+    cloudRuntimeReady: "?대씪?곕뱶 Provider",
+    hasOverride: "override ?덉쓬",
+    needsKey: "???ㅼ젙 ?꾩슂",
+    defaultKey: "湲곕낯 .env",
   },
   en: {
     localModeLocalOnlyTitle: "Local only",
@@ -192,14 +282,46 @@ const modelCatalog: ModelInfo[] = [
     label: "Qwen3 4B",
     category: "Default",
     summary: {
-      ko: "한국어 응답과 일반 비서 작업에 가장 무난한 1차 추천 모델입니다.",
+      ko: "?쒓뎅???묐떟怨??쇰컲 鍮꾩꽌 ?묒뾽??媛??臾대궃??1李?異붿쿇 紐⑤뜽?낅땲??",
       en: "The safest Phase 1 default for Korean and general assistant work.",
     },
     bestFor: {
-      ko: "일정 정리, 글쓰기, 일반 질문",
+      ko: "?쇱젙 ?뺣━, 湲?곌린, ?쇰컲 吏덈Ц",
       en: "Planning, writing, general questions",
     },
     recommendedRamGb: 12,
+  },
+  {
+    id: "exaone3.5-2.4b",
+    name: "exaone3.5:2.4b",
+    label: "EXAONE 3.5 2.4B",
+    category: "Korean / compact",
+    summary: {
+      ko: "EXAONE 3.5 2.4B is a compact bilingual Korean and English model from LG AI Research.",
+      en: "A compact Korean/English bilingual model from LG AI Research, suitable for small-device local testing.",
+    },
+    bestFor: {
+      ko: "Korean chat, lightweight local assistant, lower-spec PCs",
+      en: "Korean chat, lightweight local assistant, lower-spec PCs",
+    },
+    recommendedRamGb: 8,
+    downloadSizeLabel: "1.6 GB",
+  },
+  {
+    id: "exaone3.5-7.8b",
+    name: "exaone3.5:7.8b",
+    label: "EXAONE 3.5 7.8B",
+    category: "Korean / higher quality",
+    summary: {
+      ko: "EXAONE 3.5 7.8B is a larger bilingual Korean and English model for better local answer quality.",
+      en: "A larger Korean/English bilingual local model for better answer quality when the PC has enough memory.",
+    },
+    bestFor: {
+      ko: "Korean assistant quality, writing, long-context tests",
+      en: "Korean assistant quality, writing, long-context tests",
+    },
+    recommendedRamGb: 16,
+    downloadSizeLabel: "4.8 GB",
   },
   {
     id: "llama3.2-3b",
@@ -207,11 +329,11 @@ const modelCatalog: ModelInfo[] = [
     label: "Llama 3.2 3B",
     category: "Low-spec",
     summary: {
-      ko: "RAM 여유가 적거나 빠른 테스트가 필요할 때 쓰기 좋은 작은 모델입니다.",
+      ko: "RAM ?ъ쑀媛 ?곴굅??鍮좊Ⅸ ?뚯뒪?멸? ?꾩슂?????곌린 醫뗭? ?묒? 紐⑤뜽?낅땲??",
       en: "A compact model for lower-spec PCs or quick setup tests.",
     },
     bestFor: {
-      ko: "빠른 대화, 낮은 사양 PC",
+      ko: "鍮좊Ⅸ ??? ??? ?ъ뼇 PC",
       en: "Fast casual chat, lower-spec PCs",
     },
     recommendedRamGb: 8,
@@ -222,11 +344,11 @@ const modelCatalog: ModelInfo[] = [
     label: "Gemma 3 4B",
     category: "Balanced",
     summary: {
-      ko: "가벼운 범용 비서 후보입니다. 영어 중심 사용자는 대안으로 테스트할 만합니다.",
+      ko: "媛踰쇱슫 踰붿슜 鍮꾩꽌 ?꾨낫?낅땲?? ?곸뼱 以묒떖 ?ъ슜?먮뒗 ??덉쑝濡??뚯뒪?명븷 留뚰빀?덈떎.",
       en: "A lightweight general assistant candidate, especially worth testing for English-first use.",
     },
     bestFor: {
-      ko: "범용 대화, 간단한 업무 보조",
+      ko: "踰붿슜 ??? 媛꾨떒???낅Т 蹂댁“",
       en: "General chat, light productivity support",
     },
     recommendedRamGb: 12,
@@ -237,11 +359,11 @@ const modelCatalog: ModelInfo[] = [
     label: "Phi-3 Mini",
     category: "Ultralight",
     summary: {
-      ko: "최소 사양 테스트용 초경량 모델입니다. 품질보다 실행 가능성을 우선합니다.",
+      ko: "理쒖냼 ?ъ뼇 ?뚯뒪?몄슜 珥덇꼍??紐⑤뜽?낅땲?? ?덉쭏蹂대떎 ?ㅽ뻾 媛?μ꽦???곗꽑?⑸땲??",
       en: "An ultralight fallback that prioritizes running locally over answer quality.",
     },
     bestFor: {
-      ko: "최소 사양 확인, 설치 검증",
+      ko: "Minimum-spec checks and install verification",
       en: "Minimum-spec checks, install verification",
     },
     recommendedRamGb: 8,
@@ -250,20 +372,38 @@ const modelCatalog: ModelInfo[] = [
 
 const cloudModelCatalog: CloudModelInfo[] = [
   {
-    id: "gemini-2.0-flash",
+    id: "gemini-2.5-pro",
     provider: "gemini",
-    label: "Gemini 2.0 Flash",
-    category: "Fast cloud",
+    label: "Gemini 2.5 Pro",
+    category: "Stable large model",
     summary: {
-      ko: "빠른 응답과 무료 등급 테스트에 적합한 클라우드 모델 후보입니다.",
-      en: "A fast cloud option that is useful for quick free-tier testing.",
+      ko: "?덉쭏???곗꽑?????곌린 醫뗭? ?덉젙?곸씤 ???Gemini 紐⑤뜽?낅땲?? 1M+ 而⑦뀓?ㅽ듃 ?묒뾽???쇰몢???〓땲??",
+      en: "A stable large Gemini model for higher-quality assistant work with a 1M+ context window.",
     },
     bestFor: {
-      ko: "빠른 대화, 검색/도구 연동 준비",
-      en: "Fast chat, future search and tool integrations",
+      ko: "High-quality answers, long context, Google Workspace preparation",
+      en: "High-quality answers, long context, Google Workspace preparation",
     },
     status: {
-      ko: "API 키 필요",
+      ko: "API ???꾩슂",
+      en: "API key required",
+    },
+  },
+  {
+    id: "gemini-2.5-flash",
+    provider: "gemini",
+    label: "Gemini 2.5 Flash",
+    category: "Balanced cloud",
+    summary: {
+      ko: "?띾룄? ?덉쭏??洹좏삎??醫뗭븘 湲곕낯?곸씤 ?대씪?곕뱶 鍮꾩꽌 ?뚯뒪?몄뿉 ?곹빀??Gemini 紐⑤뜽?낅땲??",
+      en: "A balanced Gemini model for everyday cloud assistant testing.",
+    },
+    bestFor: {
+      ko: "General chat, quick work support, Google Workspace preparation",
+      en: "General chat, quick work support, Google Workspace preparation",
+    },
+    status: {
+      ko: "API ???꾩슂",
       en: "API key required",
     },
   },
@@ -273,15 +413,15 @@ const cloudModelCatalog: CloudModelInfo[] = [
     label: "GPT-4o mini",
     category: "Balanced cloud",
     summary: {
-      ko: "가벼운 비용/속도 기준으로 일반 비서 작업에 쓰기 좋은 클라우드 모델 후보입니다.",
+      ko: "媛踰쇱슫 鍮꾩슜/?띾룄 湲곗??쇰줈 ?쇰컲 鍮꾩꽌 ?묒뾽???곌린 醫뗭? ?대씪?곕뱶 紐⑤뜽 ?꾨낫?낅땲??",
       en: "A balanced cloud candidate for general assistant tasks with lightweight cost and latency.",
     },
     bestFor: {
-      ko: "일반 비서, 글쓰기, 업무 보조",
+      ko: "?쇰컲 鍮꾩꽌, 湲?곌린, ?낅Т 蹂댁“",
       en: "General assistant, writing, work support",
     },
     status: {
-      ko: "API 키 필요",
+      ko: "API ???꾩슂",
       en: "API key required",
     },
   },
@@ -291,33 +431,33 @@ const cloudModelCatalog: CloudModelInfo[] = [
     label: "GPT-4.1 mini",
     category: "Reasoning cloud",
     summary: {
-      ko: "문서/업무 보조처럼 품질을 조금 더 우선할 때의 클라우드 후보입니다.",
+      ko: "臾몄꽌/?낅Т 蹂댁“泥섎읆 ?덉쭏??議곌툑 ???곗꽑???뚯쓽 ?대씪?곕뱶 ?꾨낫?낅땲??",
       en: "A cloud candidate for document and work support when quality matters more.",
     },
     bestFor: {
-      ko: "문서, 이메일, 가벼운 분석",
+      ko: "臾몄꽌, ?대찓?? 媛踰쇱슫 遺꾩꽍",
       en: "Documents, email, light analysis",
     },
     status: {
-      ko: "후속 연결",
+      ko: "?꾩냽 ?곌껐",
       en: "Later integration",
     },
   },
   {
-    id: "gemini-1.5-flash",
+    id: "gemini-2.5-flash-lite",
     provider: "gemini",
-    label: "Gemini 1.5 Flash",
-    category: "Long context",
+    label: "Gemini 2.5 Flash Lite",
+    category: "Fast lightweight",
     summary: {
-      ko: "긴 문서와 Google 생태계 연동을 염두에 둔 클라우드 후보입니다.",
-      en: "A cloud candidate for long documents and future Google ecosystem integration.",
+      ko: "鍮좊Ⅴ怨?媛踰쇱슫 ?묐떟???꾩슂?섍굅??Pro/Flash ?쒕룄 ?뚯쭊 ???泥댄븯湲?醫뗭? Gemini 紐⑤뜽?낅땲??",
+      en: "A faster, lighter Gemini fallback for low-latency and quota-sensitive testing.",
     },
     bestFor: {
-      ko: "긴 문서, Google Workspace 연동",
-      en: "Long documents, Google Workspace integration",
+      ko: "Fast responses, lightweight assistant tasks, quota fallback",
+      en: "Fast responses, lightweight assistant tasks, quota fallback",
     },
     status: {
-      ko: "API 키 필요",
+      ko: "API ???꾩슂",
       en: "API key required",
     },
   },
@@ -327,15 +467,15 @@ const cloudModelCatalog: CloudModelInfo[] = [
     label: "Custom API Model",
     category: "Placeholder",
     summary: {
-      ko: "사용자가 직접 모델 이름과 Provider를 넣는 옵션은 추후 추가합니다.",
+      ko: "?ъ슜?먭? 吏곸젒 紐⑤뜽 ?대쫫怨?Provider瑜??ｋ뒗 ?듭뀡? 異뷀썑 異붽??⑸땲??",
       en: "Manual provider and model-name entry will be added later.",
     },
     bestFor: {
-      ko: "사용자 지정 클라우드 Provider",
+      ko: "?ъ슜??吏???대씪?곕뱶 Provider",
       en: "Custom cloud provider setup",
     },
     status: {
-      ko: "추후 지원",
+      ko: "Coming soon",
       en: "Coming soon",
     },
   },
@@ -347,219 +487,240 @@ const steps: Array<{ id: StepId; label: string; detail: string }> = [
   { id: "hardware", label: "Hardware", detail: "PC check" },
   { id: "recommendation", label: "Recommendation", detail: "Best model" },
   { id: "ollama", label: "Ollama", detail: "Runtime" },
+  { id: "clawCode", label: "Claw Code", detail: "Optional" },
   { id: "download", label: "Download", detail: "Local model" },
   { id: "chat", label: "Chat", detail: "Test" },
 ];
 
+const settingsSections: Array<{ id: SettingsSection; label: string; detail: string; icon: string }> = [
+  { id: "general", label: "General", detail: "Language, storage, assistant", icon: "settings" },
+  { id: "aiModels", label: "AI models", detail: "Provider, model, API keys", icon: "memory" },
+  { id: "security", label: "Security", detail: "Privacy and key policy", icon: "shield" },
+  { id: "logs", label: "Logs", detail: "Local app activity", icon: "article" },
+];
+
+const studioSections: Array<{ id: StudioSection; label: string; detail: string; icon: string }> = [
+  { id: "overview", label: "Overview", detail: "Assistant build status", icon: "dashboard" },
+  { id: "models", label: "Models", detail: "Browse and download", icon: "deployed_code_update" },
+  { id: "prompts", label: "Prompts", detail: "Persona and instructions", icon: "edit_note" },
+  { id: "character", label: "2D character", detail: "Avatar and expressions", icon: "face" },
+  { id: "tts", label: "TTS / Voice", detail: "Speech settings", icon: "record_voice_over" },
+  { id: "googleWorkspace", label: "Google Workspace", detail: "Calendar, Gmail, Drive", icon: "workspaces" },
+  { id: "tools", label: "Tools", detail: "MCP, skills, APIs", icon: "extension" },
+];
+
 const copy = {
   ko: {
-    appSubtitle: "내 컴퓨터에서 AI 비서를 설치하고 테스트하는 로컬 설정 앱",
-    setupMode: "설정",
-    runtimeMode: "실행",
-    enterMiVA: "MiVA 시작하기",
-    assistantWorkspace: "비서 워크스페이스",
-    newChat: "새 대화",
-    recentConversations: "최근 대화",
-    savedSnippets: "저장한 내용",
-    systemLogs: "시스템 로그",
-    backToSetup: "설정으로 돌아가기",
-    setupFlow: "설정 흐름",
-    setupFlowSubtitle: "AI 초기 설정",
-    settings: "설정",
-    localOnly: "로컬 전용",
-    language: "언어",
-    welcomeTitle: "MiVA에 오신 것을 환영합니다",
+    appSubtitle: "Install and test an AI assistant on this computer",
+    studioMode: "Studio",
+    setupMode: "?ㅼ젙",
+    runtimeMode: "?ㅽ뻾",
+    enterMiVA: "MiVA ?쒖옉?섍린",
+    assistantWorkspace: "鍮꾩꽌 ?뚰겕?ㅽ럹?댁뒪",
+    newChat: "New chat",
+    recentConversations: "Recent conversations",
+    savedSnippets: "??ν븳 ?댁슜",
+    systemLogs: "?쒖뒪??濡쒓렇",
+    backToSetup: "Back to setup",
+    setupFlow: "?ㅼ젙 ?먮쫫",
+    setupFlowSubtitle: "AI 珥덇린 ?ㅼ젙",
+    settings: "?ㅼ젙",
+    localOnly: "濡쒖뺄 ?꾩슜",
+    language: "?몄뼱",
+    welcomeTitle: "Welcome to MiVA",
     welcomeBody:
-      "내 컴퓨터 안에서만 작동하는 개인 AI 비서입니다. 데이터가 외부로 나가지 않는 로컬 환경에서 빠르고 안전한 AI 사용 경험을 시작하세요.",
-    startSetup: "설정 시작",
-    estimatedTime: "예상 소요 시간: 5분",
-    continue: "계속",
-    back: "뒤로",
-    privacyTitle: "100% 비공개",
-    privacyBody: "모든 처리는 사용자의 컴퓨터에서 로컬로 실행됩니다.",
-    hardwarePrivacyBody: "1차 버전은 로그인 없이 동작하며, 설문 답변과 PC 정보는 이 앱 안에서만 추천에 사용합니다.",
-    localModelTitle: "매우 빠름",
-    localModelBody: "클라우드 서버를 거치지 않아 더 빠른 응답을 기대할 수 있습니다.",
-    guidedTitle: "인터넷 불필요",
-    guidedBody: "모델 설치 후에는 연결 없이도 로컬에서 사용할 수 있습니다.",
-    surveyTitle: "어떤 AI 비서가 필요하세요?",
-    surveyBody: "가장 가까운 사용 목적을 고르면 MiVA가 가벼운 모델 중에서 우선 추천을 계산합니다.",
-    surveyPageTitle: "나만의 MiVA 설정하기",
-    surveyProgress: "질문",
-    selectOne: "하나를 선택하세요",
-    selectMany: "복수 선택 가능",
-    previousQuestion: "이전",
-    nextQuestion: "다음",
-    nextHardware: "다음: 하드웨어 확인",
+      "??而댄벂???덉뿉?쒕쭔 ?묐룞?섎뒗 媛쒖씤 AI 鍮꾩꽌?낅땲?? ?곗씠?곌? ?몃?濡??섍?吏 ?딅뒗 濡쒖뺄 ?섍꼍?먯꽌 鍮좊Ⅴ怨??덉쟾??AI ?ъ슜 寃쏀뿕???쒖옉?섏꽭??",
+    startSetup: "?ㅼ젙 ?쒖옉",
+    estimatedTime: "Estimated time: 5 minutes",
+    continue: "怨꾩냽",
+    back: "?ㅻ줈",
+    privacyTitle: "100% Private",
+    privacyBody: "紐⑤뱺 泥섎━???ъ슜?먯쓽 而댄벂?곗뿉??濡쒖뺄濡??ㅽ뻾?⑸땲??",
+    hardwarePrivacyBody: "1李?踰꾩쟾? 濡쒓렇???놁씠 ?숈옉?섎ŉ, ?ㅻЦ ?듬?怨?PC ?뺣낫???????덉뿉?쒕쭔 異붿쿇???ъ슜?⑸땲??",
+    localModelTitle: "留ㅼ슦 鍮좊쫫",
+    localModelBody: "?대씪?곕뱶 ?쒕쾭瑜?嫄곗튂吏 ?딆븘 ??鍮좊Ⅸ ?묐떟??湲곕??????덉뒿?덈떎.",
+    guidedTitle: "No Internet",
+    guidedBody: "紐⑤뜽 ?ㅼ튂 ?꾩뿉???곌껐 ?놁씠??濡쒖뺄?먯꽌 ?ъ슜?????덉뒿?덈떎.",
+    surveyTitle: "?대뼡 AI 鍮꾩꽌媛 ?꾩슂?섏꽭??",
+    surveyBody: "媛??媛源뚯슫 ?ъ슜 紐⑹쟻??怨좊Ⅴ硫?MiVA媛 媛踰쇱슫 紐⑤뜽 以묒뿉???곗꽑 異붿쿇??怨꾩궛?⑸땲??",
+    surveyPageTitle: "?섎쭔??MiVA ?ㅼ젙?섍린",
+    surveyProgress: "吏덈Ц",
+    selectOne: "Choose one",
+    selectMany: "Choose any that apply",
+    previousQuestion: "?댁쟾",
+    nextQuestion: "?ㅼ쓬",
+    nextHardware: "?ㅼ쓬: ?섎뱶?⑥뼱 ?뺤씤",
     proTipTitle: "Pro Tip",
-    proTipBody: "이 설정은 설치가 끝난 뒤에도 언제든지 바꿀 수 있습니다.",
-    advancedOptionsTitle: "추가 설정 옵션",
-    advancedOptionsBody: "AI 기능의 세부 설정을 조정하는 화면입니다. 1차 버전에서는 언어와 로컬 설정부터 제공하고, 이후 Google Workspace와 도구 연결 설정으로 확장합니다.",
-    advancedOptionsButton: "추가 설정 열기",
-    priorityTitle: "무엇을 더 우선할까요?",
-    answerStyleTitle: "답변은 어떤 스타일이 좋나요?",
-    languageUseTitle: "주로 어떤 언어로 사용할 예정인가요?",
-    localModeTitle: "MiVA를 어떤 방식으로 쓰고 싶나요?",
-    futureFeatureTitle: "나중에 관심 있는 기능은 무엇인가요?",
-    balanced: "균형",
-    balancedBody: "속도와 답변 품질을 적당히 맞춥니다.",
-    speed: "속도",
-    speedBody: "가벼운 모델과 짧은 답변을 우선합니다.",
-    quality: "답변 품질",
-    qualityBody: "조금 느려도 더 좋은 답변을 우선합니다.",
-    shortAnswer: "짧고 바로 답변",
-    shortAnswerBody: "핵심만 빠르게 정리합니다.",
-    moderateAnswer: "적당히 설명",
-    moderateAnswerBody: "짧은 설명과 필요한 맥락을 함께 제공합니다.",
-    detailedAnswer: "자세히 설명",
-    detailedAnswerBody: "배경과 단계까지 자세히 풀어서 설명합니다.",
-    koreanMain: "한국어 중심",
-    koreanMainBody: "한국어 질문과 답변을 주로 사용합니다.",
-    englishMain: "영어 중심",
-    englishMainBody: "영어 자료와 답변을 주로 사용합니다.",
-    bilingualMain: "한국어와 영어 둘 다",
-    bilingualMainBody: "상황에 따라 두 언어를 함께 사용합니다.",
-    localOnlyMode: "인터넷 없이 로컬에서만",
-    localOnlyModeBody: "모든 사용을 이 컴퓨터 안에서 끝내고 싶습니다.",
-    localAfterSetupMode: "설치 후 로컬 작동이면 충분",
-    localAfterSetupModeBody: "다운로드/설치 후에는 로컬에서 작동하면 됩니다.",
-    futureIntegrationsMode: "나중에 외부 연동도 괜찮음",
-    futureIntegrationsModeBody: "Google Workspace, API, 도구 연결도 이후에 고려할 수 있습니다.",
-    voiceFeature: "음성 대화",
-    voiceFeatureBody: "마이크와 음성 응답을 사용하는 비서",
-    characterFeature: "AI 캐릭터 화면",
-    characterFeatureBody: "화면에 캐릭터를 띄우는 비서",
-    googleFeature: "Google Calendar / Gmail 연동",
-    googleFeatureBody: "Google Workspace CLI 기반 후속 기능 후보",
-    filesFeature: "문서/파일 읽기",
-    filesFeatureBody: "로컬 파일을 읽고 정리하는 비서",
-    toolsFeature: "외부 도구 연결",
-    toolsFeatureBody: "MCP, agent skills, 외부 API 연결",
-    unsureFeature: "잘 모르겠음",
-    unsureFeatureBody: "지금은 기본 로컬 비서부터 시작합니다.",
-    daily: "일상 관리",
-    dailyBody: "일정, 할 일, 메모 정리를 도와주는 비서",
-    study: "공부/글쓰기",
-    studyBody: "요약, 초안 작성, 설명을 도와주는 비서",
-    work: "업무 보조",
-    workBody: "메일 초안, 문서 정리, 간단한 분석 보조",
-    fast: "빠른 대화",
-    fastBody: "부담 없이 빠르게 질문하고 답하는 비서",
-    character: "캐릭터 비서",
-    characterBody: "나중에 버추얼 캐릭터와 음성으로 확장할 비서",
-    hardwareTitle: "하드웨어 확인",
-    hardwareBody: "이 컴퓨터가 어느 정도의 로컬 AI 모델을 실행할 수 있는지 확인합니다. 시스템 정보를 분석해 더 부드러운 경험을 위한 모델을 추천합니다.",
-    scanPc: "재스캔",
-    checking: "확인 중",
-    detected: "감지됨",
-    unknown: "알 수 없음",
-    processor: "프로세서",
-    memory: "메모리",
-    graphics: "그래픽(GPU)",
-    disk: "디스크 공간",
-    verdict: "판정",
-    highEnd: "고성능",
-    great: "충분함",
-    good: "양호",
-    basic: "기본",
-    limited: "제한적",
-    optimal: "최적",
-    driveDetected: "드라이브 감지",
-    healthy: "정상",
-    used: "사용됨",
-    cores: "코어",
-    vramUsage: "VRAM 사용량",
-    vramPlaceholder: "측정 대기",
-    modelCapacity: "모델 용량",
-    modelCapacityBody: "현재 여유 공간으로 약 {count}개의 가벼운 로컬 비서 모델을 보관할 수 있습니다. 큰 모델 기준은 추후 세부 기준을 확정합니다.",
-    cpuVerdictHigh: "멀티태스킹과 로컬 AI 추론에 매우 적합합니다.",
-    cpuVerdictGood: "가벼운 로컬 AI 모델 실행에 충분한 프로세서입니다.",
-    cpuVerdictBasic: "작은 모델 테스트에는 적합하지만 동시 작업은 제한될 수 있습니다.",
-    memoryVerdictGreat: "복잡한 로컬 모델까지 실행할 수 있는 여유 메모리입니다.",
-    memoryVerdictGood: "가벼운 로컬 비서 모델 실행에 충분한 메모리입니다.",
-    memoryVerdictLimited: "초경량 모델부터 테스트하는 편이 좋습니다.",
-    gpuVerdictDetected: "GPU는 감지되었지만 VRAM 수치는 아직 placeholder입니다. 추후 VRAM 감지를 추가하면 더 정확한 추천이 가능합니다.",
-    gpuVerdictMissing: "전용 GPU 정보를 확인하지 못했습니다. 1차 추천은 CPU와 RAM 기준으로 계산합니다.",
-    systemVerificationComplete: "시스템 확인 완료",
-    hardwareMinimumMet: "MiVA 1차 로컬 비서 실행을 위한 기본 확인이 끝났습니다.",
-    continueRecommendations: "추천 결과로 이동",
-    totalRam: "전체 RAM",
-    available: "사용 가능",
-    recommendationTitle: "추천 모델",
-    recommendationBody: "설문 답변과 현재 PC 정보를 기준으로 1차 모델을 추천했습니다.",
-    selectThis: "이 모델 사용",
-    alternatives: "대안 모델",
-    reasonNeed: "선택한 사용 목적에 맞습니다.",
-    reasonRam: "현재 메모리 범위에서 실행 가능성이 높습니다.",
-    reasonSpeed: "빠른 응답을 우선하는 선택에 맞습니다.",
-    ollamaTitle: "Ollama 실행 환경",
-    ollamaBody: "MiVA는 Ollama를 로컬 모델 실행 엔진으로 사용합니다. 모델 자체가 아니라 모델을 실행하는 프로그램입니다.",
-    installOllama: "Ollama 설치",
-    startOllama: "Ollama 시작",
-    refresh: "새로고침",
-    running: "실행 중",
-    stopped: "설치됨, 실행 안 됨",
-    missing: "설치 필요",
-    activity: "활동",
-    noLogs: "아직 활동이 없습니다.",
-    downloadTitle: "모델 다운로드",
-    downloadBody: "선택한 모델을 Ollama 기본 저장 위치에 다운로드합니다. 1차 버전에서는 저장 위치를 바꾸지 않습니다.",
-    downloadModel: "모델 다운로드",
-    downloading: "다운로드 중...",
-    downloadProgressTitle: "모델 다운로드 진행 중",
-    preparingDownload: "다운로드 준비 중",
-    downloadComplete: "다운로드 완료",
-    downloadFailed: "다운로드 실패",
-    close: "닫기",
-    downloaded: "다운로드됨",
-    downloadSize: "다운로드 크기",
-    installed: "설치됨",
-    notInstalled: "미설치",
-    modelStorage: "저장 위치",
-    defaultStorage: "Ollama 기본 모델 저장 위치 사용",
-    chatTitle: "로컬 채팅 테스트",
-    chatBody: "모델 설치가 끝나면 MiVA가 실제로 로컬에서 응답하는지 확인합니다.",
-    chatSandboxTitle: "로컬 채팅 샌드박스",
-    chatSandboxBody: "로컬 인스턴스가 준비되었습니다. 데이터는 이 컴퓨터 밖으로 나가지 않습니다. 아래에서 {model}의 추론 속도와 답변 품질을 테스트하세요.",
-    chatGreeting: "안녕하세요! 저는 MiVA에서 실행 중인 로컬 AI 비서입니다. {model} 모델을 로컬 환경에 불러왔습니다. 오늘은 무엇을 도와드릴까요?",
-    assistantStageTitle: "비서 실행 화면",
-    assistantStageBody: "채팅, 음성, 캐릭터 표현이 합쳐질 실제 MiVA 실행 공간입니다.",
-    characterPreview: "캐릭터 프리뷰",
-    characterPreviewBody: "1차에서는 상태 표현만 표시합니다. Live2D/음성 반응은 후속 단계에서 연결합니다.",
-    characterIdle: "대기 중",
-    characterListening: "입력 대기",
-    localRuntime: "로컬 런타임",
-    generatingResponse: "답변 생성 중...",
-    justNow: "방금 전",
-    suggestedAction: "추천 질문",
-    suggestedPrompt: "도움이 되는 로봇에 대한 짧은 이야기를 들려줘.",
-    latencyMetric: "지연 시간: 45ms",
-    tokensMetric: "토큰: 12.4 t/s",
-    vramMetric: "VRAM: 측정 대기",
-    messagePlaceholder: "MiVA에게 물어보기...",
-    send: "전송",
-    noMessages: "아직 메시지가 없습니다.",
-    runtimeRequired: "Tauri 앱 창에서 실행해야 로컬 명령을 사용할 수 있습니다.",
-    settingsTitle: "앱 설정",
-    settingsBody: "언어, 로컬 모델, 외부 AI Provider 키를 관리합니다. 배포 전에는 보안 저장소로 이전할 예정입니다.",
-    currentModel: "현재 모델",
-    serviceStatus: "서비스 상태",
-    installedModels: "설치된 모델",
-    providerKeysTitle: "AI Provider 키",
-    providerKeysBody: "비워두면 local-helper .env에 있는 개발용 기본 키를 사용합니다. 입력하면 이 앱의 로컬 override 키로 저장합니다.",
-    openaiApiKey: "OpenAI API 키",
-    geminiApiKey: "Gemini API 키",
-    userOverrideKey: "사용자 override 키",
-    defaultEnvKey: "기본 .env 키 사용",
-    saveKeys: "키 저장",
-    clearKeys: "키 지우기",
-    keysSaved: "로컬에 저장됨",
-    keyStorageNotice: "현재는 개발 테스트용 localStorage 저장입니다. 배포 전에는 OS 보안 저장소로 교체해야 합니다.",
-    none: "없음",
+    proTipBody: "???ㅼ젙? ?ㅼ튂媛 ?앸궃 ?ㅼ뿉???몄젣?좎? 諛붽? ???덉뒿?덈떎.",
+    advancedOptionsTitle: "異붽? ?ㅼ젙 ?듭뀡",
+    advancedOptionsBody: "AI 湲곕뒫???몃? ?ㅼ젙??議곗젙?섎뒗 ?붾㈃?낅땲?? 1李?踰꾩쟾?먯꽌???몄뼱? 濡쒖뺄 ?ㅼ젙遺???쒓났?섍퀬, ?댄썑 Google Workspace? ?꾧뎄 ?곌껐 ?ㅼ젙?쇰줈 ?뺤옣?⑸땲??",
+    advancedOptionsButton: "異붽? ?ㅼ젙 ?닿린",
+    priorityTitle: "臾댁뾿?????곗꽑?좉퉴??",
+    answerStyleTitle: "?듬?? ?대뼡 ?ㅽ??쇱씠 醫뗫굹??",
+    languageUseTitle: "二쇰줈 ?대뼡 ?몄뼱濡??ъ슜???덉젙?멸???",
+    localModeTitle: "MiVA瑜??대뼡 諛⑹떇?쇰줈 ?곌퀬 ?띕굹??",
+    futureFeatureTitle: "?섏쨷??愿???덈뒗 湲곕뒫? 臾댁뾿?멸???",
+    balanced: "洹좏삎",
+    balancedBody: "?띾룄? ?듬? ?덉쭏???곷떦??留욎땅?덈떎.",
+    speed: "?띾룄",
+    speedBody: "媛踰쇱슫 紐⑤뜽怨?吏㏃? ?듬????곗꽑?⑸땲??",
+    quality: "?듬? ?덉쭏",
+    qualityBody: "議곌툑 ?먮젮????醫뗭? ?듬????곗꽑?⑸땲??",
+    shortAnswer: "吏㏐퀬 諛붾줈 ?듬?",
+    shortAnswerBody: "?듭떖留?鍮좊Ⅴ寃??뺣━?⑸땲??",
+    moderateAnswer: "?곷떦???ㅻ챸",
+    moderateAnswerBody: "吏㏃? ?ㅻ챸怨??꾩슂??留λ씫???④퍡 ?쒓났?⑸땲??",
+    detailedAnswer: "?먯꽭???ㅻ챸",
+    detailedAnswerBody: "諛곌꼍怨??④퀎源뚯? ?먯꽭????댁꽌 ?ㅻ챸?⑸땲??",
+    koreanMain: "?쒓뎅??以묒떖",
+    koreanMainBody: "?쒓뎅??吏덈Ц怨??듬???二쇰줈 ?ъ슜?⑸땲??",
+    englishMain: "?곸뼱 以묒떖",
+    englishMainBody: "?곸뼱 ?먮즺? ?듬???二쇰줈 ?ъ슜?⑸땲??",
+    bilingualMain: "Korean and English",
+    bilingualMainBody: "?곹솴???곕씪 ???몄뼱瑜??④퍡 ?ъ슜?⑸땲??",
+    localOnlyMode: "Local only",
+    localOnlyModeBody: "紐⑤뱺 ?ъ슜????而댄벂???덉뿉???앸궡怨??띠뒿?덈떎.",
+    localAfterSetupMode: "?ㅼ튂 ??濡쒖뺄 ?묐룞?대㈃ 異⑸텇",
+    localAfterSetupModeBody: "?ㅼ슫濡쒕뱶/?ㅼ튂 ?꾩뿉??濡쒖뺄?먯꽌 ?묐룞?섎㈃ ?⑸땲??",
+    futureIntegrationsMode: "Future integrations are okay",
+    futureIntegrationsModeBody: "Google Workspace, API, ?꾧뎄 ?곌껐???댄썑??怨좊젮?????덉뒿?덈떎.",
+    voiceFeature: "Voice chat",
+    voiceFeatureBody: "留덉씠?ъ? ?뚯꽦 ?묐떟???ъ슜?섎뒗 鍮꾩꽌",
+    characterFeature: "AI 罹먮┃???붾㈃",
+    characterFeatureBody: "?붾㈃??罹먮┃?곕? ?꾩슦??鍮꾩꽌",
+    googleFeature: "Google Calendar / Gmail ?곕룞",
+    googleFeatureBody: "Google Workspace CLI 湲곕컲 ?꾩냽 湲곕뒫 ?꾨낫",
+    filesFeature: "臾몄꽌/?뚯씪 ?쎄린",
+    filesFeatureBody: "濡쒖뺄 ?뚯씪???쎄퀬 ?뺣━?섎뒗 鍮꾩꽌",
+    toolsFeature: "?몃? ?꾧뎄 ?곌껐",
+    toolsFeatureBody: "MCP, agent skills, ?몃? API ?곌껐",
+    unsureFeature: "??紐⑤Ⅴ寃좎쓬",
+    unsureFeatureBody: "吏湲덉? 湲곕낯 濡쒖뺄 鍮꾩꽌遺???쒖옉?⑸땲??",
+    daily: "Daily planning",
+    dailyBody: "?쇱젙, ???? 硫붾え ?뺣━瑜??꾩?二쇰뒗 鍮꾩꽌",
+    study: "怨듬?/湲?곌린",
+    studyBody: "?붿빟, 珥덉븞 ?묒꽦, ?ㅻ챸???꾩?二쇰뒗 鍮꾩꽌",
+    work: "?낅Т 蹂댁“",
+    workBody: "硫붿씪 珥덉븞, 臾몄꽌 ?뺣━, 媛꾨떒??遺꾩꽍 蹂댁“",
+    fast: "Fast chat",
+    fastBody: "遺???놁씠 鍮좊Ⅴ寃?吏덈Ц?섍퀬 ?듯븯??鍮꾩꽌",
+    character: "罹먮┃??鍮꾩꽌",
+    characterBody: "?섏쨷??踰꾩텛??罹먮┃?곗? ?뚯꽦?쇰줈 ?뺤옣??鍮꾩꽌",
+    hardwareTitle: "?섎뱶?⑥뼱 ?뺤씤",
+    hardwareBody: "??而댄벂?곌? ?대뒓 ?뺣룄??濡쒖뺄 AI 紐⑤뜽???ㅽ뻾?????덈뒗吏 ?뺤씤?⑸땲?? ?쒖뒪???뺣낫瑜?遺꾩꽍????遺?쒕윭??寃쏀뿕???꾪븳 紐⑤뜽??異붿쿇?⑸땲??",
+    scanPc: "Scan PC",
+    checking: "Checking",
+    detected: "Detected",
+    unknown: "?????놁쓬",
+    processor: "?꾨줈?몄꽌",
+    memory: "Memory",
+    graphics: "洹몃옒??GPU)",
+    disk: "?붿뒪??怨듦컙",
+    verdict: "?먯젙",
+    highEnd: "High-end",
+    great: "Great",
+    good: "?묓샇",
+    basic: "湲곕낯",
+    limited: "Limited",
+    optimal: "理쒖쟻",
+    driveDetected: "?쒕씪?대툕 媛먯?",
+    healthy: "?뺤긽",
+    used: "Used",
+    cores: "肄붿뼱",
+    vramUsage: "VRAM usage",
+    vramPlaceholder: "Waiting for measurement",
+    modelCapacity: "紐⑤뜽 ?⑸웾",
+    modelCapacityBody: "?꾩옱 ?ъ쑀 怨듦컙?쇰줈 ??{count}媛쒖쓽 媛踰쇱슫 濡쒖뺄 鍮꾩꽌 紐⑤뜽??蹂닿??????덉뒿?덈떎. ??紐⑤뜽 湲곗?? 異뷀썑 ?몃? 湲곗????뺤젙?⑸땲??",
+    cpuVerdictHigh: "硫?고깭?ㅽ궧怨?濡쒖뺄 AI 異붾줎??留ㅼ슦 ?곹빀?⑸땲??",
+    cpuVerdictGood: "媛踰쇱슫 濡쒖뺄 AI 紐⑤뜽 ?ㅽ뻾??異⑸텇???꾨줈?몄꽌?낅땲??",
+    cpuVerdictBasic: "?묒? 紐⑤뜽 ?뚯뒪?몄뿉???곹빀?섏?留??숈떆 ?묒뾽? ?쒗븳?????덉뒿?덈떎.",
+    memoryVerdictGreat: "蹂듭옟??濡쒖뺄 紐⑤뜽源뚯? ?ㅽ뻾?????덈뒗 ?ъ쑀 硫붾え由ъ엯?덈떎.",
+    memoryVerdictGood: "媛踰쇱슫 濡쒖뺄 鍮꾩꽌 紐⑤뜽 ?ㅽ뻾??異⑸텇??硫붾え由ъ엯?덈떎.",
+    memoryVerdictLimited: "珥덇꼍??紐⑤뜽遺???뚯뒪?명븯???몄씠 醫뗭뒿?덈떎.",
+    gpuVerdictDetected: "GPU??媛먯??섏뿀吏留?VRAM ?섏튂???꾩쭅 placeholder?낅땲?? 異뷀썑 VRAM 媛먯?瑜?異붽??섎㈃ ???뺥솗??異붿쿇??媛?ν빀?덈떎.",
+    gpuVerdictMissing: "?꾩슜 GPU ?뺣낫瑜??뺤씤?섏? 紐삵뻽?듬땲?? 1李?異붿쿇? CPU? RAM 湲곗??쇰줈 怨꾩궛?⑸땲??",
+    systemVerificationComplete: "?쒖뒪???뺤씤 ?꾨즺",
+    hardwareMinimumMet: "MiVA 1李?濡쒖뺄 鍮꾩꽌 ?ㅽ뻾???꾪븳 湲곕낯 ?뺤씤???앸궗?듬땲??",
+    continueRecommendations: "異붿쿇 寃곌낵濡??대룞",
+    totalRam: "?꾩껜 RAM",
+    available: "Available",
+    recommendationTitle: "異붿쿇 紐⑤뜽",
+    recommendationBody: "?ㅻЦ ?듬?怨??꾩옱 PC ?뺣낫瑜?湲곗??쇰줈 1李?紐⑤뜽??異붿쿇?덉뒿?덈떎.",
+    selectThis: "??紐⑤뜽 ?ъ슜",
+    alternatives: "???紐⑤뜽",
+    reasonNeed: "?좏깮???ъ슜 紐⑹쟻??留욎뒿?덈떎.",
+    reasonRam: "?꾩옱 硫붾え由?踰붿쐞?먯꽌 ?ㅽ뻾 媛?μ꽦???믪뒿?덈떎.",
+    reasonSpeed: "鍮좊Ⅸ ?묐떟???곗꽑?섎뒗 ?좏깮??留욎뒿?덈떎.",
+    ollamaTitle: "Ollama ?ㅽ뻾 ?섍꼍",
+    ollamaBody: "MiVA??Ollama瑜?濡쒖뺄 紐⑤뜽 ?ㅽ뻾 ?붿쭊?쇰줈 ?ъ슜?⑸땲?? 紐⑤뜽 ?먯껜媛 ?꾨땲??紐⑤뜽???ㅽ뻾?섎뒗 ?꾨줈洹몃옩?낅땲??",
+    installOllama: "Ollama ?ㅼ튂",
+    startOllama: "Ollama ?쒖옉",
+    refresh: "?덈줈怨좎묠",
+    running: "Running",
+    stopped: "Installed, not running",
+    missing: "?ㅼ튂 ?꾩슂",
+    activity: "?쒕룞",
+    noLogs: "?꾩쭅 ?쒕룞???놁뒿?덈떎.",
+    downloadTitle: "紐⑤뜽 ?ㅼ슫濡쒕뱶",
+    downloadBody: "?좏깮??紐⑤뜽??Ollama 湲곕낯 ????꾩튂???ㅼ슫濡쒕뱶?⑸땲?? 1李?踰꾩쟾?먯꽌??????꾩튂瑜?諛붽씀吏 ?딆뒿?덈떎.",
+    downloadModel: "紐⑤뜽 ?ㅼ슫濡쒕뱶",
+    downloading: "?ㅼ슫濡쒕뱶 以?..",
+    downloadProgressTitle: "Model download in progress",
+    preparingDownload: "Preparing download",
+    downloadComplete: "?ㅼ슫濡쒕뱶 ?꾨즺",
+    downloadFailed: "?ㅼ슫濡쒕뱶 ?ㅽ뙣",
+    close: "?リ린",
+    downloaded: "Downloaded",
+    downloadSize: "?ㅼ슫濡쒕뱶 ?ш린",
+    installed: "Installed",
+    notInstalled: "Not installed",
+    modelStorage: "????꾩튂",
+    defaultStorage: "Ollama 湲곕낯 紐⑤뜽 ????꾩튂 ?ъ슜",
+    chatTitle: "Local Chat Sandbox",
+    chatBody: "紐⑤뜽 ?ㅼ튂媛 ?앸굹硫?MiVA媛 ?ㅼ젣濡?濡쒖뺄?먯꽌 ?묐떟?섎뒗吏 ?뺤씤?⑸땲??",
+    chatSandboxTitle: "濡쒖뺄 梨꾪똿 ?뚮뱶諛뺤뒪",
+    chatSandboxBody: "濡쒖뺄 ?몄뒪?댁뒪媛 以鍮꾨릺?덉뒿?덈떎. ?곗씠?곕뒗 ??而댄벂??諛뽰쑝濡??섍?吏 ?딆뒿?덈떎. ?꾨옒?먯꽌 {model}??異붾줎 ?띾룄? ?듬? ?덉쭏???뚯뒪?명븯?몄슂.",
+    chatGreeting: "?덈뀞?섏꽭?? ???MiVA?먯꽌 ?ㅽ뻾 以묒씤 濡쒖뺄 AI 鍮꾩꽌?낅땲?? {model} 紐⑤뜽??濡쒖뺄 ?섍꼍??遺덈윭?붿뒿?덈떎. ?ㅻ뒛? 臾댁뾿???꾩??쒕┫源뚯슂?",
+    assistantStageTitle: "鍮꾩꽌 ?ㅽ뻾 ?붾㈃",
+    assistantStageBody: "梨꾪똿, ?뚯꽦, 罹먮┃???쒗쁽???⑹퀜吏??ㅼ젣 MiVA ?ㅽ뻾 怨듦컙?낅땲??",
+    characterPreview: "Character preview",
+    characterPreviewBody: "1李⑥뿉?쒕뒗 ?곹깭 ?쒗쁽留??쒖떆?⑸땲?? Live2D/?뚯꽦 諛섏쓳? ?꾩냽 ?④퀎?먯꽌 ?곌껐?⑸땲??",
+    characterIdle: "Idle",
+    characterListening: "Waiting for input",
+    localRuntime: "Local runtime",
+    generatingResponse: "?듬? ?앹꽦 以?..",
+    jumpToLatest: "理쒖떊 梨꾪똿?쇰줈 ?대룞",
+    justNow: "Just now",
+    suggestedAction: "異붿쿇 吏덈Ц",
+    suggestedPrompt: "?꾩????섎뒗 濡쒕큸?????吏㏃? ?댁빞湲곕? ?ㅻ젮以?",
+    latencyMetric: "吏???쒓컙: 45ms",
+    tokensMetric: "?좏겙: 12.4 t/s",
+    vramMetric: "VRAM: waiting",
+    messagePlaceholder: "MiVA?먭쾶 臾쇱뼱蹂닿린...",
+    send: "?꾩넚",
+    noMessages: "?꾩쭅 硫붿떆吏媛 ?놁뒿?덈떎.",
+    runtimeRequired: "Tauri ??李쎌뿉???ㅽ뻾?댁빞 濡쒖뺄 紐낅졊???ъ슜?????덉뒿?덈떎.",
+    settingsTitle: "???ㅼ젙",
+    settingsBody: "?몄뼱, 濡쒖뺄 紐⑤뜽, ?몃? AI Provider ?ㅻ? 愿由ы빀?덈떎. 諛고룷 ?꾩뿉??蹂댁븞 ??μ냼濡??댁쟾???덉젙?낅땲??",
+    currentModel: "?꾩옱 紐⑤뜽",
+    serviceStatus: "?쒕퉬???곹깭",
+    installedModels: "?ㅼ튂??紐⑤뜽",
+    providerKeysTitle: "AI Provider Keys",
+    providerKeysBody: "鍮꾩썙?먮㈃ local-helper .env???덈뒗 媛쒕컻??湲곕낯 ?ㅻ? ?ъ슜?⑸땲?? ?낅젰?섎㈃ ???깆쓽 濡쒖뺄 override ?ㅻ줈 ??ν빀?덈떎.",
+    openaiApiKey: "OpenAI API key",
+    geminiApiKey: "Gemini API key",
+    userOverrideKey: "User override key",
+    defaultEnvKey: "湲곕낯 .env ???ъ슜",
+    saveKeys: "Save keys",
+    clearKeys: "??吏?곌린",
+    keysSaved: "濡쒖뺄????λ맖",
+    keyStorageNotice: "?꾩옱??媛쒕컻 ?뚯뒪?몄슜 localStorage ??μ엯?덈떎. 諛고룷 ?꾩뿉??OS 蹂댁븞 ??μ냼濡?援먯껜?댁빞 ?⑸땲??",
+    none: "?놁쓬",
   },
   en: {
     appSubtitle: "A local setup app for installing and testing an AI assistant on this computer",
     setupMode: "Setup",
+    studioMode: "Studio",
     runtimeMode: "Runtime",
     enterMiVA: "Enter MiVA",
     assistantWorkspace: "Assistant Workspace",
@@ -569,7 +730,7 @@ const copy = {
     systemLogs: "System Logs",
     backToSetup: "Back to Setup",
     setupFlow: "Setup Flow",
-    setupFlowSubtitle: "AI Assistant Initialization",
+    setupFlowSubtitle: "Initial Setup",
     settings: "Settings",
     localOnly: "Local only",
     language: "Language",
@@ -735,6 +896,7 @@ const copy = {
     characterListening: "Waiting for input",
     localRuntime: "Local Runtime",
     generatingResponse: "Generating response...",
+    jumpToLatest: "Jump to latest chat",
     justNow: "Just now",
     suggestedAction: "Suggested Action",
     suggestedPrompt: "Tell me a short story about a helpful robot.",
@@ -881,6 +1043,49 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
   return invoke<T>(command, args);
 }
 
+function normalizeAssistantProfileStore(value: unknown): LocalAssistantProfileStore {
+  if (!value || typeof value !== "object") {
+    return emptyAssistantProfileStore;
+  }
+
+  const store = value as Partial<LocalAssistantProfileStore>;
+  return {
+    schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+    activeProfileId: typeof store.activeProfileId === "string" ? store.activeProfileId : null,
+    profiles: Array.isArray(store.profiles) ? store.profiles.filter(Boolean) as LocalAssistantProfile[] : [],
+    updatedAt: typeof store.updatedAt === "string" ? store.updatedAt : null,
+  };
+}
+
+async function loadLocalAssistantProfileStore() {
+  if (isTauriRuntime()) {
+    const store = await invoke<unknown>("load_assistant_profile_store");
+    return normalizeAssistantProfileStore(store);
+  }
+
+  const stored = window.localStorage.getItem(ASSISTANT_PROFILE_STORAGE_KEY);
+  if (!stored) {
+    return emptyAssistantProfileStore;
+  }
+
+  try {
+    return normalizeAssistantProfileStore(JSON.parse(stored));
+  } catch {
+    return emptyAssistantProfileStore;
+  }
+}
+
+async function saveLocalAssistantProfileStore(store: LocalAssistantProfileStore) {
+  const normalized = normalizeAssistantProfileStore(store);
+  if (isTauriRuntime()) {
+    const saved = await invoke<unknown>("save_assistant_profile_store", { store: normalized });
+    return normalizeAssistantProfileStore(saved);
+  }
+
+  window.localStorage.setItem(ASSISTANT_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
+  return normalized;
+}
+
 function getModelByName(name: string) {
   return modelCatalog.find((model) => model.name === name) ?? modelCatalog[0];
 }
@@ -942,18 +1147,18 @@ function recommendModel(survey: SurveyState, hardware: HardwareInfo | null) {
 
 function recommendCloudModel(survey: SurveyState) {
   if (survey.priority === "speed" || survey.useCase === "fast") {
-    return "gemini-2.0-flash";
+    return "gemini-2.5-flash-lite";
   }
 
   if (survey.useCase === "work" || survey.useCase === "study" || survey.priority === "quality") {
-    return "gpt-4o-mini";
+    return "gemini-2.5-flash";
   }
 
   if (survey.futureFeatures.includes("googleWorkspace")) {
-    return "gemini-1.5-flash";
+    return "gemini-2.5-flash";
   }
 
-  return "gemini-2.0-flash";
+  return "gemini-2.5-flash";
 }
 
 function PrimaryButton({ children, className = "", type = "button", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -1024,10 +1229,44 @@ function loadProviderKeys(): ProviderKeyState {
   }
 }
 
+function loadRuntimeChatMessages(): ChatMessage[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const saved = window.localStorage.getItem(RUNTIME_CHAT_STORAGE_KEY);
+    if (!saved) {
+      return [];
+    }
+
+    const parsed = JSON.parse(saved) as ChatMessage[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((message) => (
+      (message.role === "user" || message.role === "assistant") &&
+      typeof message.content === "string"
+    ));
+  } catch {
+    return [];
+  }
+}
+
 function App() {
-  const [locale, setLocale] = useState<Locale>("ko");
   const [appMode, setAppMode] = useState<AppMode>("setup");
   const [activeStep, setActiveStep] = useState<StepId>("welcome");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [studioSection, setStudioSection] = useState<StudioSection>("overview");
+  const [settingsReturnTarget, setSettingsReturnTarget] = useState<{ appMode: AppMode; activeStep: StepId }>({
+    appMode: "studio",
+    activeStep: "welcome",
+  });
+  const [authReturnTarget, setAuthReturnTarget] = useState<{ appMode: AppMode; activeStep: StepId }>({
+    appMode: "studio",
+    activeStep: "welcome",
+  });
   const [survey, setSurvey] = useState<SurveyState>({
     useCase: null,
     answerStyle: null,
@@ -1044,19 +1283,34 @@ function App() {
   const [status, setStatus] = useState<OllamaStatus | null>(null);
   const [selectedModel, setSelectedModel] = useState("qwen3:4b");
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>("ollama");
-  const [selectedCloudModel, setSelectedCloudModel] = useState("gemini-2.0-flash");
+  const [selectedCloudModel, setSelectedCloudModel] = useState("gemini-2.5-flash");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
+  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages());
+  const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [providerKeys, setProviderKeys] = useState<ProviderKeyState>(() => loadProviderKeys());
   const [providerKeysSaved, setProviderKeysSaved] = useState(false);
+  const [assistantProfileStore, setAssistantProfileStore] = useState<LocalAssistantProfileStore>(emptyAssistantProfileStore);
+  const [activeLocalProfileId, setActiveLocalProfileId] = useState(DEFAULT_LOCAL_PROFILE_ID);
+  const [assistantProfileLoaded, setAssistantProfileLoaded] = useState(false);
+  const [assistantProfileSaveState, setAssistantProfileSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [assistantProfileError, setAssistantProfileError] = useState<string | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [tauriRuntime] = useState(isTauriRuntime);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollChatRef = useRef(true);
+  const assistantProfileSaveTimerRef = useRef<number | null>(null);
+  const assistantProfileHydratedRef = useRef(false);
 
-  const t = useMemo(() => copy[locale], [locale]);
-  const providerText = providerUiCopy[locale];
+  const t = copy[ACTIVE_LOCALE];
+  const providerText = providerUiCopy[ACTIVE_LOCALE];
   const recommendedModel = useMemo(() => recommendModel(survey, hardware), [survey, hardware]);
   const recommendedCloudModel = useMemo(() => recommendCloudModel(survey), [survey]);
   const recommendedModelInfo = getModelByName(recommendedModel);
@@ -1075,12 +1329,30 @@ function App() {
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
   const serviceLabel = !status ? t.checking : status.running ? t.running : status.installed ? t.stopped : t.missing;
-  const promptProfileId = "default";
+  const activeLocalProfile = assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId) ?? null;
+  const promptProfileId = activeLocalProfile?.id ?? activeLocalProfileId;
   const chatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
   const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(chatIntroKey);
+  const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
 
   function log(message: string) {
     setLogs((current) => [`${new Date().toLocaleTimeString()} ${message}`, ...current].slice(0, 40));
+  }
+
+  function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
+    if (mode === "runtime") {
+      setRuntimeChatMessages(updater);
+      return;
+    }
+
+    setTestChatMessages(updater);
+  }
+
+  function clearCurrentChat() {
+    updateChatMessages(appMode, () => []);
+    setChatInput("");
+    shouldAutoScrollChatRef.current = true;
+    setShowJumpToLatest(false);
   }
 
   function saveProviderKeys() {
@@ -1095,13 +1367,204 @@ function App() {
     setProviderKeysSaved(false);
   }
 
+  function buildSystemPromptPreview(profile: Pick<LocalAssistantProfile, "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "provider" | "model">) {
+    const languageLine = "Use English for this development build. Other locale preferences are stored for later localization.";
+
+    return [
+      "You are MiVA, the user's personal AI assistant.",
+      languageLine,
+      "Be practical, concise, and direct. If unsure, say so instead of inventing facts.",
+      `Use case: ${profile.useCase ?? "daily"}.`,
+      `Answer style: ${profile.answerStyle ?? "moderate"}.`,
+      `Priority: ${profile.priority ?? "balanced"}.`,
+      `Operation mode: ${profile.localMode ?? "hybrid"}.`,
+      `Future interests: ${profile.futureFeatures.length ? profile.futureFeatures.join(", ") : "none"}.`,
+      `Active provider: ${profile.provider}. Active model: ${profile.model}.`,
+    ].join("\n");
+  }
+
+  function buildCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus): LocalAssistantProfile {
+    const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
+    const existing = assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId);
+    const now = new Date().toISOString();
+    const safeSurvey: SurveyState = {
+      useCase: survey.useCase,
+      answerStyle: survey.answerStyle,
+      priority: survey.priority,
+      languageUse: survey.languageUse,
+      localMode: survey.localMode,
+      futureFeatures: [...survey.futureFeatures],
+    };
+    const profileBase = {
+      useCase: safeSurvey.useCase,
+      answerStyle: safeSurvey.answerStyle,
+      priority: safeSurvey.priority,
+      languageUse: safeSurvey.languageUse,
+      localMode: safeSurvey.localMode,
+      futureFeatures: safeSurvey.futureFeatures,
+      provider: selectedProvider,
+      model: providerModel,
+    };
+
+    return {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      id: existing?.id ?? activeLocalProfileId,
+      name: existing?.name ?? "MiVA Assistant",
+      description: existing?.description ?? "Local MiVA assistant profile created from setup choices.",
+      status,
+      source: appMode === "runtime" ? "runtime" : "desktop-setup",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      completedAt: status === "finalized" ? existing?.completedAt ?? now : null,
+      locale: ACTIVE_LOCALE,
+      ...profileBase,
+      providerMode: activeProviderMode,
+      modelLabel: activeModelLabel,
+      survey: safeSurvey,
+      recommendation: {
+        localModel: recommendedModel,
+        cloudModel: recommendedCloudModel,
+        selectedProvider,
+        selectedModel,
+        selectedCloudModel,
+        hardwareMemoryGb: hardware?.totalMemoryGb ?? null,
+      },
+      prompt: {
+        profileId: existing?.id ?? activeLocalProfileId,
+        systemPrompt: buildSystemPromptPreview(profileBase),
+        variables: {
+          useCase: safeSurvey.useCase,
+          answerStyle: safeSurvey.answerStyle,
+          priority: safeSurvey.priority,
+          languageUse: safeSurvey.languageUse,
+          localMode: safeSurvey.localMode,
+          futureFeatures: safeSurvey.futureFeatures,
+          provider: selectedProvider,
+          model: providerModel,
+        },
+        overrides: existing?.prompt?.overrides ?? {
+          persona: null,
+          instructions: [],
+          guardrails: [],
+        },
+      },
+      capabilities: existing?.capabilities ?? {
+        voice: { enabled: false, sttProvider: null, ttsProvider: null },
+        character: { enabled: false, renderer: null, characterId: null },
+        googleWorkspace: { enabled: false, accountId: null, scopes: [] },
+        files: { enabled: false, allowedRoots: [] },
+        tools: { enabled: false, enabledToolIds: [] },
+        mcp: { enabled: false, serverIds: [] },
+        skills: { enabled: false, skillIds: [] },
+        externalApis: { enabled: false, providerIds: [] },
+      },
+      sync: existing?.sync ?? {
+        cloudEnabled: false,
+        cloudProfileId: null,
+        lastSyncedAt: null,
+      },
+      metadata: {
+        setupStep: activeStep,
+        appMode,
+        appVersion: "0.1.0",
+        hardwareSnapshot: hardware,
+      },
+    };
+  }
+
+  async function saveCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus) {
+    const profile = buildCurrentLocalAssistantProfile(status);
+    const nextStore: LocalAssistantProfileStore = {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      activeProfileId: profile.id,
+      profiles: [
+        profile,
+        ...assistantProfileStore.profiles.filter((item) => item.id !== profile.id),
+      ],
+      updatedAt: profile.updatedAt,
+    };
+
+    setAssistantProfileSaveState("saving");
+    setAssistantProfileError(null);
+    setAssistantProfileStore(nextStore);
+    setActiveLocalProfileId(profile.id);
+
+    try {
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      setAssistantProfileSaveState("saved");
+      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
+      return profile;
+    } catch (error) {
+      const message = String(error);
+      setAssistantProfileError(message);
+      setAssistantProfileSaveState("error");
+      log(`Assistant profile save failed: ${message}`);
+      throw error;
+    }
+  }
+
+  function applyLocalAssistantProfile(profile: LocalAssistantProfile) {
+    setSurvey({
+      useCase: profile.survey?.useCase ?? profile.useCase ?? null,
+      answerStyle: profile.survey?.answerStyle ?? profile.answerStyle ?? null,
+      priority: profile.survey?.priority ?? profile.priority ?? null,
+      languageUse: profile.survey?.languageUse ?? profile.languageUse ?? null,
+      localMode: profile.survey?.localMode ?? profile.localMode ?? null,
+      futureFeatures: Array.isArray(profile.survey?.futureFeatures) ? profile.survey.futureFeatures : profile.futureFeatures ?? [],
+    });
+    setSelectedProvider(profile.provider ?? "ollama");
+    setSelectedModel(profile.recommendation?.selectedModel ?? (profile.provider === "ollama" ? profile.model : selectedModel));
+    setSelectedCloudModel(profile.recommendation?.selectedCloudModel ?? (profile.provider !== "ollama" ? profile.model : selectedCloudModel));
+  }
+
+  async function finalizeCurrentLocalAssistantProfile() {
+    try {
+      await saveCurrentLocalAssistantProfile("finalized");
+      log("Assistant profile finalized locally.");
+    } catch {
+      // The save function already records the visible error state.
+    }
+  }
+
+  function enterSettings(section: SettingsSection = "general") {
+    if (activeStep !== "settings") {
+      setSettingsReturnTarget({ appMode, activeStep });
+    }
+
+    setAppMode("setup");
+    setActiveStep("settings");
+    setSettingsSection(section);
+  }
+
+  function exitSettings() {
+    setAppMode(settingsReturnTarget.appMode);
+    setActiveStep(settingsReturnTarget.activeStep === "settings" ? "welcome" : settingsReturnTarget.activeStep);
+  }
+
+  function openAuth() {
+    if (appMode !== "auth") {
+      setAuthReturnTarget({ appMode, activeStep });
+    }
+
+    setAppMode("auth");
+  }
+
+  function closeAuth() {
+    setAppMode(authReturnTarget.appMode === "auth" ? "studio" : authReturnTarget.appMode);
+    setActiveStep(authReturnTarget.activeStep === "settings" ? "welcome" : authReturnTarget.activeStep);
+  }
+
   function goToNextStep() {
     if (activeStep === "recommendation" && selectedProvider !== "ollama") {
-      setActiveStep("settings");
+      enterSettings("aiModels");
       return;
     }
 
     const next = steps[Math.min(activeIndex + 1, steps.length - 1)];
+    if (next.id === "chat") {
+      void finalizeCurrentLocalAssistantProfile();
+    }
     setActiveStep(next.id);
   }
 
@@ -1199,9 +1662,29 @@ function App() {
     }
   }
 
+  function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
+    chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    shouldAutoScrollChatRef.current = true;
+    setShowJumpToLatest(false);
+  }
+
+  function handleChatScroll() {
+    const element = chatScrollRef.current;
+    if (!element) {
+      return;
+    }
+
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const nearBottom = distanceFromBottom < 120;
+    shouldAutoScrollChatRef.current = nearBottom;
+    setShowJumpToLatest((current) => (current === !nearBottom ? current : !nearBottom));
+  }
+
   async function sendMessage() {
     const prompt = chatInput.trim();
+    const chatMode = appMode;
     const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
+    const assistantProfile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
     const apiKey = selectedProvider === "openai"
       ? providerKeys.openai.trim()
       : selectedProvider === "gemini"
@@ -1214,7 +1697,9 @@ function App() {
     }
 
     setChatInput("");
-    setMessages((current) => [...current, { role: "user", content: prompt }]);
+    shouldAutoScrollChatRef.current = true;
+    setShowJumpToLatest(false);
+    updateChatMessages(chatMode, (current) => [...current, { role: "user", content: prompt }]);
     setBusyAction("chat");
 
     try {
@@ -1222,14 +1707,15 @@ function App() {
         provider: selectedProvider,
         model: providerModel,
         prompt,
-        locale,
+        locale: ACTIVE_LOCALE,
         apiKey: apiKey || null,
+        profile: assistantProfile,
       });
-      setMessages((current) => [...current, { role: "assistant", content: answer }]);
+      updateChatMessages(chatMode, (current) => [...current, { role: "assistant", content: answer }]);
       log("Chat response received.");
     } catch (error) {
       const message = `Chat failed: ${String(error)}`;
-      setMessages((current) => [...current, { role: "assistant", content: message }]);
+      updateChatMessages(chatMode, (current) => [...current, { role: "assistant", content: message }]);
       log(message);
     } finally {
       setBusyAction(null);
@@ -1244,6 +1730,75 @@ function App() {
       })();
     }
   }, [tauriRuntime]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const store = await loadLocalAssistantProfileStore();
+        if (cancelled) {
+          return;
+        }
+
+        setAssistantProfileStore(store);
+        const activeProfile = store.profiles.find((profile) => profile.id === store.activeProfileId) ?? store.profiles[0] ?? null;
+        if (activeProfile) {
+          setActiveLocalProfileId(activeProfile.id);
+          applyLocalAssistantProfile(activeProfile);
+        }
+
+        assistantProfileHydratedRef.current = true;
+        setAssistantProfileLoaded(true);
+        log(activeProfile ? "Assistant profile loaded from local storage." : "No local assistant profile found yet.");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        assistantProfileHydratedRef.current = true;
+        setAssistantProfileLoaded(true);
+        setAssistantProfileError(String(error));
+        setAssistantProfileSaveState("error");
+        log(`Assistant profile load failed: ${String(error)}`);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!assistantProfileLoaded || !assistantProfileHydratedRef.current || appMode !== "setup" || activeStep === "welcome") {
+      return;
+    }
+
+    if (assistantProfileSaveTimerRef.current) {
+      window.clearTimeout(assistantProfileSaveTimerRef.current);
+    }
+
+    assistantProfileSaveTimerRef.current = window.setTimeout(() => {
+      void saveCurrentLocalAssistantProfile(activeStep === "chat" ? "finalized" : "draft").catch(() => undefined);
+    }, 700);
+
+    return () => {
+      if (assistantProfileSaveTimerRef.current) {
+        window.clearTimeout(assistantProfileSaveTimerRef.current);
+      }
+    };
+  }, [
+    assistantProfileLoaded,
+    appMode,
+    activeStep,
+    survey,
+    selectedProvider,
+    selectedModel,
+    selectedCloudModel,
+    recommendedModel,
+    recommendedCloudModel,
+    hardware,
+  ]);
 
   useEffect(() => {
     if (!tauriRuntime) {
@@ -1261,6 +1816,26 @@ function App() {
       unlisten?.();
     };
   }, [tauriRuntime]);
+
+  useEffect(() => {
+    window.localStorage.setItem(RUNTIME_CHAT_STORAGE_KEY, JSON.stringify(runtimeChatMessages));
+  }, [runtimeChatMessages]);
+
+  useEffect(() => {
+    if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
+      return;
+    }
+
+    if (!shouldAutoScrollChatRef.current) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollChatToLatest(activeChatMessages.length === 0 ? "auto" : "smooth");
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [appMode, activeStep, activeChatMessages.length, busyAction, showChatIntroCard, selectedProvider, selectedModel, selectedCloudModel]);
 
   useEffect(() => {
     setSelectedModel(recommendedModel);
@@ -1292,7 +1867,7 @@ function App() {
   }, [surveyTipExpanded]);
 
   const renderNavigation = () => (
-    <aside className="flex h-screen w-[300px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
+    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
       <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#35607f] text-white shadow-sm">
           <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
@@ -1304,66 +1879,158 @@ function App() {
       </div>
 
       <nav className="flex-1">
-        {steps.map((step, index) => {
-          const active = step.id === activeStep;
-          const completed = index < activeIndex;
+        {activeStep === "settings" ? (
+          <div className="p-4">
+            <p className="px-3 pb-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">Settings</p>
+            <div className="grid gap-1">
+              {settingsSections.map((section) => {
+                const active = settingsSection === section.id;
 
-          return (
-            <button
-              className={`flex w-full items-center gap-3 border-r-4 px-6 py-4 text-left text-sm font-semibold transition ${
-                active
-                  ? "border-[#35607f] bg-[#cae6ff]/45 text-[#35607f]"
-                  : completed
-                    ? "border-transparent text-[#4a654e] hover:bg-[#e7e8e9]"
-                    : "border-transparent text-[#72787e] hover:bg-[#e7e8e9]"
-              }`}
-              key={step.id}
-              onClick={() => {
-                setAppMode("setup");
-                setActiveStep(step.id);
-              }}
-              type="button"
-            >
-              <span
-                className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${
+                return (
+                  <button
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                      active ? "bg-[#cae6ff]/45 text-[#35607f]" : "text-[#72787e] hover:bg-[#e7e8e9] hover:text-[#191c1d]"
+                    }`}
+                    key={section.id}
+                    onClick={() => setSettingsSection(section.id)}
+                    type="button"
+                  >
+                    <span
+                      className={`grid h-8 w-8 place-items-center rounded-full ${
+                        active ? "bg-[#35607f] text-white" : "bg-[#e1e3e4] text-[#72787e]"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">{section.icon}</span>
+                    </span>
+                    <span>
+                      <span className="block">{section.label}</span>
+                      <span className="block text-xs font-medium opacity-70">{section.detail}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          steps.map((step, index) => {
+            const active = step.id === activeStep;
+            const completed = index < activeIndex;
+
+            return (
+              <button
+                className={`flex w-full items-center gap-3 border-r-4 px-6 py-4 text-left text-sm font-semibold transition ${
                   active
-                    ? "bg-[#35607f] text-white"
+                    ? "border-[#35607f] bg-[#cae6ff]/45 text-[#35607f]"
                     : completed
-                      ? "bg-[#c9e8cb] text-[#334d38]"
-                      : "bg-[#e1e3e4] text-[#72787e]"
+                      ? "border-transparent text-[#4a654e] hover:bg-[#e7e8e9]"
+                      : "border-transparent text-[#72787e] hover:bg-[#e7e8e9]"
                 }`}
+                key={step.id}
+                onClick={() => {
+                  setAppMode("setup");
+                  setActiveStep(step.id);
+                }}
+                type="button"
               >
-                {completed ? "✓" : String(index + 1).padStart(2, "0")}
-              </span>
-              <span>
-                <span className="block">{step.label}</span>
-                <span className="block text-xs font-medium opacity-70">{step.detail}</span>
-              </span>
-            </button>
-          );
-        })}
+                <span
+                  className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${
+                    active
+                      ? "bg-[#35607f] text-white"
+                      : completed
+                        ? "bg-[#c9e8cb] text-[#334d38]"
+                        : "bg-[#e1e3e4] text-[#72787e]"
+                  }`}
+                >
+                  {completed ? (
+                    <span className="material-symbols-outlined text-[18px]">check</span>
+                  ) : (
+                    String(index + 1).padStart(2, "0")
+                  )}
+                </span>
+                <span>
+                  <span className="block">{step.label}</span>
+                  <span className="block text-xs font-medium opacity-70">{step.detail}</span>
+                </span>
+              </button>
+            );
+          })
+        )}
       </nav>
 
-      <div className="border-t border-[#c2c7ce]/60 p-4">
+      <div className="grid gap-2 border-t border-[#c2c7ce]/60 p-4">
         <button
-          className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-semibold transition ${
-            activeStep === "settings" ? "bg-white text-[#35607f] shadow-sm" : "text-[#72787e] hover:bg-[#e7e8e9]"
+          className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition ${
+            activeStep === "profile" ? "bg-white text-[#35607f] shadow-sm" : "text-[#42474d] hover:bg-[#f3f4f5] hover:text-[#191c1d]"
           }`}
-          onClick={() => {
-            setAppMode("setup");
-            setActiveStep("settings");
-          }}
+          onClick={openAuth}
           type="button"
         >
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#e1e3e4] text-xs">S</span>
-          {t.settings}
+          <span className="material-symbols-outlined text-[18px]">account_circle</span>
+          Sign in
+        </button>
+      </div>
+    </aside>
+  );
+
+  const renderStudioNavigation = () => (
+    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
+      <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
+        <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#35607f] text-white shadow-sm">
+          <span className="material-symbols-outlined text-[20px]">construction</span>
+        </div>
+        <div>
+          <h1 className="font-heading text-sm font-extrabold text-[#191c1d]">MiVA</h1>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#72787e]">Assistant Studio</p>
+        </div>
+      </div>
+
+      <nav className="flex-1 p-4">
+        <p className="px-3 pb-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">Studio</p>
+        <div className="grid gap-1">
+          {studioSections.map((section) => {
+            const active = studioSection === section.id;
+
+            return (
+              <button
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                  active ? "bg-[#cae6ff]/45 text-[#35607f]" : "text-[#72787e] hover:bg-[#e7e8e9] hover:text-[#191c1d]"
+                }`}
+                key={section.id}
+                onClick={() => setStudioSection(section.id)}
+                type="button"
+              >
+                <span
+                  className={`grid h-8 w-8 place-items-center rounded-full ${
+                    active ? "bg-[#35607f] text-white" : "bg-[#e1e3e4] text-[#72787e]"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[18px]">{section.icon}</span>
+                </span>
+                <span>
+                  <span className="block">{section.label}</span>
+                  <span className="block text-xs font-medium opacity-70">{section.detail}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      <div className="grid gap-2 border-t border-[#c2c7ce]/40 p-4">
+        <button
+          className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-[#42474d] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+          type="button"
+          onClick={openAuth}
+        >
+          <span className="material-symbols-outlined text-[18px]">account_circle</span>
+          Sign in
         </button>
       </div>
     </aside>
   );
 
   const renderRuntimeNavigation = () => (
-    <aside className="flex h-screen w-[300px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
+    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
       <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#35607f] text-white shadow-sm">
           <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
@@ -1378,10 +2045,7 @@ function App() {
         <button
           className="flex w-full items-center justify-between rounded-2xl border border-[#c2c7ce]/50 bg-white px-4 py-3 text-sm font-bold text-[#191c1d] shadow-sm transition hover:border-[#35607f]/60"
           type="button"
-          onClick={() => {
-            setMessages([]);
-            setChatInput("");
-          }}
+          onClick={clearCurrentChat}
         >
           <span className="flex items-center gap-3">
             <span className="material-symbols-outlined text-[18px] text-[#35607f]">add_comment</span>
@@ -1425,36 +2089,37 @@ function App() {
         </section>
       </div>
 
-      <div className="border-t border-[#c2c7ce]/40 p-4">
+      <div className="grid gap-2 border-t border-[#c2c7ce]/40 p-4">
         <button
           className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-[#42474d] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
           type="button"
-          onClick={() => {
-            setAppMode("setup");
-            setActiveStep("settings");
-          }}
+          onClick={openAuth}
         >
-          <span className="material-symbols-outlined text-[18px]">settings</span>
-          {t.settings}
+          <span className="material-symbols-outlined text-[18px]">account_circle</span>
+          Sign in
         </button>
       </div>
     </aside>
   );
 
-  const renderTopBar = () => (
+  const renderTopBar = () => {
+    const settingsOpen = appMode === "setup" && activeStep === "settings";
+
+    return (
     <header className="grid h-[60px] min-w-[1000px] grid-cols-[minmax(250px,1fr)_minmax(260px,auto)_minmax(96px,1fr)] items-center gap-4 border-b border-[#c2c7ce]/60 bg-[#f8f9fa]/85 px-6 backdrop-blur-md">
       <div className="flex min-w-0 items-center gap-3">
         <span className="font-heading text-lg font-bold tracking-tight text-[#35607f]">MiVA</span>
+        {!settingsOpen && (
         <div className="flex rounded-full border border-[#c2c7ce]/60 bg-[#e7e8e9]/60 p-0.5">
           <button
             className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-              appMode === "setup" ? "bg-white text-[#35607f] shadow-sm" : "text-[#72787e] hover:text-[#191c1d]"
+              appMode === "studio" ? "bg-white text-[#35607f] shadow-sm" : "text-[#72787e] hover:text-[#191c1d]"
             }`}
-            onClick={() => setAppMode("setup")}
+            onClick={() => setAppMode("studio")}
             type="button"
           >
-            <span className="material-symbols-outlined text-[14px]">tune</span>
-            {t.setupMode}
+            <span className="material-symbols-outlined text-[14px]">construction</span>
+            {t.studioMode}
           </button>
           <button
             className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
@@ -1467,8 +2132,10 @@ function App() {
             {t.runtimeMode}
           </button>
         </div>
+        )}
       </div>
 
+      {settingsOpen ? <div /> : (
       <div className="mx-auto flex max-w-[360px] min-w-0 items-center gap-2 rounded-full border border-[#c2c7ce]/60 bg-white/80 px-2.5 py-1.5 shadow-sm">
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black tracking-[0.14em] ${
@@ -1479,9 +2146,10 @@ function App() {
         </span>
         <span className="material-symbols-outlined shrink-0 text-sm text-[#4a654e]">{activeProviderMeta.icon}</span>
         <span className="truncate text-[13px] font-semibold text-[#42474d]">
-          {activeProviderLabel} · {activeModelLabel}
+          {activeProviderLabel} / {activeModelLabel}
         </span>
       </div>
+      )}
 
       <div className="flex items-center justify-end gap-3">
         <button
@@ -1491,20 +2159,21 @@ function App() {
         >
           <span className="material-symbols-outlined">help_outline</span>
         </button>
-        <button
-          aria-label={t.settings}
-          className="rounded-full p-2 text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
-          onClick={() => {
-            setAppMode("setup");
-            setActiveStep("settings");
-          }}
-          type="button"
-        >
-          <span className="material-symbols-outlined">settings</span>
-        </button>
+        {!settingsOpen && (
+          <button
+            aria-label={t.settings}
+            className="rounded-full p-2 text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
+            onClick={() => enterSettings("general")}
+            title={t.settings}
+            type="button"
+          >
+            <span className="material-symbols-outlined">settings</span>
+          </button>
+        )}
       </div>
     </header>
-  );
+    );
+  };
 
   const renderFooter = (primaryLabel = t.continue, primaryAction = goToNextStep, primaryDisabled = false) => (
     <div className="mt-8 flex items-center justify-between">
@@ -1653,8 +2322,8 @@ function App() {
             <div className={`grid ${question.columns} gap-4`}>
               {question.options.map((option) => {
                 const active = isOptionSelected(question.id, option.id);
-                const optionTitle = option.title?.[locale] ?? (option.titleKey ? t[option.titleKey] : "");
-                const optionBody = option.body?.[locale] ?? (option.bodyKey ? t[option.bodyKey] : "");
+                const optionTitle = option.title?.[ACTIVE_LOCALE] ?? (option.titleKey ? t[option.titleKey] : "");
+                const optionBody = option.body?.[ACTIVE_LOCALE] ?? (option.bodyKey ? t[option.bodyKey] : "");
 
                 return (
                   <button
@@ -1743,7 +2412,7 @@ function App() {
                         <p className="mt-3 text-sm leading-6 text-[#42474d]">{t.advancedOptionsBody}</p>
                         <button
                           className="mt-auto inline-flex items-center gap-2 rounded-lg bg-[#35607f] px-4 py-3 text-sm font-semibold text-white"
-                          onClick={() => setActiveStep("settings")}
+                          onClick={() => enterSettings("general")}
                           type="button"
                         >
                           {t.advancedOptionsButton}
@@ -1934,8 +2603,8 @@ function App() {
         id: model.name,
         label: model.label,
         category: model.category,
-        summary: model.summary[locale],
-        bestFor: model.bestFor[locale],
+        summary: model.summary[ACTIVE_LOCALE],
+        bestFor: model.bestFor[ACTIVE_LOCALE],
         selectable: true,
         model,
       })),
@@ -1952,8 +2621,8 @@ function App() {
     const topIsCloud = cloudRecommended;
     const topProvider = topIsCloud ? providerMeta[recommendedCloudModelInfo.provider] : providerMeta.ollama;
     const topLabel = topIsCloud ? recommendedCloudModelInfo.label : recommendedModelInfo.label;
-    const topSummary = topIsCloud ? recommendedCloudModelInfo.summary[locale] : recommendedModelInfo.summary[locale];
-    const topBestFor = topIsCloud ? recommendedCloudModelInfo.bestFor[locale] : recommendedModelInfo.bestFor[locale];
+    const topSummary = topIsCloud ? recommendedCloudModelInfo.summary[ACTIVE_LOCALE] : recommendedModelInfo.summary[ACTIVE_LOCALE];
+    const topBestFor = topIsCloud ? recommendedCloudModelInfo.bestFor[ACTIVE_LOCALE] : recommendedModelInfo.bestFor[ACTIVE_LOCALE];
     const reasons = [t.reasonNeed, t.reasonRam];
     if (survey.priority === "speed" || survey.useCase === "fast") {
       reasons.push(t.reasonSpeed);
@@ -1973,9 +2642,14 @@ function App() {
       setSelectedModel(recommendedModel);
     }
 
+    function selectLocalModel(modelName: string) {
+      setSelectedProvider("ollama");
+      setSelectedModel(modelName);
+    }
+
     function continueFromRecommendation() {
       if (selectedProvider !== "ollama") {
-        setActiveStep("settings");
+        enterSettings("aiModels");
         return;
       }
 
@@ -2008,7 +2682,7 @@ function App() {
                 <Badge>{topBestFor}</Badge>
                 <Badge>{t.totalRam}: {formatGb(hardware?.totalMemoryGb)}</Badge>
                 <Badge>
-                  {topIsCloud ? recommendedCloudModelInfo.status[locale] : recommendedModelInstalled ? t.installed : t.notInstalled}
+                  {topIsCloud ? recommendedCloudModelInfo.status[ACTIVE_LOCALE] : recommendedModelInstalled ? t.installed : t.notInstalled}
                 </Badge>
               </div>
             </div>
@@ -2041,9 +2715,10 @@ function App() {
             <div className="grid min-w-max auto-cols-[260px] grid-flow-col gap-4 pr-1">
               {localCards.map((card) => {
                 const active = selectedProvider === "ollama" && card.model?.name === selectedModel;
+                const installed = card.model ? installedModels.includes(card.model.name) : false;
 
                 return (
-                  <button
+                  <article
                     className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition ${
                       active
                         ? "border-[#35607f] ring-4 ring-[#cae6ff]"
@@ -2051,26 +2726,39 @@ function App() {
                           ? "border-[#c2c7ce]/70 hover:border-[#35607f] hover:shadow-md"
                           : "cursor-not-allowed border-[#e1e3e4] opacity-70"
                     }`}
-                    disabled={!card.selectable}
                     key={card.id}
                     onClick={() => {
                       if (!card.model) return;
-                      setSelectedProvider("ollama");
-                      setSelectedModel(card.model.name);
+                      selectLocalModel(card.model.name);
                     }}
-                    type="button"
+                    role={card.selectable ? "button" : undefined}
+                    tabIndex={card.selectable ? 0 : -1}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
                         <span className="material-symbols-outlined text-[20px]">memory</span>
                       </span>
                       {active && <Badge tone="action">{providerText.selected}</Badge>}
+                      {installed && <Badge tone="success">{t.installed}</Badge>}
                       {!card.selectable && <Badge>{providerText.comingSoon}</Badge>}
                     </div>
                     <p className="mt-4 font-heading text-lg font-bold text-[#191c1d]">{card.label}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">{card.category}</p>
                     <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#42474d]">{card.bestFor}</p>
-                  </button>
+                    {card.model && (
+                      <div className="mt-4 flex gap-2">
+                        <SecondaryButton
+                          className="px-3 py-2 text-xs"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectLocalModel(card.model.name);
+                          }}
+                        >
+                          {providerText.selectModel}
+                        </SecondaryButton>
+                      </div>
+                    )}
+                  </article>
                 );
               })}
             </div>
@@ -2121,9 +2809,9 @@ function App() {
                     </div>
                     <p className="mt-4 font-heading text-lg font-bold text-[#191c1d]">{model.label}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">
-                      {providerMeta[model.provider].label} · {model.category}
+                      {providerMeta[model.provider].label} / {model.category}
                     </p>
-                    <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#42474d]">{model.bestFor[locale]}</p>
+                    <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#42474d]">{model.bestFor[ACTIVE_LOCALE]}</p>
                   </button>
                 );
               })}
@@ -2196,6 +2884,57 @@ function App() {
     </div>
   );
 
+  const renderClawCodeSetup = () => (
+    <div className="mx-auto max-w-[880px]">
+      <header className="mb-8">
+        <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Claw Code setup</h2>
+        <p className="mt-2 text-base leading-7 text-[#42474d]">
+          Claw Code is optional. Install it only if this assistant will help inspect or modify code on this computer.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-[1.1fr_0.9fr] gap-6">
+        <Panel>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Optional developer tool</span>
+              <h3 className="mt-3 font-heading text-2xl font-bold text-[#191c1d]">Install later or skip</h3>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                Phase 1 keeps this as a guided placeholder. The installer flow will later verify Git, Node, and the Claw Code package before enabling code-editing skills.
+              </p>
+            </div>
+            <Badge>Optional</Badge>
+          </div>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            <PrimaryButton disabled title="Installer command will be wired later">
+              Install Claw Code
+            </PrimaryButton>
+            <SecondaryButton onClick={goToNextStep}>Skip for now</SecondaryButton>
+          </div>
+        </Panel>
+
+        <Panel>
+          <h3 className="font-heading text-lg font-bold text-[#191c1d]">When should users install it?</h3>
+          <div className="mt-4 grid gap-3">
+            {[
+              ["Code modification", "Needed when the assistant should edit files or help with local projects."],
+              ["Plain assistant usage", "Not needed for chat, prompts, TTS, 2D characters, or Google Workspace setup."],
+              ["Future skills", "Will be connected to agent skills and MCP-style tools later."],
+            ].map(([title, body]) => (
+              <div className="rounded-xl bg-[#f3f4f5] p-4" key={title}>
+                <p className="text-sm font-bold text-[#191c1d]">{title}</p>
+                <p className="mt-1 text-sm leading-6 text-[#42474d]">{body}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      {renderFooter("Continue", goToNextStep)}
+    </div>
+  );
+
   const renderDownload = () => {
     const downloadBusy = busyAction === `download:${selectedModel}`;
     const activeProgress = downloadProgress?.model === selectedModel ? downloadProgress : null;
@@ -2216,7 +2955,7 @@ function App() {
                   {selectedModelInstalled ? t.installed : t.notInstalled}
                 </Badge>
                 <h3 className="mt-4 font-heading text-3xl font-bold text-[#191c1d]">{selectedModelInfo.label}</h3>
-                <p className="mt-3 text-sm leading-6 text-[#42474d]">{selectedModelInfo.summary[locale]}</p>
+                <p className="mt-3 text-sm leading-6 text-[#42474d]">{selectedModelInfo.summary[ACTIVE_LOCALE]}</p>
               </div>
               <select
                 className="rounded-lg border border-[#c2c7ce] bg-white px-3 py-2 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
@@ -2277,9 +3016,7 @@ function App() {
     const greeting =
       selectedProvider === "ollama"
         ? t.chatGreeting.replace("{model}", activeModelLabel)
-        : locale === "ko"
-          ? `안녕하세요. MiVA에서 ${activeProviderLabel} · ${activeModelLabel} 연결을 준비했습니다. API 키가 설정되어 있으면 바로 응답을 테스트할 수 있습니다.`
-          : `Hello. MiVA has prepared ${activeProviderLabel} · ${activeModelLabel}. If an API key is configured, you can test responses now.`;
+        : `Hello. MiVA has prepared ${activeProviderLabel} / ${activeModelLabel}. If an API key is configured, you can test responses now.`;
     const sandboxBody =
       selectedProvider === "ollama"
         ? t.chatSandboxBody.replace("{model}", activeModelLabel)
@@ -2287,11 +3024,32 @@ function App() {
     const chatDisabled = selectedProvider === "ollama"
       ? !selectedModelInstalled || !status?.running || busyAction === "chat"
       : busyAction === "chat";
+    const runtimeChat = appMode === "runtime";
+    const chatShellClass = assistantPanelMinimized
+      ? runtimeChat
+        ? "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
+        : "relative mx-auto min-h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
+      : runtimeChat
+        ? "relative mx-auto grid h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible"
+        : "relative mx-auto grid min-h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
+    const chatSectionClass = runtimeChat
+      ? "flex min-h-0 flex-col overflow-hidden"
+      : "flex flex-col";
+    const chatMessagesClass = runtimeChat
+      ? "flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto pb-28 pr-1 pt-2"
+      : "flex flex-col gap-8 pb-8 pr-1 pt-2";
+    const assistantCardClass = runtimeChat
+      ? "sticky top-4 flex h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]"
+      : "sticky top-2 flex max-h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]";
 
     return (
-      <div className="relative mx-auto grid min-h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-hidden">
-        <section className="flex min-h-0 flex-col overflow-hidden">
-        <div className="flex flex-1 flex-col gap-8 overflow-y-auto pb-28 pr-1 pt-2">
+      <div className={chatShellClass}>
+        <section className={chatSectionClass}>
+        <div
+          className={chatMessagesClass}
+          ref={chatScrollRef}
+          onScroll={handleChatScroll}
+        >
           {appMode === "setup" && (
             <section className="relative overflow-hidden rounded-3xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_18px_48px_rgba(53,96,127,0.10)]">
               <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#cae6ff]/60 blur-3xl" />
@@ -2301,14 +3059,20 @@ function App() {
                     <span className="material-symbols-outlined text-[28px]">verified</span>
                   </div>
                   <div>
-                    <p className="text-xs font-black uppercase tracking-[0.18em] text-[#72787e]">Setup Complete</p>
-                    <h2 className="mt-2 font-heading text-2xl font-bold text-[#191c1d]">MiVA is ready</h2>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-[#72787e]">Test Chat</p>
+                    <h2 className="mt-2 font-heading text-2xl font-bold text-[#191c1d]">Try this assistant before entering runtime</h2>
                     <p className="mt-2 max-w-[560px] text-sm leading-6 text-[#42474d]">
-                      {t.chatBody} {t.assistantStageBody}
+                      Test chat is temporary for setup validation. Runtime chat is saved locally and can be restored after restart.
                     </p>
                   </div>
                 </div>
-                <PrimaryButton className="shrink-0 rounded-2xl px-6 py-4" onClick={() => setAppMode("runtime")}>
+                <PrimaryButton
+                  className="shrink-0 rounded-xl px-4 py-2.5 text-sm"
+                  onClick={() => {
+                    void finalizeCurrentLocalAssistantProfile();
+                    setAppMode("runtime");
+                  }}
+                >
                   <span className="inline-flex items-center gap-2">
                     {t.enterMiVA}
                     <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
@@ -2363,7 +3127,7 @@ function App() {
             </div>
           </div>
 
-          {messages.map((message, index) => (
+          {activeChatMessages.map((message, index) => (
             <div
               className={`flex max-w-[85%] items-end gap-4 ${message.role === "user" ? "self-end" : "self-start"}`}
               key={`${message.role}-${index}`}
@@ -2404,7 +3168,7 @@ function App() {
             </div>
           )}
 
-          {messages.length === 0 && (
+          {activeChatMessages.length === 0 && (
             <div className="mt-3 flex flex-col items-center gap-4">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#72787e]">{t.suggestedAction}</p>
               <button
@@ -2420,9 +3184,22 @@ function App() {
               </button>
             </div>
           )}
+          <div ref={chatEndRef} className="h-1 shrink-0" />
         </div>
 
         <div className="sticky bottom-0 z-10 bg-[#f8f9fa]/90 pb-2 pt-4 backdrop-blur">
+          {showJumpToLatest && (
+            <button
+              aria-label={t.jumpToLatest}
+              className="absolute -top-5 left-1/2 z-20 grid h-10 w-10 -translate-x-1/2 place-items-center rounded-full border border-[#c2c7ce] bg-white text-[#35607f] shadow-[0_10px_24px_rgba(53,96,127,0.18)] transition hover:-translate-y-0.5 hover:border-[#35607f]"
+              title={t.jumpToLatest}
+              type="button"
+              onClick={() => scrollChatToLatest()}
+            >
+              <span className="material-symbols-outlined text-[22px]">arrow_downward</span>
+            </button>
+          )}
+
           <form
             className="flex items-center gap-2 rounded-2xl border border-[#c2c7ce] bg-white p-2 shadow-[0_12px_40px_rgba(53,96,127,0.10)]"
             onSubmit={(event) => {
@@ -2478,9 +3255,42 @@ function App() {
         </div>
         </section>
 
-        <aside className="sticky top-2 flex h-[calc(100vh-156px)] flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]">
+        {assistantPanelMinimized ? (
+          <button
+            className="absolute right-0 top-0 z-20 flex max-w-[240px] items-center gap-3 rounded-2xl border border-[#c2c7ce] bg-white/95 p-3 text-left shadow-[0_16px_40px_rgba(53,96,127,0.16)] transition hover:border-[#35607f]"
+            type="button"
+            title="Show assistant panel"
+            onClick={() => setAssistantPanelMinimized(false)}
+          >
+            <span className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#35607f] text-white">
+              <span className="material-symbols-outlined text-[24px]">smart_toy</span>
+              <span
+                className={`absolute -right-0.5 top-1 h-3.5 w-3.5 rounded-full border-2 border-white ${
+                  busyAction === "chat" ? "bg-[#35607f] animate-pulse" : "bg-[#4a654e]"
+                }`}
+              />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-[#191c1d]">{activeModelLabel}</span>
+              <span className="block text-xs font-semibold text-[#72787e]">Assistant profile</span>
+            </span>
+            <span className="material-symbols-outlined text-[18px] text-[#72787e]">open_in_full</span>
+          </button>
+        ) : (
+        <aside className={assistantCardClass}>
           <div className="border-b border-[#e1e3e4] p-5">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantStageTitle}</p>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantStageTitle}</p>
+              <button
+                aria-label="Minimize assistant panel"
+                className="grid h-8 w-8 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+                type="button"
+                title="Minimize"
+                onClick={() => setAssistantPanelMinimized(true)}
+              >
+                <span className="material-symbols-outlined text-[20px]">remove</span>
+              </button>
+            </div>
             <h2 className="mt-2 font-heading text-[22px] font-bold leading-7 text-[#191c1d]">{activeModelLabel}</h2>
             <p className="mt-2 text-sm leading-6 text-[#42474d]">{t.assistantStageBody}</p>
           </div>
@@ -2517,45 +3327,466 @@ function App() {
             </div>
           </div>
         </aside>
+        )}
       </div>
     );
   };
 
-  const renderSettings = () => (
-    <div className="mx-auto max-w-[860px]">
-      <header className="mb-8">
-        <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">{t.settingsTitle}</h2>
-        <p className="mt-2 text-base leading-7 text-[#42474d]">{t.settingsBody}</p>
-      </header>
+  const renderProfile = () => {
+    const profile = activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft");
+    const profileRows = [
+      ["Status", profile.status],
+      ["Provider", `${activeProviderLabel} / ${activeProviderMode}`],
+      ["Model", activeModelLabel],
+      ["Use case", profile.useCase ?? "-"],
+      ["Answer style", profile.answerStyle ?? "-"],
+      ["Language", profile.languageUse ?? "-"],
+      ["Local mode", profile.localMode ?? "-"],
+    ];
+    const capabilityRows = [
+      ["Voice", profile.capabilities.voice.enabled],
+      ["Character", profile.capabilities.character.enabled],
+      ["Google Workspace", profile.capabilities.googleWorkspace.enabled],
+      ["Files", profile.capabilities.files.enabled],
+      ["Tools", profile.capabilities.tools.enabled],
+      ["MCP", profile.capabilities.mcp.enabled],
+      ["Skills", profile.capabilities.skills.enabled],
+      ["External APIs", profile.capabilities.externalApis.enabled],
+    ];
 
-      <Panel className="mb-6">
-        <div className="grid gap-6">
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.language}</span>
-            <select
-              className="rounded-lg border border-[#c2c7ce] bg-white px-3 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={locale}
-              onChange={(event) => setLocale(event.target.value as Locale)}
-            >
-              <option value="ko">한국어</option>
-              <option value="en">English</option>
-            </select>
-          </label>
-
-          <div className="rounded-xl bg-[#f3f4f5] p-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.modelStorage}</span>
-            <p className="mt-2 text-sm font-semibold text-[#191c1d]">{t.defaultStorage}</p>
-          </div>
-
-          <div className="rounded-xl bg-[#f3f4f5] p-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.currentModel}</span>
-            <p className="mt-2 text-sm font-semibold text-[#191c1d]">
-              {activeProviderLabel} · {activeModelLabel}
+    return (
+      <div className="mx-auto max-w-[920px]">
+        <header className="mb-8 flex items-start justify-between gap-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Account</p>
+            <h2 className="mt-3 font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">
+              Sign in to sync profiles
+            </h2>
+            <p className="mt-2 max-w-[680px] text-base leading-7 text-[#42474d]">
+              Local profiles work without an account. Sign-in will later sync assistants, settings, and chat history across devices.
             </p>
           </div>
-        </div>
-      </Panel>
+          <button
+            className="rounded-xl bg-[#35607f] px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#4f7999]"
+            type="button"
+          >
+            Sign in
+          </button>
+        </header>
 
+        <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold text-[#191c1d]">Assistant Setup</h3>
+                <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                  Survey choices, provider selection, and model recommendation are saved locally first.
+                </p>
+              </div>
+              <button
+                className="rounded-xl bg-[#35607f] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#4f7999]"
+                type="button"
+                onClick={() => void finalizeCurrentLocalAssistantProfile()}
+              >
+                Finalize
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3">
+              {profileRows.map(([label, value]) => (
+                <div className="flex items-center justify-between rounded-xl bg-[#f3f4f5] px-4 py-3 text-sm" key={label}>
+                  <span className="font-semibold text-[#72787e]">{label}</span>
+                  <span className="font-bold text-[#191c1d]">{value}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-xl bg-[#f8f9fa] p-4">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Future interests</span>
+              <p className="mt-2 text-sm font-semibold text-[#191c1d]">
+                {profile.futureFeatures.length ? profile.futureFeatures.join(", ") : "None selected"}
+              </p>
+            </div>
+          </Panel>
+
+          <Panel>
+            <h3 className="font-heading text-xl font-bold text-[#191c1d]">Extension Slots</h3>
+            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+              These fields are placeholders for later role details, voice, character, Google Workspace, MCP, and skills.
+            </p>
+
+            <div className="mt-6 grid gap-3">
+              {capabilityRows.map(([label, enabled]) => (
+                <div className="flex items-center justify-between rounded-xl bg-[#f3f4f5] px-4 py-3 text-sm" key={String(label)}>
+                  <span className="font-semibold text-[#42474d]">{label}</span>
+                  <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "Enabled" : "Later"}</Badge>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+
+        <Panel className="mt-6">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <h3 className="font-heading text-lg font-bold text-[#191c1d]">Prompt Preview</h3>
+              <p className="mt-1 text-sm text-[#72787e]">This preview is what the local helper can use to shape answers.</p>
+            </div>
+            <button
+              className="rounded-xl border border-[#c2c7ce] px-4 py-2 text-sm font-bold text-[#42474d] transition hover:border-[#35607f] hover:text-[#35607f]"
+              type="button"
+              onClick={() => enterSettings("general")}
+            >
+              Open settings
+            </button>
+          </div>
+          <pre className="mt-5 max-h-56 overflow-auto rounded-2xl bg-[#2e3132] p-5 text-xs leading-6 text-[#f0f1f2]">
+            {profile.prompt.systemPrompt}
+          </pre>
+        </Panel>
+
+        {assistantProfileError && (
+          <p className="mt-4 rounded-xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">{assistantProfileError}</p>
+        )}
+      </div>
+    );
+  };
+
+  const renderAuth = () => (
+    <main className="grid h-screen min-w-[1000px] place-items-center bg-[#f8f9fa] px-6 text-[#191c1d]">
+      <section className="w-full max-w-[420px] rounded-3xl border border-[#c2c7ce]/70 bg-white p-8 shadow-[0_24px_80px_rgba(53,96,127,0.16)]">
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">MiVA Account</p>
+            <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Sign in</h1>
+            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+              Sign in will later sync assistants, settings, and runtime chat across devices.
+            </p>
+          </div>
+          <button
+            aria-label="Close sign in"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+            type="button"
+            onClick={closeAuth}
+          >
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            log("Sign in placeholder submitted.");
+          }}
+        >
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">ID</span>
+            <input
+              autoComplete="username"
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
+              placeholder="email@example.com"
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+            />
+          </label>
+
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Password</span>
+            <input
+              autoComplete="current-password"
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
+              placeholder="Password"
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+            />
+          </label>
+
+          <PrimaryButton className="mt-2 w-full justify-center" type="submit">
+            Sign in
+          </PrimaryButton>
+          <SecondaryButton
+            className="w-full"
+            onClick={() => {
+              log("Create account placeholder clicked.");
+            }}
+          >
+            Create account
+          </SecondaryButton>
+        </form>
+      </section>
+    </main>
+  );
+
+  const renderStudio = () => {
+    const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
+    const placeholderCards: Record<StudioSection, Array<[string, string, string]>> = {
+      overview: [
+        ["Assistant profile", "Current setup choices and selected model will be edited here.", "account_circle"],
+        ["Prompt stack", "Persona, rules, and tool instructions will be assembled here.", "edit_note"],
+        ["Runtime preview", "Studio changes will be tested before they affect runtime chat.", "play_circle"],
+      ],
+      models: [
+        ["Local model library", "Browse Ollama models and download them onto this computer.", "deployed_code_update"],
+        ["Cloud model routing", "Choose OpenAI or Gemini models without local downloads.", "cloud"],
+        ["Model policy", "Set fallback and quality preferences after provider rules are finalized.", "rule"],
+      ],
+      prompts: [
+        ["Persona", "Define assistant role, tone, and boundaries.", "badge"],
+        ["System prompt", "Compose model instructions from survey answers and user edits.", "subject"],
+        ["Prompt presets", "Save multiple prompt configurations per assistant.", "bookmark"],
+      ],
+      character: [
+        ["2D avatar", "Attach Live2D or image-based assistant characters later.", "face"],
+        ["Expression states", "Map listening, thinking, speaking, and idle states.", "mood"],
+        ["Scene layout", "Control where the assistant appears in runtime mode.", "dashboard_customize"],
+      ],
+      tts: [
+        ["Text to speech", "Choose voice providers and speaking style.", "record_voice_over"],
+        ["Speech to text", "Microphone input and wake controls will be configured here.", "mic"],
+        ["Voice test", "Preview latency and quality before enabling runtime voice.", "graphic_eq"],
+      ],
+      googleWorkspace: [
+        ["Google Workspace CLI", "Calendar, Gmail, and Drive integration settings will live here.", "workspaces"],
+        ["OAuth status", "Account connection and scopes will be shown here after login exists.", "verified_user"],
+        ["Tool permissions", "Users will decide what the assistant can read or change.", "rule"],
+      ],
+      tools: [
+        ["MCP servers", "Register local and remote model context protocol servers.", "hub"],
+        ["Agent skills", "Enable specialized abilities such as code help or file workflows.", "extension"],
+        ["External APIs", "Attach custom APIs after provider security is finalized.", "api"],
+      ],
+    };
+
+    const renderModelStudio = () => (
+      <div className="grid gap-6">
+        <Panel>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="font-heading text-xl font-bold text-[#191c1d]">Local model library</h3>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                Select and download Ollama models for this computer. Recommendation only chooses a first model; Studio is where users can manage more models later.
+              </p>
+            </div>
+            <Badge tone={status?.running ? "success" : "neutral"}>{status?.running ? "Ollama running" : "Ollama offline"}</Badge>
+          </div>
+
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            {modelCatalog.map((model) => {
+              const active = selectedProvider === "ollama" && selectedModel === model.name;
+              const installed = installedModels.includes(model.name);
+              const downloadBusy = busyAction === `download:${model.name}`;
+              const canDownload = tauriRuntime && Boolean(status?.running) && !installed && busyAction === null;
+
+              return (
+                <article
+                  className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
+                    active ? "border-[#35607f] ring-4 ring-[#cae6ff]" : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                  }`}
+                  key={model.id}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                      <span className="material-symbols-outlined text-[22px]">memory</span>
+                    </span>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {active && <Badge tone="action">{providerText.selected}</Badge>}
+                      {installed && <Badge tone="success">{t.installed}</Badge>}
+                    </div>
+                  </div>
+                  <h4 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">{model.label}</h4>
+                  <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">{model.category}</p>
+                  <p className="mt-3 text-sm leading-6 text-[#42474d]">{model.summary[ACTIVE_LOCALE]}</p>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-xl bg-[#f3f4f5] p-3">
+                      <span className="font-bold uppercase tracking-[0.12em] text-[#72787e]">RAM</span>
+                      <p className="mt-1 font-semibold text-[#191c1d]">{model.recommendedRamGb} GB+</p>
+                    </div>
+                    <div className="rounded-xl bg-[#f3f4f5] p-3">
+                      <span className="font-bold uppercase tracking-[0.12em] text-[#72787e]">Size</span>
+                      <p className="mt-1 font-semibold text-[#191c1d]">{model.downloadSizeLabel ?? "Ollama tag"}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <SecondaryButton
+                      className="px-3 py-2 text-xs"
+                      onClick={() => {
+                        setSelectedProvider("ollama");
+                        setSelectedModel(model.name);
+                      }}
+                    >
+                      {providerText.selectModel}
+                    </SecondaryButton>
+                    <PrimaryButton
+                      className="px-3 py-2 text-xs"
+                      disabled={!canDownload}
+                      onClick={() => {
+                        setSelectedProvider("ollama");
+                        setSelectedModel(model.name);
+                        void downloadModel(model.name);
+                      }}
+                    >
+                      {downloadBusy ? t.downloading : installed ? t.installed : t.downloadModel}
+                    </PrimaryButton>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </Panel>
+
+        <Panel>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="font-heading text-xl font-bold text-[#191c1d]">Cloud models</h3>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                Cloud models do not need downloads. API key management remains in Settings &gt; AI models.
+              </p>
+            </div>
+            <Badge tone="action">OpenAI / Gemini</Badge>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            {cloudModelCatalog.filter((model) => model.id !== "custom-cloud").slice(0, 3).map((model) => (
+              <button
+                className={`rounded-2xl border bg-white p-4 text-left transition ${
+                  selectedProvider === model.provider && selectedCloudModel === model.id
+                    ? "border-[#35607f] ring-4 ring-[#cae6ff]"
+                    : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                }`}
+                key={model.id}
+                onClick={() => {
+                  setSelectedProvider(model.provider);
+                  setSelectedCloudModel(model.id);
+                }}
+                type="button"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                  <span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>
+                </span>
+                <p className="mt-4 font-heading text-base font-bold text-[#191c1d]">{model.label}</p>
+                <p className="mt-2 text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{providerMeta[model.provider].label}</p>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+
+    return (
+      <div className="mx-auto max-w-[980px]">
+        <header className="mb-8">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Studio</p>
+          <h2 className="mt-2 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">
+            {activeStudioSection.label}
+          </h2>
+          <p className="mt-2 max-w-[720px] text-base leading-7 text-[#42474d]">
+            Studio is the free-editing workspace after initial Setup. Prompts, 2D character, TTS, Google Workspace, and tools will be configured here.
+          </p>
+        </header>
+
+        {studioSection === "models" ? (
+          renderModelStudio()
+        ) : (
+          <div className="grid gap-6 md:grid-cols-3">
+            {placeholderCards[studioSection].map(([title, body, icon]) => (
+              <Panel className="min-h-[210px]" key={title}>
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                  <span className="material-symbols-outlined text-[22px]">{icon}</span>
+                </span>
+                <h3 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">{title}</h3>
+                <p className="mt-3 text-sm leading-6 text-[#42474d]">{body}</p>
+                <Badge>Placeholder</Badge>
+              </Panel>
+            ))}
+          </div>
+        )}
+
+        <Panel className="mt-6">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <h3 className="font-heading text-xl font-bold text-[#191c1d]">Studio scope</h3>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                Initial Setup only handles survey, hardware, recommendation, Ollama, optional Claw Code, model download, and test chat. Everything else moves into Studio.
+              </p>
+            </div>
+            <PrimaryButton
+              onClick={() => {
+                setAppMode("setup");
+                setActiveStep("chat");
+              }}
+            >
+              Open test chat
+            </PrimaryButton>
+          </div>
+        </Panel>
+      </div>
+    );
+  };
+
+  const renderSettings = () => {
+    const activeSettingsSection = settingsSections.find((section) => section.id === settingsSection) ?? settingsSections[0];
+
+    const generalPanel = (
+      <>
+        <Panel className="mb-6">
+          <div className="grid gap-6">
+            <label className="grid gap-2">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.language}</span>
+              <select
+                className="rounded-lg border border-[#c2c7ce] bg-white px-3 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                value={ACTIVE_LOCALE}
+                disabled
+              >
+                <option value="en">English</option>
+              </select>
+            </label>
+
+            <div className="rounded-xl bg-[#f3f4f5] p-4">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.modelStorage}</span>
+              <p className="mt-2 text-sm font-semibold text-[#191c1d]">{t.defaultStorage}</p>
+            </div>
+
+            <div className="rounded-xl bg-[#f3f4f5] p-4">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{t.currentModel}</span>
+              <p className="mt-2 text-sm font-semibold text-[#191c1d]">
+                {activeProviderLabel} / {activeModelLabel}
+              </p>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Assistant Profile</span>
+              <p className="mt-2 text-sm font-semibold text-[#191c1d]">
+                {activeLocalProfile?.name ?? "MiVA Assistant"} / {activeLocalProfile?.status ?? "draft"}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-[#72787e]">
+                Saved locally first. Cloud sync can attach to this profile later.
+              </p>
+            </div>
+            <Badge tone={assistantProfileSaveState === "error" ? "neutral" : assistantProfileSaveState === "saving" ? "action" : "success"}>
+              {assistantProfileSaveState === "saving"
+                ? "Saving"
+                : assistantProfileSaveState === "error"
+                  ? "Save error"
+                  : assistantProfileSaveState === "saved"
+                    ? "Saved"
+                    : assistantProfileLoaded
+                      ? "Local"
+                      : "Loading"}
+            </Badge>
+          </div>
+          {assistantProfileError && <p className="mt-3 text-xs leading-5 text-[#93000a]">{assistantProfileError}</p>}
+        </Panel>
+      </>
+    );
+
+    const aiModelsPanel = (
       <Panel>
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -2650,19 +3881,76 @@ function App() {
           </div>
         </div>
       </Panel>
+    );
 
-      <div className="mt-6 flex justify-end">
-        <PrimaryButton
-          onClick={() => {
-            saveProviderKeys();
-            setActiveStep("chat");
-          }}
-        >
-          {t.continue}
-        </PrimaryButton>
+    const securityPanel = (
+      <Panel>
+        <h3 className="font-heading text-xl font-bold text-[#191c1d]">Security</h3>
+        <p className="mt-2 text-sm leading-6 text-[#42474d]">
+          Phase 1 keeps assistant profiles and runtime chat history on this device. Cloud sync and account security will be added later.
+        </p>
+        <div className="mt-6 grid gap-3">
+          <div className="rounded-xl bg-[#f3f4f5] p-4">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">API key policy</span>
+            <p className="mt-2 text-sm font-semibold text-[#191c1d]">Local override keys stay in this app storage for development testing.</p>
+          </div>
+          <div className="rounded-xl bg-[#f3f4f5] p-4">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Runtime chat</span>
+            <p className="mt-2 text-sm font-semibold text-[#191c1d]">Saved locally. Server sync is disabled until account features exist.</p>
+          </div>
+        </div>
+      </Panel>
+    );
+
+    const logsPanel = (
+      <Panel>
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="font-heading text-xl font-bold text-[#191c1d]">Logs</h3>
+          <Badge>{logs.length}</Badge>
+        </div>
+        <div className="mt-5 h-80 overflow-auto rounded-xl bg-[#2e3132] p-4 text-xs leading-5 text-[#f0f1f2]">
+          {logs.length === 0 ? <p>{t.noLogs}</p> : logs.map((item) => <p key={item}>{item}</p>)}
+        </div>
+        <div className="mt-6 border-t border-[#e1e3e4] pt-5">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Developer access</p>
+          <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            Initial Setup is hidden after first configuration. Use this temporary entry while developing the installer flow.
+          </p>
+          <SecondaryButton
+            className="mt-4"
+            onClick={() => {
+              setAppMode("setup");
+              setActiveStep("welcome");
+            }}
+          >
+            Open initial setup
+          </SecondaryButton>
+        </div>
+      </Panel>
+    );
+
+    return (
+      <div className="mx-auto max-w-[860px]">
+        <header className="mb-8 flex items-start justify-between gap-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Settings</p>
+            <h2 className="mt-2 font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">
+              {activeSettingsSection.label}
+            </h2>
+            <p className="mt-2 text-base leading-7 text-[#42474d]">{activeSettingsSection.detail}</p>
+          </div>
+          <SecondaryButton className="shrink-0" onClick={exitSettings}>
+            Exit settings
+          </SecondaryButton>
+        </header>
+
+        {settingsSection === "general" && generalPanel}
+        {settingsSection === "aiModels" && aiModelsPanel}
+        {settingsSection === "security" && securityPanel}
+        {settingsSection === "logs" && logsPanel}
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderDownloadProgressModal = () => {
     if (!downloadProgress) {
@@ -2741,18 +4029,28 @@ function App() {
     if (activeStep === "hardware") return renderHardware();
     if (activeStep === "recommendation") return renderRecommendation();
     if (activeStep === "ollama") return renderOllamaSetup();
+    if (activeStep === "clawCode") return renderClawCodeSetup();
     if (activeStep === "download") return renderDownload();
     if (activeStep === "chat") return renderChat();
+    if (activeStep === "profile") return renderProfile();
     return renderSettings();
   };
 
   return (
     <main className="flex h-screen min-w-[1000px] overflow-hidden bg-[#f8f9fa] text-[#191c1d]">
-      {appMode === "setup" ? renderNavigation() : renderRuntimeNavigation()}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {renderTopBar()}
-        <div className="flex-1 overflow-y-auto px-10 py-9">{appMode === "setup" ? renderCurrentStep() : renderChat()}</div>
-      </div>
+      {appMode === "auth" ? (
+        renderAuth()
+      ) : (
+        <>
+          {appMode === "setup" ? renderNavigation() : appMode === "studio" ? renderStudioNavigation() : renderRuntimeNavigation()}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {renderTopBar()}
+            <div className="flex-1 overflow-y-auto px-10 py-9">
+              {appMode === "setup" ? renderCurrentStep() : appMode === "studio" ? renderStudio() : renderChat()}
+            </div>
+          </div>
+        </>
+      )}
       {renderDownloadProgressModal()}
     </main>
   );

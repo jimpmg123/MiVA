@@ -21,6 +21,22 @@ export const lightweightModels = [
     recommendedRamGb: 12
   },
   {
+    id: "exaone3.5-2.4b",
+    ollamaName: "exaone3.5:2.4b",
+    label: "EXAONE 3.5 2.4B",
+    category: "korean-compact",
+    summary: "Compact Korean/English bilingual local assistant candidate.",
+    recommendedRamGb: 8
+  },
+  {
+    id: "exaone3.5-7.8b",
+    ollamaName: "exaone3.5:7.8b",
+    label: "EXAONE 3.5 7.8B",
+    category: "korean-quality",
+    summary: "Larger Korean/English bilingual local assistant candidate.",
+    recommendedRamGb: 16
+  },
+  {
     id: "gemma3-4b",
     ollamaName: "gemma3:4b",
     label: "Gemma 3 4B",

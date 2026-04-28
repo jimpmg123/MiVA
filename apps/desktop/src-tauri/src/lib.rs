@@ -1,20 +1,30 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use sysinfo::{Disks, System};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const OLLAMA_BASE_URL: &str = "http://localhost:11434";
 const LOCAL_HELPER_URL: &str = "http://127.0.0.1:43110";
 const DESKTOP_BRIDGE_ADDR: &str = "127.0.0.1:43111";
-const ALLOWED_MODELS: [&str; 4] = ["qwen3:4b", "llama3.2:3b", "gemma3:4b", "phi3:mini"];
+const ALLOWED_MODELS: [&str; 6] = [
+    "qwen3:4b",
+    "exaone3.5:2.4b",
+    "exaone3.5:7.8b",
+    "llama3.2:3b",
+    "gemma3:4b",
+    "phi3:mini",
+];
+const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +102,42 @@ struct HardwareInfo {
     os_name: Option<String>,
     os_version: Option<String>,
     arch: String,
+}
+
+fn empty_assistant_profile_store() -> Value {
+    json!({
+        "schemaVersion": 1,
+        "activeProfileId": null,
+        "profiles": [],
+        "updatedAt": null
+    })
+}
+
+fn assistant_profile_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join(ASSISTANT_PROFILE_STORE_FILE))
+}
+
+fn load_assistant_profile_store_inner(app: AppHandle) -> Result<Value, String> {
+    let path = assistant_profile_store_path(&app)?;
+    if !path.exists() {
+        return Ok(empty_assistant_profile_store());
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    if content.trim().is_empty() {
+        return Ok(empty_assistant_profile_store());
+    }
+
+    serde_json::from_str::<Value>(&content).map_err(|error| error.to_string())
+}
+
+fn save_assistant_profile_store_inner(app: AppHandle, store: Value) -> Result<Value, String> {
+    let path = assistant_profile_store_path(&app)?;
+    let content = serde_json::to_string_pretty(&store).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())?;
+    Ok(store)
 }
 
 fn allowed_model(model: &str) -> bool {
@@ -572,6 +618,7 @@ fn chat_via_local_helper(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    profile: Option<Value>,
 ) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
@@ -588,6 +635,10 @@ fn chat_via_local_helper(
 
     if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
         body["apiKey"] = json!(api_key);
+    }
+
+    if let Some(profile) = profile {
+        body["profile"] = profile;
     }
 
     let response = client
@@ -618,6 +669,7 @@ fn chat_once_inner(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    profile: Option<Value>,
 ) -> Result<String, String> {
     let normalized_provider = if provider.trim().is_empty() {
         "ollama".to_string()
@@ -631,6 +683,7 @@ fn chat_once_inner(
         prompt.clone(),
         locale.clone(),
         api_key,
+        profile,
     ) {
         Ok(answer) => Ok(answer),
         Err(error) if normalized_provider == "ollama" => {
@@ -750,9 +803,10 @@ async fn chat_once(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    profile: Option<Value>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        chat_once_inner(provider, model, prompt, locale, api_key)
+        chat_once_inner(provider, model, prompt, locale, api_key, profile)
     })
         .await
         .map_err(|error| error.to_string())?
@@ -763,6 +817,20 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
     tauri::async_runtime::spawn_blocking(get_hardware_info_inner)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn load_assistant_profile_store(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_assistant_profile_store_inner(app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn save_assistant_profile_store(app: AppHandle, store: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || save_assistant_profile_store_inner(app, store))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -779,7 +847,9 @@ pub fn run() {
             start_ollama,
             pull_model,
             chat_once,
-            get_hardware_info
+            get_hardware_info,
+            load_assistant_profile_store,
+            save_assistant_profile_store
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

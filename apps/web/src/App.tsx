@@ -13,6 +13,7 @@ import {
   Languages, 
   RefreshCw, 
   ChevronRight,
+  BarChart3,
   ShieldCheck,
   Download,
   Trash2,
@@ -20,9 +21,23 @@ import {
   Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  checkCloudApi,
+  createAssistantProfile,
+  fetchJson,
+  finalizeAssistantProfile,
+  getAdminStats,
+  getAssistantProfiles,
+  initialCloudState,
+  recordUsageEvent,
+} from './services/mivaApi';
+import type {
+  AssistantProfileDraft,
+  CloudState,
+} from './services/mivaApi';
 
 // --- Types ---
-type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'integrations' | 'voice' | 'settings';
+type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'integrations' | 'voice' | 'admin' | 'settings';
 type ServiceStatus = 'checking' | 'connected' | 'offline';
 
 const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
@@ -167,14 +182,6 @@ function getActiveModel(connection: ConnectionState) {
     || catalog[0];
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
-  return response.json() as Promise<T>;
-}
-
 interface NavItem {
   id: PageId;
   label: string;
@@ -189,6 +196,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'profiles', label: 'Assistant Profiles', labelKr: '프로필', icon: UserCircle },
   { id: 'integrations', label: 'Integrations', labelKr: '연동', icon: Blocks },
   { id: 'voice', label: 'Voice & Character', labelKr: '음성 및 캐릭터', icon: AudioLines },
+  { id: 'admin', label: 'Admin Analytics', labelKr: '관리자 통계', icon: BarChart3 },
   { id: 'settings', label: 'Settings', labelKr: '설정', icon: Settings },
 ];
 
@@ -676,42 +684,85 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
   );
 };
 
-const AssistantProfilesPage = () => (
+const AssistantProfilesPage = ({
+  cloud,
+  creatingProfile,
+  finalizingProfileId,
+  onCreateProfile,
+  onFinalizeProfile,
+}: {
+  cloud: CloudState;
+  creatingProfile: boolean;
+  finalizingProfileId: string | null;
+  onCreateProfile: (profile: AssistantProfileDraft) => Promise<void>;
+  onFinalizeProfile: (profileId: string) => Promise<void>;
+}) => {
+  const profiles = cloud.profiles;
+  const activeProfile = profiles.find((profile) => profile.isDefault) || profiles[0];
+  const createDefaultProfile = () => onCreateProfile({
+    name: `Assistant Profile ${profiles.length + 1}`,
+    description: 'A web-created MiVA assistant profile. Replace this with survey results or a custom profile editor later.',
+    useCase: 'daily',
+    answerStyle: 'moderate',
+    priority: 'balanced',
+    languageUse: 'korean',
+    localMode: 'hybrid',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    futureFeatures: ['voice', 'googleWorkspace'],
+    isDefault: profiles.length === 0,
+    status: 'draft',
+    source: 'web-console',
+  });
+
+  return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
         <div className="mb-8">
             <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
                 Assistant Profiles <span className="text-slate-300 font-medium text-2xl">/ 프로필</span>
             </h2>
-            <p className="text-slate-500 mt-1">Configure behavioral presets and model parameters for your local agents.</p>
+            <p className="text-slate-500 mt-1">Manage saved AI assistant profiles from survey choices, model preferences, and future tool permissions.</p>
         </div>
 
         <div className="grid grid-cols-12 gap-8 items-start">
             <div className="col-span-12 lg:col-span-4 space-y-6">
                 <div className="flex items-center justify-between">
                     <h3 className="text-xl font-bold font-display">Saved Profiles</h3>
-                    <button className="text-xs font-bold text-primary-container flex items-center gap-1 hover:underline">
-                        <Plus className="w-4 h-4" /> NEW PROFILE
+                    <button
+                      className="text-xs font-bold text-primary-container flex items-center gap-1 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={cloud.status !== 'connected' || creatingProfile}
+                      onClick={() => void createDefaultProfile()}
+                      type="button"
+                    >
+                        <Plus className="w-4 h-4" /> {creatingProfile ? 'CREATING...' : 'NEW PROFILE'}
                     </button>
                 </div>
                 <div className="space-y-4">
-                    {[
-                        { name: 'General Assistant', desc: 'Versatile, daily tasks', active: true, icon: UserCircle },
-                        { name: 'Schedule Manager', desc: 'Optimizes calendar & focus', icon: LayoutDashboard },
-                        { name: 'Work Assistant', desc: 'Professional communication', icon: Blocks },
-                    ].map((p, i) => (
-                        <div key={i} className={`p-4 rounded-[20px] bg-white shadow-sm border-2 transition-all cursor-pointer ${p.active ? 'border-primary-container' : 'border-slate-50 hover:border-slate-200'}`}>
+                    {profiles.map((profile) => {
+                      const Icon = profile.useCase === 'work' ? Blocks : profile.useCase === 'daily' ? LayoutDashboard : UserCircle;
+                      const active = profile.id === activeProfile?.id;
+
+                      return (
+                        <div key={profile.id} className={`p-4 rounded-[20px] bg-white shadow-sm border-2 transition-all cursor-pointer ${active ? 'border-primary-container' : 'border-slate-50 hover:border-slate-200'}`}>
                             <div className="flex items-center gap-4">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${p.active ? 'bg-primary-container/10 text-primary-container' : 'bg-slate-50 text-slate-400'}`}>
-                                    <p.icon className="w-6 h-6" />
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${active ? 'bg-primary-container/10 text-primary-container' : 'bg-slate-50 text-slate-400'}`}>
+                                    <Icon className="w-6 h-6" />
                                 </div>
                                 <div>
-                                    <h4 className="font-bold text-slate-900">{p.name}</h4>
-                                    <p className="text-xs text-slate-400">{p.desc}</p>
+                                    <h4 className="font-bold text-slate-900">{profile.name}</h4>
+                                    <p className="text-xs text-slate-400">{profile.useCase} / {profile.localMode} / {profile.status || 'draft'}</p>
                                 </div>
-                                {p.active && <div className="ml-auto w-2 h-2 rounded-full bg-primary-container"></div>}
+                                {active && <div className="ml-auto w-2 h-2 rounded-full bg-primary-container"></div>}
                             </div>
                         </div>
-                    ))}
+                      );
+                    })}
+
+                    {profiles.length === 0 && (
+                      <div className="p-6 rounded-[20px] bg-white border border-dashed border-slate-200 text-sm text-slate-400">
+                        Cloud API is not connected yet. Start `apps/api` to load saved assistant profiles.
+                      </div>
+                    )}
                 </div>
             </div>
 
@@ -720,14 +771,22 @@ const AssistantProfilesPage = () => (
                     <div className="flex justify-between items-start">
                         <div>
                             <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-2xl font-bold font-display">General Assistant</h3>
-                                <Badge>v2.4 Stable</Badge>
+                                <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Profile Selected'}</h3>
+                                <Badge>{activeProfile?.isDefault ? 'Default' : 'Saved'}</Badge>
+                                <Badge variant={activeProfile?.status === 'finalized' ? 'success' : 'warning'}>{activeProfile?.status || 'draft'}</Badge>
                             </div>
-                            <p className="text-slate-600 max-w-lg">Primary interface for day-to-day operations and home automation triggers.</p>
+                            <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant profile from the desktop setup survey or the web console.'}</p>
                         </div>
                         <div className="flex gap-2">
-                             <button className="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl font-bold text-sm">Duplicate</button>
-                             <button className="bg-primary-container text-white px-8 py-2.5 rounded-xl font-bold text-sm shadow-xl shadow-primary-container/20">Save Changes</button>
+                              <button className="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl font-bold text-sm">Duplicate</button>
+                              <button
+                                disabled={!activeProfile || activeProfile.status === 'finalized' || finalizingProfileId === activeProfile.id}
+                                onClick={() => activeProfile && void onFinalizeProfile(activeProfile.id)}
+                                className="bg-primary-container text-white px-8 py-2.5 rounded-xl font-bold text-sm shadow-xl shadow-primary-container/20 disabled:opacity-50 disabled:shadow-none"
+                                type="button"
+                              >
+                                {finalizingProfileId === activeProfile?.id ? 'Finalizing...' : activeProfile?.status === 'finalized' ? 'Finalized' : 'Finalize Assistant'}
+                              </button>
                         </div>
                     </div>
                 </div>
@@ -736,7 +795,7 @@ const AssistantProfilesPage = () => (
                         <div>
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Personality Style</label>
                             <div className="flex bg-slate-100 p-1 rounded-2xl">
-                                {['Helpful', 'Concise', 'Analytical'].map((s, i) => (
+                                {[activeProfile?.useCase || 'daily', activeProfile?.answerStyle || 'moderate', activeProfile?.priority || 'balanced'].map((s, i) => (
                                     <button key={i} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${i === 0 ? 'bg-white shadow-sm text-primary-container' : 'text-slate-400'}`}>
                                         {s}
                                     </button>
@@ -749,8 +808,8 @@ const AssistantProfilesPage = () => (
                                 <div className="flex items-center gap-3">
                                     <Database className="w-5 h-5 text-slate-400" />
                                     <div>
-                                        <p className="text-sm font-bold text-slate-900">Qwen3 4B</p>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">FP16 • Quantized</p>
+                                        <p className="text-sm font-bold text-slate-900">{activeProfile?.model || 'gemini-2.5-flash'}</p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{activeProfile?.provider || 'gemini'} • {activeProfile?.localMode || 'hybrid'}</p>
                                     </div>
                                 </div>
                                 <button className="text-primary-container text-sm font-bold hover:underline">Change</button>
@@ -763,22 +822,26 @@ const AssistantProfilesPage = () => (
                         <div className="bg-slate-900 rounded-3xl p-6 text-xs text-slate-400 font-mono leading-relaxed h-[220px] relative overflow-hidden group">
                            <p className="text-slate-600 mb-4">// Core Instructions</p>
                            <p>
-                             <span className="text-white">You are MiVA</span>, a local-first AI assistant. Your primary goal is to provide concise, helpful, and technically accurate responses. 
-                             Avoid flowery language. Maintain a tone that is professional yet approachable. 
-                             You do not have access to the public internet unless specified.
-                           </p>
-                           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-900/60 pointer-events-none"></div>
+                             <span className="text-white">You are MiVA</span>, a {activeProfile?.localMode || 'hybrid'} AI assistant. 
+                             Use case: {activeProfile?.useCase || 'daily'}. Answer style: {activeProfile?.answerStyle || 'moderate'}.
+                             Language mode: {activeProfile?.languageUse || 'korean'}. Future tools: {(activeProfile?.futureFeatures || []).join(', ') || 'none'}.
+                            </p>
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-900/60 pointer-events-none"></div>
                         </div>
                     </div>
                 </div>
                 <div className="p-8 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
-                    <span>Last modified 14 hours ago</span>
+                    <span>
+                      Last modified {activeProfile ? formatRelativeTime(new Date(activeProfile.updatedAt)) : 'Not saved yet'}
+                      {activeProfile?.completedAt ? ` / finalized ${formatRelativeTime(new Date(activeProfile.completedAt))}` : ''}
+                    </span>
                     <button className="text-red-500 font-bold hover:underline">DELETE PROFILE</button>
                 </div>
             </Card>
         </div>
     </motion.div>
-);
+  );
+};
 
 const TerminalIcon = ({ className }: { className?: string }) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1121,10 +1184,168 @@ const VoiceCharacterPage = () => (
     </motion.div>
 );
 
+const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refreshCloud: () => Promise<void> }) => {
+  const stats = cloud.adminStats;
+  const metricCards = [
+    { label: 'Users', value: stats?.users.total ?? 0, detail: `${stats?.users.active ?? 0} active` },
+    { label: 'Devices', value: stats?.devices.total ?? 0, detail: `${stats?.devices.connected ?? 0} connected` },
+    { label: 'Assistant Profiles', value: stats?.assistantProfiles.total ?? cloud.profiles.length, detail: `${stats?.assistantProfiles.finalized ?? 0} finalized` },
+    { label: 'Cloud API', value: cloud.status === 'connected' ? 'Online' : 'Offline', detail: formatRelativeTime(cloud.lastChecked) },
+  ];
+
+  const topSections = [
+    { title: 'Top Models', items: stats?.models || [] },
+    { title: 'Top Providers', items: stats?.providers || [] },
+    { title: 'Assistant Roles', items: stats?.assistantProfiles.useCases || [] },
+    { title: 'Local Modes', items: stats?.assistantProfiles.localModes || [] },
+    { title: 'Profile Status', items: stats?.assistantProfiles.statuses || [] },
+  ];
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div className="flex items-end justify-between gap-6">
+        <div>
+          <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
+            Admin Analytics <span className="text-slate-300 font-medium text-2xl">/ 관리자 통계</span>
+          </h2>
+          <p className="text-slate-500 mt-2 max-w-2xl">
+            Track product-level choices without storing private chat content. Phase 1 measures selected models, providers, assistant roles, and device status.
+          </p>
+        </div>
+        <button
+          onClick={() => void refreshCloud()}
+          className="px-5 py-2.5 bg-primary-container text-white font-semibold rounded-xl flex items-center gap-2 hover:opacity-90 transition-all active:scale-[0.98] shadow-md shadow-primary-container/20"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh stats
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        {metricCards.map((metric) => (
+          <Card key={metric.label} className="p-6">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{metric.label}</p>
+            <p className="mt-3 text-3xl font-black text-slate-900">{metric.value}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-400">{metric.detail}</p>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {topSections.map((section) => (
+          <Card key={section.title} className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold font-display">{section.title}</h3>
+              <Badge>{section.items.length} items</Badge>
+            </div>
+            <div className="space-y-3">
+              {section.items.length === 0 ? (
+                <p className="text-sm text-slate-400">No events recorded yet.</p>
+              ) : (
+                section.items.map((item, index) => (
+                  <div key={item.name} className="flex items-center gap-4">
+                    <span className="w-6 text-xs font-black text-slate-300">{index + 1}</span>
+                    <div className="flex-1">
+                      <div className="flex justify-between text-sm font-bold text-slate-700">
+                        <span>{item.name}</span>
+                        <span>{item.count}</span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-primary-container" style={{ width: `${Math.min(100, item.count * 25)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-lg font-bold font-display">Recent Usage Events</h3>
+          <Badge variant={cloud.status === 'connected' ? 'success' : 'warning'}>{statusLabel(cloud.status)}</Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Event</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Value</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Time</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {(stats?.recentEvents || []).map((event) => (
+                <tr key={event.id} className="hover:bg-slate-50/60">
+                  <td className="px-6 py-4 text-sm font-bold text-slate-800">{event.type}</td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{event.value}</td>
+                  <td className="px-6 py-4 text-sm text-slate-400">{formatRelativeTime(new Date(event.createdAt))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </motion.div>
+  );
+};
+
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
+  const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
+  const [creatingProfile, setCreatingProfile] = useState(false);
+  const [finalizingProfileId, setFinalizingProfileId] = useState<string | null>(null);
+
+  const refreshCloud = async () => {
+    const next: CloudState = {
+      ...initialCloudState,
+      lastChecked: new Date(),
+    };
+
+    try {
+      await checkCloudApi();
+      next.status = 'connected';
+
+      const [profilesResponse, adminStats] = await Promise.all([
+        getAssistantProfiles(),
+        getAdminStats(),
+      ]);
+
+      next.profiles = profilesResponse.profiles || [];
+      next.adminStats = adminStats;
+    } catch (error) {
+      next.status = 'offline';
+      next.error = error instanceof Error ? error.message : 'Cloud API is offline.';
+    }
+
+    setCloud(next);
+  };
+
+  const createCloudProfile = async (profile: AssistantProfileDraft) => {
+    setCreatingProfile(true);
+    try {
+      await createAssistantProfile(profile);
+      await refreshCloud();
+      setActivePage('profiles');
+    } finally {
+      setCreatingProfile(false);
+    }
+  };
+
+  const finalizeCloudProfile = async (profileId: string) => {
+    setFinalizingProfileId(profileId);
+    try {
+      await finalizeAssistantProfile(profileId);
+      await refreshCloud();
+      setActivePage('profiles');
+    } finally {
+      setFinalizingProfileId(null);
+    }
+  };
 
   const refreshConnection = async () => {
     setAction({ type: 'refreshing', message: 'Checking local MiVA services...' });
@@ -1202,6 +1423,7 @@ export default function App() {
   const pullModel = async (model: string) => {
     setAction({ type: 'pulling-model', model, message: `Preparing ${model} download...`, progress: 0 });
     try {
+      void recordUsageEvent('model_selected', model).catch(() => undefined);
       const response = await fetch(`${LOCAL_HELPER_URL}/models/pull`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1246,6 +1468,7 @@ export default function App() {
 
       setAction({ type: 'pulling-model', model, message: `${model} download complete. Refreshing catalog...`, progress: 100 });
       await refreshConnection();
+      await refreshCloud();
     } catch (error) {
       setAction({
         type: 'idle',
@@ -1256,6 +1479,7 @@ export default function App() {
 
   useEffect(() => {
     void refreshConnection();
+    void refreshCloud();
   }, []);
 
   const actions: WebConsoleActions = {
@@ -1265,7 +1489,7 @@ export default function App() {
   };
 
   const topStatus = useMemo(() => {
-    if (connection.desktop === 'connected' || connection.helper === 'connected') {
+    if (connection.desktop === 'connected' || connection.helper === 'connected' || cloud.status === 'connected') {
       return {
         label: 'Connected / 연결됨',
         dot: 'bg-green-500 status-glow',
@@ -1274,7 +1498,7 @@ export default function App() {
       };
     }
 
-    if (connection.desktop === 'checking' || connection.helper === 'checking') {
+    if (connection.desktop === 'checking' || connection.helper === 'checking' || cloud.status === 'checking') {
       return {
         label: 'Checking / 확인 중',
         dot: 'bg-amber-400',
@@ -1289,16 +1513,25 @@ export default function App() {
       text: 'text-red-700',
       bg: 'bg-red-50',
     };
-  }, [connection.desktop, connection.helper]);
+  }, [connection.desktop, connection.helper, cloud.status]);
 
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard': return <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'devices': return <DevicesPage connection={connection} actions={actions} />;
       case 'models': return <ModelsPage connection={connection} action={action} actions={actions} />;
-      case 'profiles': return <AssistantProfilesPage />;
+      case 'profiles': return (
+        <AssistantProfilesPage
+          cloud={cloud}
+          creatingProfile={creatingProfile}
+          finalizingProfileId={finalizingProfileId}
+          onCreateProfile={createCloudProfile}
+          onFinalizeProfile={finalizeCloudProfile}
+        />
+      );
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
+      case 'admin': return <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} />;
       case 'settings': return <SettingsPage />;
       default: return null;
     }

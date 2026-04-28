@@ -1,0 +1,48 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { lightweightModels } from "../../../packages/shared/src/index.js";
+
+function loadEnvFile() {
+  const envPath = fileURLToPath(new URL("../.env", import.meta.url));
+
+  try {
+    const content = readFileSync(envPath, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+        continue;
+      }
+
+      const [rawKey, ...rawValueParts] = trimmed.split("=");
+      const key = rawKey.trim();
+      const value = rawValueParts.join("=").trim().replace(/^["']|["']$/g, "");
+      if (key && (process.env[key] === undefined || process.env[key] === "")) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // .env is optional. Missing keys are reported by provider handlers.
+  }
+}
+
+loadEnvFile();
+
+export const HELPER_PORT = Number(process.env.MIVA_HELPER_PORT || 43110);
+export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+export const OPENAI_DEFAULT_MODEL = process.env.OPENAI_DEFAULT_MODEL || "gpt-4o-mini";
+export const GEMINI_DEFAULT_MODEL = process.env.GEMINI_DEFAULT_MODEL || "gemini-2.5-flash";
+export const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.5-flash-lite")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
+export const PUBLIC_DIR = fileURLToPath(new URL("../public/", import.meta.url));
+
+export const modelCatalog = lightweightModels;
+export const allowedModels = new Set(modelCatalog.map((model) => model.ollamaName));
+
+export const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  `http://localhost:${HELPER_PORT}`,
+  `http://127.0.0.1:${HELPER_PORT}`
+]);
