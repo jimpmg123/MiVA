@@ -363,6 +363,10 @@ Reason:
 - Desktop app is better for push-to-talk, wake mode, tray, and virtual character sync.
 - Privacy expectations are clearer when audio stays local unless the user chooses a cloud STT provider.
 
+See `docs/STT_STRATEGY.md` for the STT mode split, local model choices, and hardware guidance.
+
+See `docs/CODING_AGENT_POLICY.md` for the Claw Code and coding-model policy. MiVA should require a cloud API model by default for code editing and repository automation, while keeping local models available for read-only code explanation.
+
 ### Virtual Character Runtime
 
 Recommended place:

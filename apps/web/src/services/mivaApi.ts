@@ -5,6 +5,41 @@ export type ServiceStatus = "checking" | "connected" | "offline";
 export type AssistantProfileStatus = "draft" | "finalized";
 export type AssistantProfileSource = "desktop-setup" | "web-console" | "api";
 export type AuthRole = "guest" | "user" | "admin";
+export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
+export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+export type ApiKeyProviderId = "openai" | "gemini" | "anthropic" | "custom";
+export type ApiKeyStatus = "notConfigured" | "configured" | "verified" | "error";
+export type UsageMode = "local" | "cloud";
+
+export interface PromptSettings {
+  persona: string;
+  roleGoal: string;
+  responseRules: string[];
+  scheduleRules: {
+    mode: CalendarActionMode;
+    timezone: string;
+    reminderPreference: string;
+  };
+  workspaceRules: {
+    googleWorkspace: WorkspaceToolPolicy;
+    calendar: WorkspaceToolPolicy;
+    gmail: WorkspaceToolPolicy;
+    drive: WorkspaceToolPolicy;
+  };
+  safetyRules: string[];
+}
+
+export interface AssistantPromptConfig {
+  profileId?: string | null;
+  systemPrompt?: string;
+  settings?: PromptSettings;
+  variables?: Record<string, unknown>;
+  overrides?: {
+    persona?: string | null;
+    instructions?: string[];
+    guardrails?: string[];
+  };
+}
 
 export interface AuthUser {
   id: string;
@@ -32,6 +67,7 @@ export interface AssistantProfile {
   createdAt: string;
   updatedAt: string;
   completedAt?: string | null;
+  prompt?: AssistantPromptConfig;
 }
 
 export type AssistantProfileDraft = Omit<
@@ -77,10 +113,68 @@ export interface AdminStats {
   recentEvents: UsageEvent[];
 }
 
+export interface ApiKeyRecord {
+  id: string;
+  provider: ApiKeyProviderId;
+  label: string;
+  maskedKey: string;
+  status: ApiKeyStatus;
+  lastValidatedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiKeyDraft {
+  id?: string;
+  provider: ApiKeyProviderId;
+  label: string;
+  key: string;
+}
+
+export interface UsageSummary {
+  totals: {
+    events: number;
+    localEvents: number;
+    cloudEvents: number;
+    estimatedInputChars: number;
+    estimatedOutputChars: number;
+    averageLatencyMs: number;
+  };
+  byProvider: AdminTopItem[];
+  byModel: AdminTopItem[];
+  recentEvents: Array<{
+    id: string;
+    mode: UsageMode;
+    provider: string;
+    model: string;
+    assistantProfileId?: string | null;
+    inputChars: number;
+    outputChars: number;
+    durationMs: number;
+    success: boolean;
+    createdAt: string;
+  }>;
+}
+
+export interface LocalUsageEventDraft {
+  deviceId?: string;
+  assistantProfileId?: string | null;
+  mode: UsageMode;
+  provider: string;
+  model: string;
+  inputChars?: number;
+  outputChars?: number;
+  durationMs?: number;
+  success?: boolean;
+  createdAt?: string;
+}
+
 export interface CloudState {
   status: ServiceStatus;
   profiles: AssistantProfile[];
   adminStats: AdminStats | null;
+  apiKeys: ApiKeyRecord[];
+  usageSummary: UsageSummary | null;
   error?: string;
   lastChecked: Date | null;
 }
@@ -89,6 +183,8 @@ export const initialCloudState: CloudState = {
   status: "checking",
   profiles: [],
   adminStats: null,
+  apiKeys: [],
+  usageSummary: null,
   lastChecked: null,
 };
 
@@ -111,6 +207,26 @@ export async function login(email: string, password: string) {
       "content-type": "application/json",
     },
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function loginWithGoogleCredential(credential: string) {
+  return fetchJson<{ user: AuthUser; token: string }>(`${CLOUD_API_URL}/auth/google`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ credential }),
+  });
+}
+
+export async function completeDesktopDeviceLogin(deviceCode: string, token: string) {
+  return fetchJson<{ status: string }>(`${CLOUD_API_URL}/auth/device/complete`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ deviceCode, token }),
   });
 }
 
@@ -139,6 +255,43 @@ export async function finalizeAssistantProfile(profileId: string) {
 
 export async function getAdminStats() {
   return fetchJson<AdminStats>(`${CLOUD_API_URL}/admin/stats`);
+}
+
+export async function getApiKeys() {
+  return fetchJson<{ keys: ApiKeyRecord[] }>(`${CLOUD_API_URL}/api-keys`);
+}
+
+export async function saveApiKey(key: ApiKeyDraft) {
+  return fetchJson<{ key: ApiKeyRecord }>(`${CLOUD_API_URL}/api-keys`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(key),
+  });
+}
+
+export async function testApiKey(keyId: string) {
+  return fetchJson<{ key: ApiKeyRecord }>(`${CLOUD_API_URL}/api-keys/${encodeURIComponent(keyId)}/test`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
+export async function getUsageSummary() {
+  return fetchJson<UsageSummary>(`${CLOUD_API_URL}/usage/summary`);
+}
+
+export async function recordLocalUsageEvents(events: LocalUsageEventDraft[]) {
+  return fetchJson<{ ok: boolean; accepted: number }>(`${CLOUD_API_URL}/usage/local-events`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ events }),
+  });
 }
 
 export async function recordUsageEvent(type: string, value: string) {

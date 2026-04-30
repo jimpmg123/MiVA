@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { 
   LayoutDashboard, 
   Cpu, 
@@ -18,29 +18,67 @@ import {
   Download,
   Trash2,
   Lock,
-  Plus
+  Plus,
+  KeyRound,
+  CreditCard,
+  Activity,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   checkCloudApi,
+  completeDesktopDeviceLogin,
   createAssistantProfile,
   fetchJson,
   finalizeAssistantProfile,
   getAdminStats,
+  getApiKeys,
   getAssistantProfiles,
+  getUsageSummary,
   initialCloudState,
   login,
+  loginWithGoogleCredential,
   recordUsageEvent,
+  saveApiKey,
+  testApiKey,
 } from './services/mivaApi';
 import type {
+  ApiKeyDraft,
+  ApiKeyProviderId,
   AuthRole,
   AuthUser,
   AssistantProfileDraft,
   CloudState,
 } from './services/mivaApi';
 
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential?: string }) => void;
+            ux_mode?: 'popup' | 'redirect';
+          }) => void;
+          renderButton: (
+            parent: HTMLElement,
+            options: {
+              theme?: 'outline' | 'filled_blue' | 'filled_black';
+              size?: 'large' | 'medium' | 'small';
+              shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+              width?: number;
+              text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+            },
+          ) => void;
+        };
+      };
+    };
+  }
+}
+
 // --- Types ---
-type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'integrations' | 'voice' | 'admin' | 'settings';
+type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'apiKeys' | 'usage' | 'billing' | 'integrations' | 'voice' | 'admin' | 'settings';
 type ServiceStatus = 'checking' | 'connected' | 'offline';
 type AuthState = {
   role: AuthRole;
@@ -51,6 +89,7 @@ type AuthState = {
 const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
 const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
 const DEFAULT_MODEL_ID = 'qwen3:4b';
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 interface OllamaStatus {
   installed?: boolean;
@@ -201,7 +240,10 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', labelKr: '대시보드', icon: LayoutDashboard },
   { id: 'devices', label: 'Devices', labelKr: '장치', icon: Cpu },
   { id: 'models', label: 'Models', labelKr: '모델', icon: Database },
-  { id: 'profiles', label: 'Assistant Profiles', labelKr: '프로필', icon: UserCircle },
+  { id: 'profiles', label: 'My Assistants', labelKr: 'Profiles', icon: UserCircle },
+  { id: 'apiKeys', label: 'API Keys', labelKr: 'Keys', icon: KeyRound },
+  { id: 'usage', label: 'Usage', labelKr: 'Usage', icon: Activity },
+  { id: 'billing', label: 'Billing', labelKr: 'Billing', icon: CreditCard },
   { id: 'integrations', label: 'Integrations', labelKr: '연동', icon: Blocks },
   { id: 'voice', label: 'Voice & Character', labelKr: '음성 및 캐릭터', icon: AudioLines },
   { id: 'admin', label: 'Admin Analytics', labelKr: '관리자 통계', icon: BarChart3 },
@@ -209,6 +251,23 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const authStorageKey = 'miva.web.auth.v1';
+
+function getDesktopLoginRequest() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const deviceCode = params.get('deviceCode');
+  if (params.get('desktopLogin') !== '1' || !deviceCode) {
+    return null;
+  }
+
+  return {
+    deviceCode,
+    userCode: params.get('userCode') || '',
+  };
+}
 
 // --- Sub-components ---
 
@@ -694,28 +753,58 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
   );
 };
 
-const AssistantProfilesPage = ({
+const MyAssistantsPage = ({
   cloud,
   creatingProfile,
   finalizingProfileId,
   onCreateProfile,
   onFinalizeProfile,
+  onRefreshCloud,
 }: {
   cloud: CloudState;
   creatingProfile: boolean;
   finalizingProfileId: string | null;
   onCreateProfile: (profile: AssistantProfileDraft) => Promise<void>;
   onFinalizeProfile: (profileId: string) => Promise<void>;
+  onRefreshCloud: () => Promise<void>;
 }) => {
   const profiles = cloud.profiles;
-  const activeProfile = profiles.find((profile) => profile.isDefault) || profiles[0];
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const activeProfile = profiles.find((profile) => profile.id === selectedProfileId)
+    || profiles.find((profile) => profile.isDefault)
+    || profiles[0];
+
+  useEffect(() => {
+    if (profiles.length === 0) {
+      setSelectedProfileId(null);
+      return;
+    }
+
+    if (selectedProfileId && profiles.some((profile) => profile.id === selectedProfileId)) {
+      return;
+    }
+
+    setSelectedProfileId((profiles.find((profile) => profile.isDefault) || profiles[0]).id);
+  }, [profiles, selectedProfileId]);
+
+  const promptSettings = activeProfile?.prompt?.settings;
+  const scheduleModeLabel = promptSettings?.scheduleRules.mode === 'confirmBeforeAction'
+    ? 'Confirm before action'
+    : promptSettings?.scheduleRules.mode === 'connectedActions'
+      ? 'Connected actions'
+      : 'Draft only';
+  const workspacePolicyLabel = promptSettings?.workspaceRules.googleWorkspace === 'askFirst'
+    ? 'Ask first'
+    : promptSettings?.workspaceRules.googleWorkspace === 'connectedOnly'
+      ? 'Connected only'
+      : 'Disabled';
   const sourceLabel = (source?: string) => {
     if (source === 'desktop-setup') return 'Desktop Sync';
     if (source === 'web-console') return 'Web Console';
     return source || 'Unknown';
   };
   const createDefaultProfile = () => onCreateProfile({
-    name: `Assistant Profile ${profiles.length + 1}`,
+    name: `MiVA Assistant ${profiles.length + 1}`,
     description: 'A web-created MiVA assistant profile. Replace this with survey results or a custom profile editor later.',
     useCase: 'daily',
     answerStyle: 'moderate',
@@ -732,24 +821,34 @@ const AssistantProfilesPage = ({
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-        <div className="mb-8">
+        <div className="mb-8 flex items-start justify-between gap-6">
+          <div>
             <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-                Assistant Profiles <span className="text-slate-300 font-medium text-2xl">/ 프로필</span>
+                My Assistants
             </h2>
-            <p className="text-slate-500 mt-1">Manage saved AI assistant profiles from survey choices, model preferences, and future tool permissions.</p>
+            <p className="text-slate-500 mt-1">Review assistants synced from the desktop app and manage web-created assistants.</p>
+          </div>
+          <button
+            className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-200 active:scale-[0.98]"
+            onClick={() => void onRefreshCloud()}
+            type="button"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
         </div>
 
         <div className="grid grid-cols-12 gap-8 items-start">
             <div className="col-span-12 lg:col-span-4 space-y-6">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-bold font-display">Saved Profiles</h3>
+                    <h3 className="text-xl font-bold font-display">Saved Assistants</h3>
                     <button
                       className="text-xs font-bold text-primary-container flex items-center gap-1 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={cloud.status !== 'connected' || creatingProfile}
                       onClick={() => void createDefaultProfile()}
                       type="button"
                     >
-                        <Plus className="w-4 h-4" /> {creatingProfile ? 'CREATING...' : 'NEW PROFILE'}
+                        <Plus className="w-4 h-4" /> {creatingProfile ? 'CREATING...' : 'NEW ASSISTANT'}
                     </button>
                 </div>
                 <div className="space-y-4">
@@ -758,7 +857,12 @@ const AssistantProfilesPage = ({
                       const active = profile.id === activeProfile?.id;
 
                       return (
-                        <div key={profile.id} className={`p-4 rounded-[20px] bg-white shadow-sm border-2 transition-all cursor-pointer ${active ? 'border-primary-container' : 'border-slate-50 hover:border-slate-200'}`}>
+                        <button
+                          key={profile.id}
+                          className={`w-full p-4 text-left rounded-[20px] bg-white shadow-sm border-2 transition-all cursor-pointer ${active ? 'border-primary-container' : 'border-slate-50 hover:border-slate-200'}`}
+                          onClick={() => setSelectedProfileId(profile.id)}
+                          type="button"
+                        >
                             <div className="flex items-center gap-4">
                                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${active ? 'bg-primary-container/10 text-primary-container' : 'bg-slate-50 text-slate-400'}`}>
                                     <Icon className="w-6 h-6" />
@@ -770,13 +874,13 @@ const AssistantProfilesPage = ({
                                 </div>
                                 {active && <div className="ml-auto w-2 h-2 rounded-full bg-primary-container"></div>}
                             </div>
-                        </div>
+                        </button>
                       );
                     })}
 
                     {profiles.length === 0 && (
                       <div className="p-6 rounded-[20px] bg-white border border-dashed border-slate-200 text-sm text-slate-400">
-                        Cloud API is not connected yet. Start `apps/api` to load saved assistant profiles.
+                        No assistants loaded yet. Start the API, sync from MiVA Desktop, or create a web assistant.
                       </div>
                     )}
                 </div>
@@ -787,14 +891,14 @@ const AssistantProfilesPage = ({
                     <div className="flex justify-between items-start">
                         <div>
                             <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Profile Selected'}</h3>
+                                <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Assistant Selected'}</h3>
                                 <Badge>{activeProfile?.isDefault ? 'Default' : 'Saved'}</Badge>
                                 <Badge variant={activeProfile?.status === 'finalized' ? 'success' : 'warning'}>{activeProfile?.status || 'draft'}</Badge>
                                 <Badge variant={activeProfile?.source === 'desktop-setup' ? 'success' : 'info'}>
                                   {sourceLabel(activeProfile?.source)}
                                 </Badge>
                             </div>
-                            <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant profile from the desktop setup survey or the web console.'}</p>
+                            <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant from the desktop setup survey or the web console.'}</p>
                         </div>
                         <div className="flex gap-2">
                               <button className="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl font-bold text-sm">Duplicate</button>
@@ -834,6 +938,25 @@ const AssistantProfilesPage = ({
                                 <button className="text-primary-container text-sm font-bold hover:underline">Change</button>
                             </div>
                         </div>
+                        <div>
+                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Prompt Settings</label>
+                            <div className="space-y-3">
+                              <div className="p-4 bg-slate-50 rounded-2xl">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Persona</p>
+                                <p className="mt-2 text-sm font-semibold text-slate-800">{promptSettings?.persona || 'Default MiVA assistant persona'}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="p-4 bg-slate-50 rounded-2xl">
+                                  <p className="text-xs font-black uppercase tracking-wider text-slate-400">Schedule</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-800">{scheduleModeLabel}</p>
+                                </div>
+                                <div className="p-4 bg-slate-50 rounded-2xl">
+                                  <p className="text-xs font-black uppercase tracking-wider text-slate-400">Workspace</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-800">{workspacePolicyLabel}</p>
+                                </div>
+                              </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="space-y-4">
@@ -845,7 +968,25 @@ const AssistantProfilesPage = ({
                              Use case: {activeProfile?.useCase || 'daily'}. Answer style: {activeProfile?.answerStyle || 'moderate'}.
                              Language mode: {activeProfile?.languageUse || 'korean'}. Future tools: {(activeProfile?.futureFeatures || []).join(', ') || 'none'}.
                             </p>
+                           {promptSettings && (
+                            <div className="mt-5 space-y-2">
+                              <p><span className="text-white">Persona:</span> {promptSettings.persona}</p>
+                              <p><span className="text-white">Role goal:</span> {promptSettings.roleGoal}</p>
+                              <p><span className="text-white">Schedule:</span> {scheduleModeLabel} / {promptSettings.scheduleRules.timezone}</p>
+                            </div>
+                           )}
                             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-900/60 pointer-events-none"></div>
+                        </div>
+                        <div className="bg-white rounded-3xl border border-slate-100 p-5">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] block mb-3">Response Rules</label>
+                          <div className="space-y-2">
+                            {(promptSettings?.responseRules || ['Direct answer first', 'Ask when ambiguous']).slice(0, 4).map((rule, index) => (
+                              <div key={index} className="flex gap-2 text-sm text-slate-600">
+                                <span className="text-primary-container font-bold">{index + 1}.</span>
+                                <span>{rule}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                     </div>
                 </div>
@@ -854,10 +995,314 @@ const AssistantProfilesPage = ({
                       Last modified {activeProfile ? formatRelativeTime(new Date(activeProfile.updatedAt)) : 'Not saved yet'}
                       {activeProfile?.completedAt ? ` / finalized ${formatRelativeTime(new Date(activeProfile.completedAt))}` : ''}
                     </span>
-                    <button className="text-red-500 font-bold hover:underline">DELETE PROFILE</button>
+                    <button className="text-red-500 font-bold hover:underline">DELETE ASSISTANT</button>
                 </div>
             </Card>
         </div>
+    </motion.div>
+  );
+};
+
+const apiKeyProviders: Array<{
+  provider: ApiKeyProviderId;
+  label: string;
+  description: string;
+  placeholder: string;
+}> = [
+  {
+    provider: 'openai',
+    label: 'OpenAI',
+    description: 'Use GPT models for cloud fallback and advanced assistant tasks.',
+    placeholder: 'sk-...',
+  },
+  {
+    provider: 'gemini',
+    label: 'Gemini',
+    description: 'Use Gemini Flash/Pro models for lightweight cloud routing.',
+    placeholder: 'AIza...',
+  },
+  {
+    provider: 'anthropic',
+    label: 'Anthropic',
+    description: 'Reserve Claude support for future provider routing.',
+    placeholder: 'sk-ant-...',
+  },
+  {
+    provider: 'custom',
+    label: 'Custom Provider',
+    description: 'Add another AI or tool API key without changing the web layout.',
+    placeholder: 'provider API key',
+  },
+];
+
+const ApiKeysPage = ({
+  cloud,
+  savingApiKey,
+  testingApiKeyId,
+  onSaveKey,
+  onTestKey,
+}: {
+  cloud: CloudState;
+  savingApiKey: boolean;
+  testingApiKeyId: string | null;
+  onSaveKey: (key: ApiKeyDraft) => Promise<void>;
+  onTestKey: (keyId: string) => Promise<void>;
+}) => {
+  const [drafts, setDrafts] = useState<Record<string, { label: string; key: string }>>({});
+
+  const getProviderKey = (provider: ApiKeyProviderId) => cloud.apiKeys.find((key) => key.provider === provider);
+  const updateDraft = (provider: ApiKeyProviderId, field: 'label' | 'key', value: string) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [provider]: {
+        label: prev[provider]?.label || apiKeyProviders.find((item) => item.provider === provider)?.label || provider,
+        key: prev[provider]?.key || '',
+        [field]: value,
+      },
+    }));
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div>
+        <h2 className="text-3xl font-bold font-display tracking-tight">API Keys</h2>
+        <p className="text-slate-500 mt-1 max-w-2xl">
+          Add cloud provider keys as separate cards. The API only returns masked keys to the web client.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        {apiKeyProviders.map((providerConfig) => {
+          const saved = getProviderKey(providerConfig.provider);
+          const draft = drafts[providerConfig.provider] || {
+            label: saved?.label || providerConfig.label,
+            key: '',
+          };
+          const canTest = Boolean(saved?.id);
+
+          return (
+            <Card key={providerConfig.provider} className="col-span-12 lg:col-span-6 p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-primary-container/10 text-primary-container flex items-center justify-center">
+                    <KeyRound className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold font-display">{providerConfig.label}</h3>
+                    <p className="mt-1 text-sm text-slate-500 leading-6">{providerConfig.description}</p>
+                  </div>
+                </div>
+                <Badge variant={saved?.status === 'verified' ? 'success' : saved?.status === 'error' ? 'error' : saved?.maskedKey ? 'warning' : 'info'}>
+                  {saved?.status || 'not configured'}
+                </Badge>
+              </div>
+
+              <div className="mt-6 grid gap-4">
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Card Label</span>
+                  <input
+                    className="mt-2 w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-primary-container focus:bg-white"
+                    value={draft.label}
+                    onChange={(event) => updateDraft(providerConfig.provider, 'label', event.target.value)}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">API Key</span>
+                  <input
+                    className="mt-2 w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-mono text-slate-800 outline-none transition focus:border-primary-container focus:bg-white"
+                    placeholder={saved?.maskedKey || providerConfig.placeholder}
+                    value={draft.key}
+                    onChange={(event) => updateDraft(providerConfig.provider, 'key', event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between gap-4 border-t border-slate-100 pt-5">
+                <div>
+                  <p className="text-xs font-bold text-slate-500">{saved?.maskedKey || 'No key saved yet'}</p>
+                  <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-300">
+                    {saved?.lastValidatedAt ? `validated ${formatRelativeTime(new Date(saved.lastValidatedAt))}` : 'validation pending'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-500 transition hover:bg-slate-200 disabled:opacity-50"
+                    disabled={!canTest || testingApiKeyId === saved?.id}
+                    onClick={() => saved && void onTestKey(saved.id)}
+                    type="button"
+                  >
+                    {testingApiKeyId === saved?.id ? 'Testing' : 'Test'}
+                  </button>
+                  <button
+                    className="rounded-xl bg-primary-container px-5 py-2 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-primary-container/20 transition active:scale-[0.98] disabled:opacity-50"
+                    disabled={!draft.key.trim() || savingApiKey}
+                    onClick={() => void onSaveKey({
+                      id: providerConfig.provider === 'custom' ? saved?.id : undefined,
+                      provider: providerConfig.provider,
+                      label: draft.label,
+                      key: draft.key,
+                    })}
+                    type="button"
+                  >
+                    {savingApiKey ? 'Saving' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+};
+
+const UsagePage = ({ cloud, onRefreshCloud }: { cloud: CloudState; onRefreshCloud: () => Promise<void> }) => {
+  const usage = cloud.usageSummary;
+  const totals = usage?.totals;
+  const metricCards = [
+    { label: 'Total Events', value: totals?.events ?? 0, detail: 'local and cloud calls' },
+    { label: 'Local Events', value: totals?.localEvents ?? 0, detail: 'reported by desktop app' },
+    { label: 'Cloud Events', value: totals?.cloudEvents ?? 0, detail: 'provider API calls' },
+    { label: 'Avg Latency', value: `${totals?.averageLatencyMs ?? 0}ms`, detail: 'rough request time' },
+  ];
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-3xl font-bold font-display tracking-tight">Usage</h2>
+          <p className="text-slate-500 mt-1 max-w-2xl">
+            Local usage is synced as metadata only: provider, model, assistant id, text size, duration, and success state.
+          </p>
+        </div>
+        <button
+          className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-200 active:scale-[0.98]"
+          onClick={() => void onRefreshCloud()}
+          type="button"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        {metricCards.map((metric) => (
+          <Card key={metric.label} className="col-span-12 md:col-span-6 xl:col-span-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{metric.label}</p>
+            <p className="mt-3 text-3xl font-black font-display text-slate-900">{metric.value}</p>
+            <p className="mt-1 text-sm text-slate-500">{metric.detail}</p>
+          </Card>
+        ))}
+
+        <Card className="col-span-12 lg:col-span-6">
+          <h3 className="text-xl font-bold font-display mb-5">Provider Split</h3>
+          <div className="space-y-3">
+            {(usage?.byProvider || []).map((item) => (
+              <div key={item.name} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                <span className="font-bold text-slate-700">{item.name}</span>
+                <Badge>{item.count}</Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="col-span-12 lg:col-span-6">
+          <h3 className="text-xl font-bold font-display mb-5">Model Split</h3>
+          <div className="space-y-3">
+            {(usage?.byModel || []).map((item) => (
+              <div key={item.name} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                <span className="font-bold text-slate-700">{item.name}</span>
+                <Badge>{item.count}</Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="col-span-12 p-0 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="text-xl font-bold font-display">Recent Usage Events</h3>
+            <span className="text-xs font-bold uppercase tracking-widest text-slate-300">No prompt content stored</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                <tr>
+                  <th className="px-6 py-4">Mode</th>
+                  <th className="px-6 py-4">Provider</th>
+                  <th className="px-6 py-4">Model</th>
+                  <th className="px-6 py-4">Chars</th>
+                  <th className="px-6 py-4">Latency</th>
+                  <th className="px-6 py-4">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {(usage?.recentEvents || []).map((event) => (
+                  <tr key={event.id} className="hover:bg-slate-50/60">
+                    <td className="px-6 py-4 text-sm font-bold text-slate-800">{event.mode}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{event.provider}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{event.model}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{event.inputChars + event.outputChars}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{event.durationMs}ms</td>
+                    <td className="px-6 py-4">
+                      <Badge variant={event.success ? 'success' : 'error'}>{event.success ? 'ok' : 'failed'}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    </motion.div>
+  );
+};
+
+const BillingPage = () => {
+  const plans = [
+    { name: 'Free', price: '$0', detail: 'Local-first setup, manual sync, and basic web management.', active: true },
+    { name: 'Pro', price: '$9', detail: 'Cloud sync, assistant library, usage analytics, and priority templates.', active: false },
+    { name: 'Team', price: '$29', detail: 'Shared assistants, admin analytics, team devices, and policy controls.', active: false },
+  ];
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+      <div>
+        <h2 className="text-3xl font-bold font-display tracking-tight">Billing</h2>
+        <p className="text-slate-500 mt-1 max-w-2xl">
+          Mock billing screen for planning. Real checkout will be connected later through a payment provider.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        {plans.map((plan) => (
+          <Card key={plan.name} className={`col-span-12 lg:col-span-4 p-8 ${plan.active ? 'border-primary-container' : ''}`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-black font-display">{plan.name}</h3>
+              {plan.active && <Badge variant="success">Current</Badge>}
+            </div>
+            <p className="mt-6 text-4xl font-black font-display text-slate-900">{plan.price}<span className="text-base text-slate-400">/mo</span></p>
+            <p className="mt-4 min-h-[72px] text-sm leading-6 text-slate-500">{plan.detail}</p>
+            <button
+              className={`mt-8 w-full rounded-2xl px-6 py-4 text-sm font-black uppercase tracking-widest transition active:scale-[0.98] ${
+                plan.active ? 'bg-slate-100 text-slate-400' : 'bg-primary-container text-white shadow-xl shadow-primary-container/20'
+              }`}
+              type="button"
+            >
+              {plan.active ? 'Current Plan' : 'Mock Upgrade'}
+            </button>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="p-8">
+        <div className="flex items-center gap-3 text-slate-500">
+          <CheckCircle2 className="h-5 w-5 text-green-600" />
+          <p className="text-sm font-semibold">
+            No payment is processed in this prototype. This screen exists to reserve the service structure.
+          </p>
+        </div>
+      </Card>
     </motion.div>
   );
 };
@@ -893,17 +1338,74 @@ function loadAuthState(): AuthState {
 
 const LoginPage = ({
   cloud,
+  desktopLoginRequest,
+  googleLoginPending,
   loginError,
   loginPending,
+  onGoogleCredential,
   onLogin,
 }: {
   cloud: CloudState;
+  desktopLoginRequest: { deviceCode: string; userCode: string } | null;
+  googleLoginPending: boolean;
   loginError: string | null;
   loginPending: boolean;
+  onGoogleCredential: (credential: string) => Promise<void>;
   onLogin: (email: string, password: string) => Promise<void>;
 }) => {
   const [email, setEmail] = useState('dev@miva.local');
   const [password, setPassword] = useState('miva1234');
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  const [googleScriptReady, setGoogleScriptReady] = useState(false);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      return;
+    }
+
+    if (window.google?.accounts?.id) {
+      setGoogleScriptReady(true);
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-miva-google-identity]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => setGoogleScriptReady(true), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.mivaGoogleIdentity = 'true';
+    script.onload = () => setGoogleScriptReady(true);
+    document.head.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || !googleScriptReady || !googleButtonRef.current || !window.google?.accounts?.id) {
+      return;
+    }
+
+    googleButtonRef.current.innerHTML = '';
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      ux_mode: 'popup',
+      callback: (response) => {
+        if (response.credential) {
+          void onGoogleCredential(response.credential);
+        }
+      },
+    });
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: 'outline',
+      size: 'large',
+      shape: 'pill',
+      width: 336,
+      text: 'continue_with',
+    });
+  }, [googleScriptReady, onGoogleCredential]);
 
   return (
     <main className="min-h-screen bg-surface-bg text-slate-900 grid place-items-center p-8">
@@ -923,7 +1425,7 @@ const LoginPage = ({
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
             {[
               ['Local-first setup', 'Install Ollama, choose a lightweight model, and test chat locally.'],
-              ['Assistant profiles', 'Save use case, answer style, provider, model, and future tool preferences.'],
+              ['My Assistants', 'Save use case, answer style, provider, model, and future tool preferences.'],
               ['Studio ready', 'Prepare prompts, TTS, 2D characters, integrations, and skills in one workspace.'],
             ].map(([title, body]) => (
               <div className="rounded-3xl border border-slate-100 bg-white/70 p-5 shadow-sm" key={title}>
@@ -945,13 +1447,48 @@ const LoginPage = ({
             </button>
             <Badge variant={cloud.status === 'connected' ? 'success' : 'warning'}>Cloud API {statusLabel(cloud.status)}</Badge>
           </div>
+
+          {desktopLoginRequest && (
+            <div className="mt-6 rounded-3xl border border-primary-container/20 bg-primary-container/5 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-container">Desktop Login</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                After sign-in, this browser session will connect MiVA Desktop automatically.
+              </p>
+              <p className="mt-3 font-mono text-xs font-bold text-slate-500">Code: {desktopLoginRequest.userCode || 'linked request'}</p>
+            </div>
+          )}
         </div>
 
         <Card className="p-8">
           <h2 className="text-2xl font-bold font-display tracking-tight">Sign in to Console</h2>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Local test accounts are available until real auth and database persistence are added.
+            Use Google OAuth when a client ID is configured. Local test accounts remain available during development.
           </p>
+
+          <div className="mt-7 rounded-3xl border border-slate-100 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-black text-slate-900">Continue with Google</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Requires `VITE_GOOGLE_CLIENT_ID` in the web app and `GOOGLE_OAUTH_CLIENT_ID` in the API.
+                </p>
+              </div>
+              {googleLoginPending && <Badge variant="warning">Signing in</Badge>}
+            </div>
+            <div className="mt-4 min-h-[44px]">
+              {GOOGLE_CLIENT_ID ? (
+                <div ref={googleButtonRef} />
+              ) : (
+                <button
+                  className="w-full cursor-not-allowed rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-400"
+                  disabled
+                  type="button"
+                >
+                  Google OAuth not configured
+                </button>
+              )}
+            </div>
+          </div>
 
           <form
             className="mt-8 space-y-5"
@@ -1361,7 +1898,7 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
   const metricCards = [
     { label: 'Users', value: stats?.users.total ?? 0, detail: `${stats?.users.active ?? 0} active` },
     { label: 'Devices', value: stats?.devices.total ?? 0, detail: `${stats?.devices.connected ?? 0} connected` },
-    { label: 'Assistant Profiles', value: stats?.assistantProfiles.total ?? cloud.profiles.length, detail: `${stats?.assistantProfiles.finalized ?? 0} finalized` },
+    { label: 'My Assistants', value: stats?.assistantProfiles.total ?? cloud.profiles.length, detail: `${stats?.assistantProfiles.finalized ?? 0} finalized` },
     { label: 'Cloud API', value: cloud.status === 'connected' ? 'Online' : 'Offline', detail: formatRelativeTime(cloud.lastChecked) },
   ];
 
@@ -1467,13 +2004,18 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [auth, setAuth] = useState<AuthState>(() => loadAuthState());
+  const [desktopLoginRequest] = useState(() => getDesktopLoginRequest());
+  const [desktopLoginCompleted, setDesktopLoginCompleted] = useState(false);
   const [loginPending, setLoginPending] = useState(false);
+  const [googleLoginPending, setGoogleLoginPending] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [finalizingProfileId, setFinalizingProfileId] = useState<string | null>(null);
+  const [savingApiKey, setSavingApiKey] = useState(false);
+  const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
   const visibleNavItems = useMemo(
     () => NAV_ITEMS.filter((item) => item.id !== 'admin' || auth.role === 'admin'),
     [auth.role]
@@ -1489,13 +2031,17 @@ export default function App() {
       await checkCloudApi();
       next.status = 'connected';
 
-      const [profilesResponse, adminStats] = await Promise.all([
+      const [profilesResponse, adminStats, apiKeysResponse, usageSummary] = await Promise.all([
         getAssistantProfiles(),
         getAdminStats(),
+        getApiKeys(),
+        getUsageSummary(),
       ]);
 
       next.profiles = profilesResponse.profiles || [];
       next.adminStats = adminStats;
+      next.apiKeys = apiKeysResponse.keys || [];
+      next.usageSummary = usageSummary;
     } catch (error) {
       next.status = 'offline';
       next.error = error instanceof Error ? error.message : 'Cloud API is offline.';
@@ -1517,12 +2063,48 @@ export default function App() {
       };
       window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
       setAuth(nextAuth);
+
+      if (desktopLoginRequest) {
+        await completeDesktopDeviceLogin(desktopLoginRequest.deviceCode, response.token);
+        setDesktopLoginCompleted(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
       setActivePage('dashboard');
       await refreshCloud();
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Sign in failed.');
     } finally {
       setLoginPending(false);
+    }
+  };
+
+  const handleGoogleCredential = async (credential: string) => {
+    setGoogleLoginPending(true);
+    setLoginError(null);
+
+    try {
+      const response = await loginWithGoogleCredential(credential);
+      const nextAuth: AuthState = {
+        role: response.user.role,
+        user: response.user,
+        token: response.token,
+      };
+      window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
+      setAuth(nextAuth);
+
+      if (desktopLoginRequest) {
+        await completeDesktopDeviceLogin(desktopLoginRequest.deviceCode, response.token);
+        setDesktopLoginCompleted(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      setActivePage('dashboard');
+      await refreshCloud();
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Google sign-in failed.');
+    } finally {
+      setGoogleLoginPending(false);
     }
   };
 
@@ -1571,6 +2153,26 @@ export default function App() {
       setActivePage('profiles');
     } finally {
       setFinalizingProfileId(null);
+    }
+  };
+
+  const saveCloudApiKey = async (key: ApiKeyDraft) => {
+    setSavingApiKey(true);
+    try {
+      await saveApiKey(key);
+      await refreshCloud();
+    } finally {
+      setSavingApiKey(false);
+    }
+  };
+
+  const testCloudApiKey = async (keyId: string) => {
+    setTestingApiKeyId(keyId);
+    try {
+      await testApiKey(keyId);
+      await refreshCloud();
+    } finally {
+      setTestingApiKeyId(null);
     }
   };
 
@@ -1710,6 +2312,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!desktopLoginRequest || !auth.token || desktopLoginCompleted) {
+      return;
+    }
+
+    void completeDesktopDeviceLogin(desktopLoginRequest.deviceCode, auth.token)
+      .then(() => {
+        setDesktopLoginCompleted(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      })
+      .catch((error) => {
+        setLoginError(error instanceof Error ? error.message : 'Could not connect MiVA Desktop.');
+      });
+  }, [auth.token, desktopLoginCompleted, desktopLoginRequest]);
+
+  useEffect(() => {
     if (auth.role !== 'admin' && activePage === 'admin') {
       setActivePage('dashboard');
     }
@@ -1754,14 +2371,26 @@ export default function App() {
       case 'devices': return <DevicesPage connection={connection} actions={actions} />;
       case 'models': return <ModelsPage connection={connection} action={action} actions={actions} />;
       case 'profiles': return (
-        <AssistantProfilesPage
+        <MyAssistantsPage
           cloud={cloud}
           creatingProfile={creatingProfile}
           finalizingProfileId={finalizingProfileId}
           onCreateProfile={createCloudProfile}
           onFinalizeProfile={finalizeCloudProfile}
+          onRefreshCloud={refreshCloud}
         />
       );
+      case 'apiKeys': return (
+        <ApiKeysPage
+          cloud={cloud}
+          savingApiKey={savingApiKey}
+          testingApiKeyId={testingApiKeyId}
+          onSaveKey={saveCloudApiKey}
+          onTestKey={testCloudApiKey}
+        />
+      );
+      case 'usage': return <UsagePage cloud={cloud} onRefreshCloud={refreshCloud} />;
+      case 'billing': return <BillingPage />;
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
       case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
@@ -1774,8 +2403,11 @@ export default function App() {
     return (
       <LoginPage
         cloud={cloud}
+        desktopLoginRequest={desktopLoginRequest}
+        googleLoginPending={googleLoginPending}
         loginError={loginError}
         loginPending={loginPending}
+        onGoogleCredential={handleGoogleCredential}
         onLogin={handleLogin}
       />
     );

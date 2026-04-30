@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import type { Locale } from "./i18n";
 
@@ -31,10 +33,71 @@ type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
 type AppMode = "setup" | "studio" | "runtime" | "auth";
 type SettingsSection = "general" | "aiModels" | "security" | "logs";
-type StudioSection = "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
+type StudioSection = "myAssistants" | "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
 type ProviderId = "ollama" | "openai" | "gemini";
 type CloudProviderId = Exclude<ProviderId, "ollama">;
 type ProviderMode = "local" | "cloud";
+type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
+type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+type AuthRole = "user" | "admin";
+type PromptEditorMode = "simple" | "developer";
+
+type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: AuthRole;
+  locale: string;
+};
+
+type AuthSession = {
+  token: string;
+  user: AuthUser;
+};
+
+type DeviceAuthStart = {
+  deviceCode: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresAt: string;
+  intervalMs: number;
+};
+
+type DeviceAuthStatus = {
+  status: "pending" | "authorized" | "expired";
+  session: AuthSession | null;
+  expiresAt: string;
+};
+
+type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error";
+
+type PromptSettings = {
+  simple: {
+    assistantPurpose: string;
+    desiredTasks: string;
+    preferredTone: string;
+    avoidances: string;
+  };
+  toolConnections: {
+    googleWorkspaceCli: boolean;
+    daisoCli: boolean;
+  };
+  persona: string;
+  roleGoal: string;
+  responseRules: string[];
+  scheduleRules: {
+    mode: CalendarActionMode;
+    timezone: string;
+    reminderPreference: string;
+  };
+  workspaceRules: {
+    googleWorkspace: WorkspaceToolPolicy;
+    calendar: WorkspaceToolPolicy;
+    gmail: WorkspaceToolPolicy;
+    drive: WorkspaceToolPolicy;
+  };
+  safetyRules: string[];
+};
 
 type OllamaStatus = {
   installed: boolean;
@@ -101,6 +164,26 @@ type ProviderKeyState = {
   gemini: string;
 };
 
+type RuntimeRequirement = {
+  id: string;
+  label: string;
+  requiredFor: string;
+  installed: boolean;
+  meetsMinimum: boolean;
+  command?: string | null;
+  version?: string | null;
+  note: string;
+};
+
+type RuntimeRequirements = {
+  python: RuntimeRequirement;
+};
+
+type ProfileDetailsDraft = {
+  name: string;
+  description: string;
+};
+
 type AssistantProfileSyncState = "idle" | "syncing" | "synced" | "error";
 type LocalAssistantProfileStatus = "draft" | "finalized";
 type LocalAssistantProfileSource = "desktop-setup" | "runtime" | "web-sync";
@@ -138,6 +221,7 @@ type LocalAssistantProfile = {
   prompt: {
     profileId: string;
     systemPrompt: string;
+    settings: PromptSettings;
     variables: Record<string, unknown>;
     overrides: {
       persona: string | null;
@@ -178,6 +262,7 @@ type LocalAssistantProfileStore = {
 const PROVIDER_KEYS_STORAGE_KEY = "miva.providerKeys.v1";
 const ASSISTANT_PROFILE_STORAGE_KEY = "miva.assistantProfiles.v1";
 const RUNTIME_CHAT_STORAGE_KEY = "miva.runtimeChat.v1";
+const AUTH_STORAGE_KEY = "miva.desktop.auth.v1";
 const CLOUD_API_URL = "http://127.0.0.1:4000";
 const LOCAL_PROFILE_SCHEMA_VERSION = 1;
 const DEFAULT_LOCAL_PROFILE_ID = "local_default";
@@ -185,6 +270,58 @@ const ACTIVE_LOCALE: Locale = "en";
 const emptyProviderKeys: ProviderKeyState = {
   openai: "",
   gemini: "",
+};
+const defaultProfileDetails: ProfileDetailsDraft = {
+  name: "MiVA Assistant",
+  description: "Local MiVA assistant profile created from setup choices.",
+};
+const legacySimpleAvoidance = "Do not make tool actions sound completed unless a connected tool confirms them.";
+const defaultSimpleAvoidance = "Only say an action is done when MiVA actually completed it. If not, explain what still needs to be done.";
+const defaultPromptSettings: PromptSettings = {
+  simple: {
+    assistantPurpose: "Help me organize daily tasks, answer questions, and plan practical next actions.",
+    desiredTasks: "Write what you want this assistant to help with. Example: plan my study schedule, summarize notes, prepare calendar reminders.",
+    preferredTone: "Clear, practical, and friendly.",
+    avoidances: defaultSimpleAvoidance,
+  },
+  toolConnections: {
+    googleWorkspaceCli: false,
+    daisoCli: false,
+  },
+  persona: "A practical personal assistant named MiVA.",
+  roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
+  responseRules: [
+    "Start with the direct answer, then add context only when it helps.",
+    "Ask a short clarifying question when the request is ambiguous.",
+    "Keep local/private data assumptions explicit.",
+  ],
+  scheduleRules: {
+    mode: "draftOnly",
+    timezone: "Asia/Seoul",
+    reminderPreference: "Suggest reminders, but do not create calendar events until Google Workspace is connected.",
+  },
+  workspaceRules: {
+    googleWorkspace: "disabled",
+    calendar: "disabled",
+    gmail: "disabled",
+    drive: "disabled",
+  },
+  safetyRules: [
+    "Do not claim that an external tool action was completed unless a connected tool confirms it.",
+    "Before changing calendars, files, or email, explain the planned action and wait for user confirmation.",
+  ],
+};
+
+const scheduleModeCopy: Record<CalendarActionMode, string> = {
+  draftOnly: "Draft schedules only. The assistant may plan, but cannot create or edit calendar events.",
+  confirmBeforeAction: "Prepare calendar actions and ask for confirmation before any connected tool runs.",
+  connectedActions: "Allow confirmed calendar actions after Google Workspace is connected.",
+};
+
+const workspacePolicyCopy: Record<WorkspaceToolPolicy, string> = {
+  disabled: "Disabled",
+  askFirst: "Ask first",
+  connectedOnly: "Connected only",
 };
 
 const emptyAssistantProfileStore: LocalAssistantProfileStore = {
@@ -502,6 +639,7 @@ const settingsSections: Array<{ id: SettingsSection; label: string; detail: stri
 ];
 
 const studioSections: Array<{ id: StudioSection; label: string; detail: string; icon: string }> = [
+  { id: "myAssistants", label: "My Assistants", detail: "Saved assistants", icon: "supervisor_account" },
   { id: "overview", label: "Overview", detail: "Assistant build status", icon: "dashboard" },
   { id: "models", label: "Models", detail: "Browse and download", icon: "deployed_code_update" },
   { id: "prompts", label: "Prompts", detail: "Persona and instructions", icon: "edit_note" },
@@ -887,8 +1025,8 @@ const copy = {
     defaultStorage: "Use Ollama's default model storage",
     chatTitle: "Local chat test",
     chatBody: "After the model is installed, confirm MiVA responds locally.",
-    chatSandboxTitle: "Local Chat Sandbox",
-    chatSandboxBody: "Your local instance is fully initialized. No data leaves this machine. Test the inference speed and quality of {model} below.",
+    chatSandboxTitle: "Test Chat",
+    chatSandboxBody: "Use this temporary chat to test the selected assistant before entering Runtime.",
     chatGreeting: "Hello! I'm your local AI assistant running on MiVA. I've successfully loaded the {model} model into your local memory. How can I help you today?",
     assistantStageTitle: "Assistant Runtime",
     assistantStageBody: "The future MiVA runtime space for chat, voice, and character expression.",
@@ -1194,7 +1332,7 @@ function SecondaryButton({
 
 function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_12px_30px_rgba(53,96,127,0.08)] ${className}`}>
+    <section className={`min-w-0 rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_12px_30px_rgba(53,96,127,0.08)] ${className}`}>
       {children}
     </section>
   );
@@ -1231,6 +1369,53 @@ function loadProviderKeys(): ProviderKeyState {
   }
 }
 
+function normalizeAuthSession(value: unknown): AuthSession | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const session = value as Partial<AuthSession>;
+  const user = session.user as Partial<AuthUser> | undefined;
+  if (
+    typeof session.token !== "string" ||
+    !user ||
+    typeof user.id !== "string" ||
+    typeof user.email !== "string" ||
+    typeof user.displayName !== "string" ||
+    (user.role !== "user" && user.role !== "admin")
+  ) {
+    return null;
+  }
+
+  return {
+    token: session.token,
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role,
+      locale: typeof user.locale === "string" ? user.locale : "en",
+    },
+  };
+}
+
+function loadAuthSession(): AuthSession | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const saved = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!saved) {
+      return null;
+    }
+
+    return normalizeAuthSession(JSON.parse(saved));
+  } catch {
+    return null;
+  }
+}
+
 function loadRuntimeChatMessages(): ChatMessage[] {
   if (typeof window === "undefined") {
     return [];
@@ -1256,11 +1441,101 @@ function loadRuntimeChatMessages(): ChatMessage[] {
   }
 }
 
+function normalizeStringList(value: unknown, fallback: string[]) {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+
+  const normalized = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return normalized.length ? normalized : [...fallback];
+}
+
+function normalizePromptSettings(value: unknown): PromptSettings {
+  const source = value && typeof value === "object" ? value as Partial<PromptSettings> : {};
+  const simple = source.simple && typeof source.simple === "object"
+    ? source.simple as Partial<PromptSettings["simple"]>
+    : {};
+  const toolConnections = source.toolConnections && typeof source.toolConnections === "object"
+    ? source.toolConnections as Partial<PromptSettings["toolConnections"]>
+    : {};
+  const scheduleRules = source.scheduleRules && typeof source.scheduleRules === "object"
+    ? source.scheduleRules as Partial<PromptSettings["scheduleRules"]>
+    : {};
+  const workspaceRules = source.workspaceRules && typeof source.workspaceRules === "object"
+    ? source.workspaceRules as Partial<PromptSettings["workspaceRules"]>
+    : {};
+
+  const scheduleMode: CalendarActionMode =
+    scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
+      ? scheduleRules.mode
+      : defaultPromptSettings.scheduleRules.mode;
+
+  const normalizeWorkspacePolicy = (value: unknown): WorkspaceToolPolicy => (
+    value === "askFirst" || value === "connectedOnly" || value === "disabled"
+      ? value
+      : "disabled"
+  );
+
+  return {
+    simple: {
+      assistantPurpose: typeof simple.assistantPurpose === "string" && simple.assistantPurpose.trim()
+        ? simple.assistantPurpose.trim()
+        : defaultPromptSettings.simple.assistantPurpose,
+      desiredTasks: typeof simple.desiredTasks === "string" && simple.desiredTasks.trim()
+        ? simple.desiredTasks.trim()
+        : defaultPromptSettings.simple.desiredTasks,
+      preferredTone: typeof simple.preferredTone === "string" && simple.preferredTone.trim()
+        ? simple.preferredTone.trim()
+        : defaultPromptSettings.simple.preferredTone,
+      avoidances: typeof simple.avoidances === "string" && simple.avoidances.trim()
+        ? simple.avoidances.trim() === legacySimpleAvoidance
+          ? defaultSimpleAvoidance
+          : simple.avoidances.trim()
+        : defaultPromptSettings.simple.avoidances,
+    },
+    toolConnections: {
+      googleWorkspaceCli: typeof toolConnections.googleWorkspaceCli === "boolean"
+        ? toolConnections.googleWorkspaceCli
+        : defaultPromptSettings.toolConnections.googleWorkspaceCli,
+      daisoCli: typeof toolConnections.daisoCli === "boolean"
+        ? toolConnections.daisoCli
+        : defaultPromptSettings.toolConnections.daisoCli,
+    },
+    persona: typeof source.persona === "string" && source.persona.trim()
+      ? source.persona.trim()
+      : defaultPromptSettings.persona,
+    roleGoal: typeof source.roleGoal === "string" && source.roleGoal.trim()
+      ? source.roleGoal.trim()
+      : defaultPromptSettings.roleGoal,
+    responseRules: normalizeStringList(source.responseRules, defaultPromptSettings.responseRules),
+    scheduleRules: {
+      mode: scheduleMode,
+      timezone: typeof scheduleRules.timezone === "string" && scheduleRules.timezone.trim()
+        ? scheduleRules.timezone.trim()
+        : defaultPromptSettings.scheduleRules.timezone,
+      reminderPreference: typeof scheduleRules.reminderPreference === "string" && scheduleRules.reminderPreference.trim()
+        ? scheduleRules.reminderPreference.trim()
+        : defaultPromptSettings.scheduleRules.reminderPreference,
+    },
+    workspaceRules: {
+      googleWorkspace: normalizeWorkspacePolicy(workspaceRules.googleWorkspace),
+      calendar: normalizeWorkspacePolicy(workspaceRules.calendar),
+      gmail: normalizeWorkspacePolicy(workspaceRules.gmail),
+      drive: normalizeWorkspacePolicy(workspaceRules.drive),
+    },
+    safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
+  };
+}
+
 function App() {
   const [appMode, setAppMode] = useState<AppMode>("setup");
   const [activeStep, setActiveStep] = useState<StepId>("welcome");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
-  const [studioSection, setStudioSection] = useState<StudioSection>("overview");
+  const [studioSection, setStudioSection] = useState<StudioSection>("myAssistants");
   const [settingsReturnTarget, setSettingsReturnTarget] = useState<{ appMode: AppMode; activeStep: StepId }>({
     appMode: "studio",
     activeStep: "welcome",
@@ -1282,6 +1557,9 @@ function App() {
   const [surveyTipContentVisible, setSurveyTipContentVisible] = useState(false);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [hardwareError, setHardwareError] = useState<string | null>(null);
+  const [runtimeRequirements, setRuntimeRequirements] = useState<RuntimeRequirements | null>(null);
+  const [runtimeRequirementsError, setRuntimeRequirementsError] = useState<string | null>(null);
+  const [pythonInstallPath, setPythonInstallPath] = useState("");
   const [status, setStatus] = useState<OllamaStatus | null>(null);
   const [selectedModel, setSelectedModel] = useState("qwen3:4b");
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>("ollama");
@@ -1290,6 +1568,10 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const [authFlowState, setAuthFlowState] = useState<AuthFlowState>("idle");
+  const [authFlowError, setAuthFlowError] = useState<string | null>(null);
+  const [deviceAuthRequest, setDeviceAuthRequest] = useState<DeviceAuthStart | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
@@ -1298,6 +1580,10 @@ function App() {
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [providerKeys, setProviderKeys] = useState<ProviderKeyState>(() => loadProviderKeys());
   const [providerKeysSaved, setProviderKeysSaved] = useState(false);
+  const [profileDetailsDraft, setProfileDetailsDraft] = useState<ProfileDetailsDraft>(() => defaultProfileDetails);
+  const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
+  const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
+  const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
   const [assistantProfileStore, setAssistantProfileStore] = useState<LocalAssistantProfileStore>(emptyAssistantProfileStore);
   const [activeLocalProfileId, setActiveLocalProfileId] = useState(DEFAULT_LOCAL_PROFILE_ID);
   const [assistantProfileLoaded, setAssistantProfileLoaded] = useState(false);
@@ -1371,18 +1657,117 @@ function App() {
     setProviderKeysSaved(false);
   }
 
-  function buildSystemPromptPreview(profile: Pick<LocalAssistantProfile, "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "provider" | "model">) {
+  async function fetchCloudJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(`${CLOUD_API_URL}${path}`, init);
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  function saveAuthSession(session: AuthSession) {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+    setAuthSession(session);
+  }
+
+  function clearAuthSession() {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuthSession(null);
+    setDeviceAuthRequest(null);
+    setAuthFlowState("idle");
+    setAuthFlowError(null);
+  }
+
+  async function startBrowserSignIn() {
+    setAuthFlowState("opening");
+    setAuthFlowError(null);
+
+    try {
+      const request = await fetchCloudJson<DeviceAuthStart>("/auth/device/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ app: "miva-desktop" }),
+      });
+
+      setDeviceAuthRequest(request);
+      setAuthFlowState("waiting");
+
+      try {
+        if (tauriRuntime) {
+          await openUrl(request.verificationUrl);
+        } else {
+          window.open(request.verificationUrl, "_blank", "noopener,noreferrer");
+        }
+      } catch (openError) {
+        setAuthFlowError(`Browser did not open automatically. Open this URL manually: ${request.verificationUrl}`);
+        log(`Browser open failed: ${String(openError)}`);
+      }
+
+      log("Opened MiVA web sign-in in the system browser.");
+    } catch (error) {
+      const message = `Could not start browser sign-in: ${String(error)}`;
+      setAuthFlowState("error");
+      setAuthFlowError(message);
+      log(message);
+    }
+  }
+
+  async function submitDevLogin() {
+    setAuthFlowState("opening");
+    setAuthFlowError(null);
+
+    try {
+      const session = await fetchCloudJson<AuthSession>("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      saveAuthSession(session);
+      setAuthFlowState("connected");
+      log(`Signed in as ${session.user.email}.`);
+    } catch (error) {
+      const message = `Sign in failed: ${String(error)}`;
+      setAuthFlowState("error");
+      setAuthFlowError(message);
+      log(message);
+    }
+  }
+
+  function buildSystemPromptPreview(
+    profile: Pick<LocalAssistantProfile, "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "provider" | "model">,
+    promptSettings: PromptSettings,
+  ) {
     const languageLine = "Use English for this development build. Other locale preferences are stored for later localization.";
 
     return [
       "You are MiVA, the user's personal AI assistant.",
       languageLine,
       "Be practical, concise, and direct. If unsure, say so instead of inventing facts.",
+      "User-friendly prompt setup:",
+      `- Assistant purpose: ${promptSettings.simple.assistantPurpose}`,
+      `- User-requested work: ${promptSettings.simple.desiredTasks}`,
+      `- Preferred tone: ${promptSettings.simple.preferredTone}`,
+      `- Avoidances: ${promptSettings.simple.avoidances}`,
+      "Tools for AI:",
+      `- Google Workspace CLI: ${promptSettings.toolConnections.googleWorkspaceCli ? "on" : "off"}. When on, MiVA may prepare Google Calendar, Gmail, Drive, and Workspace actions, but it must only say an action is done after the connected tool confirms completion.`,
+      `- Daiso CLI: ${promptSettings.toolConnections.daisoCli ? "on" : "off"}. When on, MiVA may prepare approved Daiso CLI workflows, but it must only run or report actions after the connected tool confirms completion.`,
+      `Persona: ${promptSettings.persona}`,
+      `Role goal: ${promptSettings.roleGoal}`,
       `Use case: ${profile.useCase ?? "daily"}.`,
       `Answer style: ${profile.answerStyle ?? "moderate"}.`,
       `Priority: ${profile.priority ?? "balanced"}.`,
       `Operation mode: ${profile.localMode ?? "hybrid"}.`,
       `Future interests: ${profile.futureFeatures.length ? profile.futureFeatures.join(", ") : "none"}.`,
+      "Response rules:",
+      ...promptSettings.responseRules.map((rule) => `- ${rule}`),
+      `Schedule policy: ${scheduleModeCopy[promptSettings.scheduleRules.mode]}`,
+      `Schedule timezone: ${promptSettings.scheduleRules.timezone}.`,
+      `Schedule reminder preference: ${promptSettings.scheduleRules.reminderPreference}`,
+      `Google Workspace policy: ${workspacePolicyCopy[promptSettings.workspaceRules.googleWorkspace]}.`,
+      `Calendar policy: ${workspacePolicyCopy[promptSettings.workspaceRules.calendar]}. Gmail policy: ${workspacePolicyCopy[promptSettings.workspaceRules.gmail]}. Drive policy: ${workspacePolicyCopy[promptSettings.workspaceRules.drive]}.`,
+      "Safety rules:",
+      ...promptSettings.safetyRules.map((rule) => `- ${rule}`),
       `Active provider: ${profile.provider}. Active model: ${profile.model}.`,
     ].join("\n");
   }
@@ -1399,6 +1784,7 @@ function App() {
       localMode: survey.localMode,
       futureFeatures: [...survey.futureFeatures],
     };
+    const promptSettings = normalizePromptSettings(promptSettingsDraft);
     const profileBase = {
       useCase: safeSurvey.useCase,
       answerStyle: safeSurvey.answerStyle,
@@ -1413,8 +1799,8 @@ function App() {
     return {
       schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
       id: existing?.id ?? activeLocalProfileId,
-      name: existing?.name ?? "MiVA Assistant",
-      description: existing?.description ?? "Local MiVA assistant profile created from setup choices.",
+      name: profileDetailsDraft.name.trim() || existing?.name || defaultProfileDetails.name,
+      description: profileDetailsDraft.description.trim() || existing?.description || defaultProfileDetails.description,
       status,
       source: appMode === "runtime" ? "runtime" : "desktop-setup",
       createdAt: existing?.createdAt ?? now,
@@ -1435,7 +1821,8 @@ function App() {
       },
       prompt: {
         profileId: existing?.id ?? activeLocalProfileId,
-        systemPrompt: buildSystemPromptPreview(profileBase),
+        systemPrompt: buildSystemPromptPreview(profileBase, promptSettings),
+        settings: promptSettings,
         variables: {
           useCase: safeSurvey.useCase,
           answerStyle: safeSurvey.answerStyle,
@@ -1526,6 +1913,183 @@ function App() {
     return savedStore;
   }
 
+  async function createNewLocalAssistantProfile() {
+    const now = new Date().toISOString();
+    const id = `local_${Date.now()}`;
+    const name = `MiVA Assistant ${assistantProfileStore.profiles.length + 1}`;
+    const initialSurvey: SurveyState = {
+      useCase: null,
+      answerStyle: null,
+      priority: null,
+      languageUse: null,
+      localMode: null,
+      futureFeatures: [],
+    };
+    const provider: ProviderId = "ollama";
+    const providerModel = "qwen3:4b";
+    const localRecommendation = recommendModel(initialSurvey, hardware);
+    const cloudRecommendation = recommendCloudModel(initialSurvey);
+    const promptSettings = defaultPromptSettings;
+    const profileBase = {
+      useCase: initialSurvey.useCase,
+      answerStyle: initialSurvey.answerStyle,
+      priority: initialSurvey.priority,
+      languageUse: initialSurvey.languageUse,
+      localMode: initialSurvey.localMode,
+      futureFeatures: initialSurvey.futureFeatures,
+      provider,
+      model: providerModel,
+    };
+    const profile: LocalAssistantProfile = {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      id,
+      name,
+      description: defaultProfileDetails.description,
+      status: "draft",
+      source: "desktop-setup",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      locale: ACTIVE_LOCALE,
+      ...profileBase,
+      providerMode: providerMeta[provider].mode,
+      modelLabel: getModelByName(providerModel).label,
+      survey: initialSurvey,
+      recommendation: {
+        localModel: localRecommendation,
+        cloudModel: cloudRecommendation,
+        selectedProvider: provider,
+        selectedModel: providerModel,
+        selectedCloudModel: cloudRecommendation,
+        hardwareMemoryGb: hardware?.totalMemoryGb ?? null,
+      },
+      prompt: {
+        profileId: id,
+        systemPrompt: buildSystemPromptPreview(profileBase, promptSettings),
+        settings: promptSettings,
+        variables: {
+          useCase: initialSurvey.useCase,
+          answerStyle: initialSurvey.answerStyle,
+          priority: initialSurvey.priority,
+          languageUse: initialSurvey.languageUse,
+          localMode: initialSurvey.localMode,
+          futureFeatures: initialSurvey.futureFeatures,
+          provider,
+          model: providerModel,
+        },
+        overrides: {
+          persona: null,
+          instructions: [],
+          guardrails: [],
+        },
+      },
+      capabilities: {
+        voice: { enabled: false, sttProvider: null, ttsProvider: null },
+        character: { enabled: false, renderer: null, characterId: null },
+        googleWorkspace: { enabled: false, accountId: null, scopes: [] },
+        files: { enabled: false, allowedRoots: [] },
+        tools: { enabled: false, enabledToolIds: [] },
+        mcp: { enabled: false, serverIds: [] },
+        skills: { enabled: false, skillIds: [] },
+        externalApis: { enabled: false, providerIds: [] },
+      },
+      sync: {
+        cloudEnabled: false,
+        cloudProfileId: null,
+        lastSyncedAt: null,
+      },
+      metadata: {
+        setupStep: activeStep,
+        appMode: "studio",
+        appVersion: "0.1.0",
+        hardwareSnapshot: hardware,
+      },
+    };
+    const nextStore: LocalAssistantProfileStore = {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      activeProfileId: id,
+      profiles: [profile, ...assistantProfileStore.profiles],
+      updatedAt: now,
+    };
+
+    setAssistantProfileSaveState("saving");
+    setAssistantProfileError(null);
+    setAssistantProfileStore(nextStore);
+    setActiveLocalProfileId(id);
+    applyLocalAssistantProfile(profile);
+    setStudioSection("overview");
+
+    try {
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      setAssistantProfileSaveState("saved");
+      log(`Created assistant profile: ${name}.`);
+      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
+    } catch (error) {
+      const message = String(error);
+      setAssistantProfileError(message);
+      setAssistantProfileSaveState("error");
+      log(`Assistant profile create failed: ${message}`);
+    }
+  }
+
+  async function deleteLocalAssistantProfile(profileId: string) {
+    const profile = assistantProfileStore.profiles.find((item) => item.id === profileId);
+    if (!profile) {
+      return;
+    }
+
+    if (!window.confirm(`Delete "${profile.name}" from this computer?`)) {
+      return;
+    }
+
+    const remainingProfiles = assistantProfileStore.profiles.filter((item) => item.id !== profileId);
+    const nextActiveProfile = remainingProfiles[0] ?? null;
+    const nextStore: LocalAssistantProfileStore = {
+      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      activeProfileId: nextActiveProfile?.id ?? null,
+      profiles: remainingProfiles,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setAssistantProfileSaveState("saving");
+    setAssistantProfileError(null);
+    setAssistantProfileStore(nextStore);
+
+    if (nextActiveProfile) {
+      setActiveLocalProfileId(nextActiveProfile.id);
+      applyLocalAssistantProfile(nextActiveProfile);
+    } else {
+      setActiveLocalProfileId(DEFAULT_LOCAL_PROFILE_ID);
+      setProfileDetailsDraft(defaultProfileDetails);
+      setPromptSettingsDraft(defaultPromptSettings);
+      setSurvey({
+        useCase: null,
+        answerStyle: null,
+        priority: null,
+        languageUse: null,
+        localMode: null,
+        futureFeatures: [],
+      });
+      setSelectedProvider("ollama");
+      setSelectedModel("qwen3:4b");
+      setSelectedCloudModel("gemini-2.5-flash");
+    }
+
+    try {
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      setAssistantProfileSaveState("saved");
+      log(`Deleted assistant profile: ${profile.name}.`);
+      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
+    } catch (error) {
+      const message = String(error);
+      setAssistantProfileError(message);
+      setAssistantProfileSaveState("error");
+      log(`Assistant profile delete failed: ${message}`);
+    }
+  }
+
   function buildCloudAssistantProfilePayload(profile: LocalAssistantProfile) {
     return {
       id: profile.sync.cloudProfileId ?? profile.id,
@@ -1543,6 +2107,7 @@ function App() {
       status: profile.status,
       source: "desktop-setup",
       completedAt: profile.completedAt,
+      prompt: profile.prompt,
     };
   }
 
@@ -1613,6 +2178,10 @@ function App() {
   }
 
   function applyLocalAssistantProfile(profile: LocalAssistantProfile) {
+    setProfileDetailsDraft({
+      name: profile.name || defaultProfileDetails.name,
+      description: profile.description || defaultProfileDetails.description,
+    });
     setSurvey({
       useCase: profile.survey?.useCase ?? profile.useCase ?? null,
       answerStyle: profile.survey?.answerStyle ?? profile.answerStyle ?? null,
@@ -1624,6 +2193,7 @@ function App() {
     setSelectedProvider(profile.provider ?? "ollama");
     setSelectedModel(profile.recommendation?.selectedModel ?? (profile.provider === "ollama" ? profile.model : selectedModel));
     setSelectedCloudModel(profile.recommendation?.selectedCloudModel ?? (profile.provider !== "ollama" ? profile.model : selectedCloudModel));
+    setPromptSettingsDraft(normalizePromptSettings(profile.prompt?.settings));
   }
 
   async function finalizeCurrentLocalAssistantProfile() {
@@ -1686,7 +2256,6 @@ function App() {
     try {
       const nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
       setStatus(nextStatus);
-      log("Status refreshed.");
     } catch (error) {
       log(`Status failed: ${String(error)}`);
     } finally {
@@ -1700,10 +2269,68 @@ function App() {
     try {
       const nextHardware = await invokeCommand<HardwareInfo>("get_hardware_info");
       setHardware(nextHardware);
-      log("Hardware profile refreshed.");
     } catch (error) {
       setHardwareError(String(error));
       log(`Hardware check failed: ${String(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function refreshRuntimeRequirements() {
+    setRuntimeRequirementsError(null);
+    try {
+      const nextRequirements = await invokeCommand<RuntimeRequirements>("get_runtime_requirements");
+      setRuntimeRequirements(nextRequirements);
+    } catch (error) {
+      setRuntimeRequirementsError(String(error));
+      log(`Runtime requirement check failed: ${String(error)}`);
+    }
+  }
+
+  async function refreshDefaultPythonInstallPath() {
+    try {
+      const nextPath = await invokeCommand<string>("get_default_python_install_dir");
+      setPythonInstallPath((current) => current || nextPath);
+    } catch (error) {
+      log(`Python install path check failed: ${String(error)}`);
+    }
+  }
+
+  async function choosePythonInstallPath() {
+    if (!tauriRuntime) {
+      return;
+    }
+
+    try {
+      const selected = await openDialog({
+        title: "Choose Python install location",
+        directory: true,
+        multiple: false,
+        defaultPath: pythonInstallPath || undefined,
+      });
+
+      if (typeof selected === "string") {
+        setPythonInstallPath(selected);
+      }
+    } catch (error) {
+      setRuntimeRequirementsError(String(error));
+      log(`Python install location selection failed: ${String(error)}`);
+    }
+  }
+
+  async function installPython() {
+    setBusyAction("install-python");
+    setRuntimeRequirementsError(null);
+    try {
+      const installPath = pythonInstallPath.trim();
+      log(`Starting Python install through winget at ${installPath || "default location"}.`);
+      const output = await invokeCommand<string>("install_python", { targetDir: installPath || null });
+      log(output);
+      await refreshRuntimeRequirements();
+    } catch (error) {
+      setRuntimeRequirementsError(String(error));
+      log(`Python install failed: ${String(error)}`);
     } finally {
       setBusyAction(null);
     }
@@ -1835,9 +2462,60 @@ function App() {
       void (async () => {
         await refreshStatus();
         await refreshHardware();
+        await refreshRuntimeRequirements();
+        await refreshDefaultPythonInstallPath();
       })();
     }
   }, [tauriRuntime]);
+
+  useEffect(() => {
+    if (!deviceAuthRequest || authFlowState !== "waiting") {
+      return;
+    }
+
+    let cancelled = false;
+    const pollInterval = Math.max(1000, deviceAuthRequest.intervalMs || 1500);
+
+    const pollDeviceAuth = async () => {
+      try {
+        const statusResponse = await fetchCloudJson<DeviceAuthStatus>(
+          `/auth/device/${encodeURIComponent(deviceAuthRequest.deviceCode)}`,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        if (statusResponse.status === "authorized" && statusResponse.session) {
+          saveAuthSession(statusResponse.session);
+          setAuthFlowState("connected");
+          setAuthFlowError(null);
+          setDeviceAuthRequest(null);
+          log(`Desktop session connected for ${statusResponse.session.user.email}.`);
+          return;
+        }
+
+        if (statusResponse.status === "expired") {
+          setAuthFlowState("error");
+          setAuthFlowError("This desktop login request expired. Start sign-in again.");
+          setDeviceAuthRequest(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuthFlowState("error");
+          setAuthFlowError(`Could not check sign-in status: ${String(error)}`);
+        }
+      }
+    };
+
+    void pollDeviceAuth();
+    const intervalId = window.setInterval(() => void pollDeviceAuth(), pollInterval);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [authFlowState, deviceAuthRequest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2074,7 +2752,7 @@ function App() {
           type="button"
         >
           <span className="material-symbols-outlined text-[18px]">account_circle</span>
-          Sign in
+          {authSession ? authSession.user.displayName : "Sign in"}
         </button>
       </div>
     </aside>
@@ -2131,7 +2809,7 @@ function App() {
           onClick={openAuth}
         >
           <span className="material-symbols-outlined text-[18px]">account_circle</span>
-          Sign in
+          {authSession ? authSession.user.displayName : "Sign in"}
         </button>
       </div>
     </aside>
@@ -2204,7 +2882,7 @@ function App() {
           onClick={openAuth}
         >
           <span className="material-symbols-outlined text-[18px]">account_circle</span>
-          Sign in
+          {authSession ? authSession.user.displayName : "Sign in"}
         </button>
       </div>
     </aside>
@@ -2214,13 +2892,13 @@ function App() {
     const settingsOpen = appMode === "setup" && activeStep === "settings";
 
     return (
-    <header className="grid h-[60px] min-w-[1000px] grid-cols-[minmax(250px,1fr)_minmax(260px,auto)_minmax(96px,1fr)] items-center gap-4 border-b border-[#c2c7ce]/60 bg-[#f8f9fa]/85 px-6 backdrop-blur-md">
-      <div className="flex min-w-0 items-center gap-3">
+    <header className="grid h-[60px] w-full min-w-0 grid-cols-[minmax(0,1fr)_minmax(180px,320px)_auto] items-center gap-3 border-b border-[#c2c7ce]/60 bg-[#f8f9fa]/85 px-5 backdrop-blur-md">
+      <div className="flex min-w-0 items-center gap-3 overflow-hidden">
         <span className="font-heading text-lg font-bold tracking-tight text-[#35607f]">MiVA</span>
         {!settingsOpen && (
-        <div className="flex rounded-full border border-[#c2c7ce]/60 bg-[#e7e8e9]/60 p-0.5">
+        <div className="flex min-w-0 shrink rounded-full border border-[#c2c7ce]/60 bg-[#e7e8e9]/60 p-0.5">
           <button
-            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
               appMode === "studio" ? "bg-white text-[#35607f] shadow-sm" : "text-[#72787e] hover:text-[#191c1d]"
             }`}
             onClick={() => setAppMode("studio")}
@@ -2230,7 +2908,7 @@ function App() {
             {t.studioMode}
           </button>
           <button
-            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
               appMode === "runtime" ? "bg-white text-[#35607f] shadow-sm" : "text-[#72787e] hover:text-[#191c1d]"
             }`}
             onClick={() => setAppMode("runtime")}
@@ -2244,7 +2922,7 @@ function App() {
       </div>
 
       {settingsOpen ? <div /> : (
-      <div className="mx-auto flex max-w-[360px] min-w-0 items-center gap-2 rounded-full border border-[#c2c7ce]/60 bg-white/80 px-2.5 py-1.5 shadow-sm">
+      <div className="mx-auto flex w-full max-w-[320px] min-w-0 items-center gap-2 rounded-full border border-[#c2c7ce]/60 bg-white/80 px-2.5 py-1.5 shadow-sm">
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black tracking-[0.14em] ${
             activeProviderMode === "local" ? "bg-[#c9e8cb] text-[#334d38]" : "bg-[#cae6ff] text-[#1c4b69]"
@@ -2259,10 +2937,10 @@ function App() {
       </div>
       )}
 
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex shrink-0 items-center justify-end gap-2">
         <button
           aria-label="Help"
-          className="rounded-full p-2 text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
           type="button"
         >
           <span className="material-symbols-outlined">help_outline</span>
@@ -2270,7 +2948,7 @@ function App() {
         {!settingsOpen && (
           <button
             aria-label={t.settings}
-            className="rounded-full p-2 text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#72787e] transition-all duration-200 ease-in-out hover:bg-[#f3f4f5]"
             onClick={() => enterSettings("general")}
             title={t.settings}
             type="button"
@@ -2943,11 +3621,11 @@ function App() {
   };
 
   const renderOllamaSetup = () => (
-    <div className="mx-auto max-w-[880px]">
-      <header className="mb-8">
-        <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">{t.ollamaTitle}</h2>
-        <p className="mt-2 text-base leading-7 text-[#42474d]">{t.ollamaBody}</p>
-      </header>
+      <div className="mx-auto max-w-[880px]">
+        <header className="mb-8">
+          <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">{t.ollamaTitle}</h2>
+          <p className="mt-2 text-base leading-7 text-[#42474d]">{t.ollamaBody}</p>
+        </header>
 
       <div className="grid grid-cols-[1.1fr_0.9fr] gap-6">
         <Panel>
@@ -2992,56 +3670,130 @@ function App() {
     </div>
   );
 
-  const renderClawCodeSetup = () => (
-    <div className="mx-auto max-w-[880px]">
-      <header className="mb-8">
-        <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Claw Code setup</h2>
-        <p className="mt-2 text-base leading-7 text-[#42474d]">
-          Claw Code is optional. Install it only if this assistant will help inspect or modify code on this computer.
-        </p>
-      </header>
+  const renderClawCodeSetup = () => {
+    const pythonRequirement = runtimeRequirements?.python;
+    const pythonReady = Boolean(pythonRequirement?.meetsMinimum);
+    const pythonBusy = busyAction === "install-python";
 
-      <div className="grid grid-cols-[1.1fr_0.9fr] gap-6">
-        <Panel>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Optional developer tool</span>
-              <h3 className="mt-3 font-heading text-2xl font-bold text-[#191c1d]">Install later or skip</h3>
-              <p className="mt-2 text-sm leading-6 text-[#42474d]">
-                Phase 1 keeps this as a guided placeholder. The installer flow will later verify Git, Node, and the Claw Code package before enabling code-editing skills.
-              </p>
-            </div>
-            <Badge>Optional</Badge>
-          </div>
+    return (
+      <div className="mx-auto max-w-[880px]">
+        <header className="mb-8">
+          <h2 className="font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Claw Code setup</h2>
+          <p className="mt-2 text-base leading-7 text-[#42474d]">
+            Claw Code is optional. Install it only if this assistant will help inspect or modify code on this computer.
+          </p>
+        </header>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <PrimaryButton disabled title="Installer command will be wired later">
-              Install Claw Code
-            </PrimaryButton>
-            <SecondaryButton onClick={goToNextStep}>Skip for now</SecondaryButton>
-          </div>
-        </Panel>
-
-        <Panel>
-          <h3 className="font-heading text-lg font-bold text-[#191c1d]">When should users install it?</h3>
-          <div className="mt-4 grid gap-3">
-            {[
-              ["Code modification", "Needed when the assistant should edit files or help with local projects."],
-              ["Plain assistant usage", "Not needed for chat, prompts, TTS, 2D characters, or Google Workspace setup."],
-              ["Future skills", "Will be connected to agent skills and MCP-style tools later."],
-            ].map(([title, body]) => (
-              <div className="rounded-xl bg-[#f3f4f5] p-4" key={title}>
-                <p className="text-sm font-bold text-[#191c1d]">{title}</p>
-                <p className="mt-1 text-sm leading-6 text-[#42474d]">{body}</p>
+        <div className="grid grid-cols-[1.1fr_0.9fr] gap-6">
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Optional developer tool</span>
+                <h3 className="mt-3 font-heading text-2xl font-bold text-[#191c1d]">Install later or skip</h3>
+                <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                  Phase 1 keeps this as a guided placeholder. The installer flow will later verify Git, Node, and the Claw Code package before enabling code-editing skills.
+                </p>
               </div>
-            ))}
+              <Badge>Optional</Badge>
+            </div>
+
+            <div className="mt-8 flex flex-wrap gap-3">
+              <PrimaryButton disabled title="Installer command will be wired later">
+                Install Claw Code
+              </PrimaryButton>
+              <SecondaryButton onClick={goToNextStep}>Skip for now</SecondaryButton>
+            </div>
+          </Panel>
+
+          <Panel>
+            <h3 className="font-heading text-lg font-bold text-[#191c1d]">When should users install it?</h3>
+            <div className="mt-4 grid gap-3">
+              {[
+                ["Code modification", "Needed when the assistant should edit files or help with local projects."],
+                ["Plain assistant usage", "Not needed for chat, prompts, TTS, 2D characters, or Google Workspace setup."],
+                ["Future skills", "Will be connected to agent skills and MCP-style tools later."],
+              ].map(([title, body]) => (
+                <div className="rounded-xl bg-[#f3f4f5] p-4" key={title}>
+                  <p className="text-sm font-bold text-[#191c1d]">{title}</p>
+                  <p className="mt-1 text-sm leading-6 text-[#42474d]">{body}</p>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+
+      <Panel className="mt-6">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Developer runtime checks</span>
+            <h3 className="mt-3 font-heading text-xl font-bold text-[#191c1d]">Python for optional tools</h3>
+            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+              Claw Code itself is not the same as Ollama. Python is checked here for optional developer workflows, local scripts, TTS/STT helpers, and future model utilities.
+            </p>
           </div>
-        </Panel>
-      </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <SecondaryButton disabled={!tauriRuntime || pythonBusy} onClick={() => void refreshRuntimeRequirements()}>
+              Recheck
+            </SecondaryButton>
+            <PrimaryButton disabled={!tauriRuntime || pythonReady || busyAction !== null} onClick={() => void installPython()}>
+              {pythonBusy ? "Installing Python..." : pythonRequirement?.installed ? "Update Python" : "Install Python"}
+            </PrimaryButton>
+          </div>
+        </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+            <div className="rounded-2xl border border-[#e1e3e4] bg-[#f8f9fa] p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-heading text-base font-bold text-[#191c1d]">{pythonRequirement?.label ?? "Python 3.8+"}</p>
+                  <p className="mt-1 text-sm leading-6 text-[#42474d]">
+                    {pythonRequirement?.version ?? "Checking Python availability..."}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-[#72787e]">
+                    {pythonRequirement?.note ?? "Not required for Ollama. Some developer tools may need it later."}
+                  </p>
+                  {pythonRequirement?.command && (
+                    <p className="mt-2 font-mono text-[11px] text-[#72787e]">{pythonRequirement.command}</p>
+                  )}
+                </div>
+                <Badge tone={pythonRequirement?.meetsMinimum ? "success" : "neutral"}>
+                  {pythonRequirement?.meetsMinimum ? "Ready" : pythonRequirement?.installed ? "Old version" : "Optional"}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[#e1e3e4] bg-[#f8f9fa] p-4">
+              <div className="flex h-full flex-col justify-between gap-4">
+                <div>
+                  <p className="font-heading text-base font-bold text-[#191c1d]">Install location</p>
+                  <p className="mt-2 break-all rounded-xl bg-white px-3 py-2 font-mono text-xs leading-5 text-[#42474d]">
+                    {pythonInstallPath || "Loading default C-drive user location..."}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-[#72787e]">
+                    MiVA passes this path to winget. Some installers may still keep shared components in the standard Windows location.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <SecondaryButton disabled={!tauriRuntime || pythonBusy} onClick={() => void choosePythonInstallPath()}>
+                    Change
+                  </SecondaryButton>
+                  <PrimaryButton disabled={!tauriRuntime || pythonReady || busyAction !== null} onClick={() => void installPython()}>
+                    {pythonBusy ? "Installing..." : "Install here"}
+                  </PrimaryButton>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        {runtimeRequirementsError && (
+          <p className="mt-4 rounded-xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">{runtimeRequirementsError}</p>
+        )}
+      </Panel>
 
       {renderFooter("Continue", goToNextStep)}
     </div>
-  );
+    );
+  };
 
   const renderDownload = () => {
     const downloadBusy = busyAction === `download:${selectedModel}`;
@@ -3121,19 +3873,24 @@ function App() {
   };
 
   const renderChat = () => {
+    const runtimeChat = appMode === "runtime";
     const greeting =
       selectedProvider === "ollama"
         ? t.chatGreeting.replace("{model}", activeModelLabel)
         : `Hello. MiVA has prepared ${activeProviderLabel} / ${activeModelLabel}. If an API key is configured, you can test responses now.`;
-    const sandboxBody =
-      selectedProvider === "ollama"
+    const sandboxBody = runtimeChat
+      ? selectedProvider === "ollama"
         ? t.chatSandboxBody.replace("{model}", activeModelLabel)
-        : providerText.cloudDataNotice;
-    const chatDisabled = selectedProvider === "ollama"
-      ? !selectedModelInstalled || !status?.running || busyAction === "chat"
-      : busyAction === "chat";
-    const runtimeChat = appMode === "runtime";
-    const chatShellClass = assistantPanelMinimized
+        : providerText.cloudDataNotice
+      : `${t.chatSandboxBody} Current provider: ${activeProviderLabel} / ${activeModelLabel}.`;
+    const chatUnavailable = selectedProvider === "ollama"
+      ? !selectedModelInstalled || !status?.running
+      : false;
+    const chatSubmitDisabled = chatUnavailable || busyAction === "chat";
+    const showAssistantRuntimePanel = runtimeChat;
+    const chatShellClass = !showAssistantRuntimePanel
+      ? "relative mx-auto min-h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
+      : assistantPanelMinimized
       ? runtimeChat
         ? "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
         : "relative mx-auto min-h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
@@ -3320,7 +4077,7 @@ function App() {
             </button>
             <textarea
               className="min-h-11 flex-1 resize-none border-none bg-transparent py-3 text-sm text-[#191c1d] outline-none placeholder:text-[#72787e]"
-              disabled={chatDisabled}
+              disabled={chatUnavailable}
               placeholder={busyAction === "chat" ? t.generatingResponse : t.messagePlaceholder}
               rows={1}
               value={chatInput}
@@ -3328,7 +4085,9 @@ function App() {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  void sendMessage();
+                  if (!chatSubmitDisabled) {
+                    void sendMessage();
+                  }
                 }
               }}
             />
@@ -3337,7 +4096,7 @@ function App() {
             </button>
             <button
               className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#35607f] text-white shadow-md transition hover:bg-[#4f7999] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={chatDisabled}
+              disabled={chatSubmitDisabled}
               type="submit"
             >
               <span className={`material-symbols-outlined ${busyAction === "chat" ? "animate-spin" : ""}`}>
@@ -3363,7 +4122,7 @@ function App() {
         </div>
         </section>
 
-        {assistantPanelMinimized ? (
+        {showAssistantRuntimePanel && (assistantPanelMinimized ? (
           <button
             className="absolute right-0 top-0 z-20 flex max-w-[240px] items-center gap-3 rounded-2xl border border-[#c2c7ce] bg-white/95 p-3 text-left shadow-[0_16px_40px_rgba(53,96,127,0.16)] transition hover:border-[#35607f]"
             type="button"
@@ -3385,7 +4144,7 @@ function App() {
             <span className="material-symbols-outlined text-[18px] text-[#72787e]">open_in_full</span>
           </button>
         ) : (
-        <aside className={assistantCardClass}>
+          <aside className={assistantCardClass}>
           <div className="border-b border-[#e1e3e4] p-5">
             <div className="flex items-start justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantStageTitle}</p>
@@ -3434,8 +4193,8 @@ function App() {
               </div>
             </div>
           </div>
-        </aside>
-        )}
+          </aside>
+        ))}
       </div>
     );
   };
@@ -3561,14 +4320,14 @@ function App() {
   };
 
   const renderAuth = () => (
-    <main className="grid h-screen min-w-[1000px] place-items-center bg-[#f8f9fa] px-6 text-[#191c1d]">
-      <section className="w-full max-w-[420px] rounded-3xl border border-[#c2c7ce]/70 bg-white p-8 shadow-[0_24px_80px_rgba(53,96,127,0.16)]">
+    <main className="grid h-full w-full flex-1 place-items-center bg-[#f8f9fa] px-6 text-[#191c1d]">
+      <section className="w-full max-w-[440px] rounded-3xl border border-[#c2c7ce]/70 bg-white p-8 shadow-[0_24px_80px_rgba(53,96,127,0.16)]">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">MiVA Account</p>
             <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Sign in</h1>
             <p className="mt-2 text-sm leading-6 text-[#42474d]">
-              Sign in will later sync assistants, settings, and runtime chat across devices.
+              MiVA Desktop opens web login in your system browser, then receives a desktop session from the API.
             </p>
           </div>
           <button
@@ -3581,48 +4340,89 @@ function App() {
           </button>
         </div>
 
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            log("Sign in placeholder submitted.");
-          }}
-        >
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">ID</span>
-            <input
-              autoComplete="username"
-              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
-              placeholder="email@example.com"
-              value={authEmail}
-              onChange={(event) => setAuthEmail(event.target.value)}
-            />
-          </label>
+        {authSession ? (
+          <div className="grid gap-5">
+            <div className="rounded-2xl bg-[#f3f4f5] p-5">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Connected Account</p>
+              <p className="mt-3 text-lg font-bold text-[#191c1d]">{authSession.user.displayName}</p>
+              <p className="mt-1 text-sm text-[#42474d]">{authSession.user.email}</p>
+              <Badge tone="success">{authSession.user.role}</Badge>
+            </div>
+            <PrimaryButton className="w-full justify-center" onClick={closeAuth}>
+              Continue to MiVA
+            </PrimaryButton>
+            <SecondaryButton className="w-full" onClick={clearAuthSession}>
+              Sign out
+            </SecondaryButton>
+          </div>
+        ) : (
+          <div className="grid gap-5">
+            <PrimaryButton
+              className="w-full justify-center"
+              disabled={authFlowState === "opening" || authFlowState === "waiting"}
+              onClick={() => void startBrowserSignIn()}
+            >
+              {authFlowState === "opening"
+                ? "Opening browser..."
+                : authFlowState === "waiting"
+                  ? "Waiting for web login..."
+                  : "Continue in browser"}
+            </PrimaryButton>
 
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Password</span>
-            <input
-              autoComplete="current-password"
-              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
-              placeholder="Password"
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-            />
-          </label>
+            {deviceAuthRequest && authFlowState === "waiting" && (
+              <div className="rounded-2xl border border-[#cae6ff] bg-[#eff8ff] p-4">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#35607f]">Browser login waiting</p>
+                <p className="mt-2 text-sm leading-6 text-[#42474d]">Complete sign-in in the browser window. MiVA Desktop will connect automatically.</p>
+                <p className="mt-3 font-mono text-sm font-bold text-[#191c1d]">Code: {deviceAuthRequest.userCode}</p>
+              </div>
+            )}
 
-          <PrimaryButton className="mt-2 w-full justify-center" type="submit">
-            Sign in
-          </PrimaryButton>
-          <SecondaryButton
-            className="w-full"
-            onClick={() => {
-              log("Create account placeholder clicked.");
-            }}
-          >
-            Create account
-          </SecondaryButton>
-        </form>
+            {authFlowError && (
+              <p className="rounded-2xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">{authFlowError}</p>
+            )}
+
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-[#e1e3e4]" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#72787e]">Local dev fallback</span>
+              <div className="h-px flex-1 bg-[#e1e3e4]" />
+            </div>
+
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitDevLogin();
+              }}
+            >
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">ID</span>
+                <input
+                  autoComplete="username"
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
+                  placeholder="dev@miva.local"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                />
+              </label>
+
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Password</span>
+                <input
+                  autoComplete="current-password"
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none transition focus:border-[#35607f]"
+                  placeholder="miva1234"
+                  type="password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                />
+              </label>
+
+              <SecondaryButton className="w-full" disabled={authFlowState === "opening"} type="submit">
+                Use local dev login
+              </SecondaryButton>
+            </form>
+          </div>
+        )}
       </section>
     </main>
   );
@@ -3630,6 +4430,11 @@ function App() {
   const renderStudio = () => {
     const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
     const placeholderCards: Record<StudioSection, Array<[string, string, string]>> = {
+      myAssistants: [
+        ["Assistant library", "Saved assistants from Setup and Studio are shown here.", "supervisor_account"],
+        ["Cloud sync", "Local assistants can be pushed to the web console manually.", "cloud_sync"],
+        ["Runtime launch", "Choose one assistant before entering Runtime.", "rocket_launch"],
+      ],
       overview: [
         ["Assistant profile", "Current setup choices and selected model will be edited here.", "account_circle"],
         ["Prompt stack", "Persona, rules, and tool instructions will be assembled here.", "edit_note"],
@@ -3667,17 +4472,143 @@ function App() {
       ],
     };
 
+    const renderMyAssistants = () => {
+      const currentDraft = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const profiles = assistantProfileStore.profiles.length ? assistantProfileStore.profiles : [currentDraft];
+
+      return (
+        <div className="grid gap-6">
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold text-[#191c1d]">My Assistants</h3>
+                <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                  Choose which saved assistant you want to edit in Studio, run in Runtime, or sync to the web console.
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-3">
+                <Badge tone="action">{profiles.length} saved</Badge>
+                <PrimaryButton onClick={() => void createNewLocalAssistantProfile()}>
+                  New Assistant
+                </PrimaryButton>
+              </div>
+            </div>
+          </Panel>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {profiles.map((profile) => {
+              const active = profile.id === activeLocalProfileId;
+              const syncLabel = profile.sync?.cloudEnabled ? "Cloud synced" : "Local only";
+              const syncTone = profile.sync?.cloudEnabled ? "success" : "neutral";
+
+              return (
+                <article
+                  className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
+                    active ? "border-[#35607f] ring-4 ring-[#cae6ff]" : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                  }`}
+                  key={profile.id}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                      <span className="material-symbols-outlined text-[24px]">smart_toy</span>
+                    </span>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {active && <Badge tone="action">Active</Badge>}
+                      <Badge tone={syncTone}>{syncLabel}</Badge>
+                    </div>
+                  </div>
+
+                  <h4 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">{profile.name}</h4>
+                  <p className="mt-2 text-sm leading-6 text-[#42474d]">{profile.description}</p>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    {[
+                      ["Role", profile.useCase ?? "daily"],
+                      ["Provider", providerMeta[profile.provider]?.label ?? profile.provider],
+                      ["Model", profile.modelLabel || profile.model],
+                    ].map(([label, value]) => (
+                      <div className="rounded-xl bg-[#f3f4f5] p-3" key={label}>
+                        <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">{label}</span>
+                        <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {profile.futureFeatures.map((feature) => (
+                      <Badge key={feature}>{feature}</Badge>
+                    ))}
+                  </div>
+
+                  <p className="mt-4 text-xs leading-5 text-[#72787e]">
+                    Last updated {new Date(profile.updatedAt).toLocaleString()}.
+                    {profile.sync?.lastSyncedAt ? ` Synced ${new Date(profile.sync.lastSyncedAt).toLocaleString()}.` : ""}
+                  </p>
+
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <SecondaryButton
+                      onClick={() => {
+                        setActiveLocalProfileId(profile.id);
+                        applyLocalAssistantProfile(profile);
+                      }}
+                    >
+                      {active ? "Selected" : "Select"}
+                    </SecondaryButton>
+                    <SecondaryButton
+                      onClick={() => {
+                        setActiveLocalProfileId(profile.id);
+                        applyLocalAssistantProfile(profile);
+                        setStudioSection("overview");
+                      }}
+                    >
+                      Edit in Studio
+                    </SecondaryButton>
+                    {active && (
+                      <SecondaryButton
+                        disabled={assistantProfileSyncState === "syncing"}
+                        onClick={() => void syncCurrentAssistantProfileToCloud()}
+                      >
+                        {assistantProfileSyncState === "syncing" ? "Syncing..." : "Sync to Web"}
+                      </SecondaryButton>
+                    )}
+                    <PrimaryButton
+                      onClick={() => {
+                        setActiveLocalProfileId(profile.id);
+                        applyLocalAssistantProfile(profile);
+                        setAppMode("runtime");
+                      }}
+                    >
+                      Run
+                    </PrimaryButton>
+                    <SecondaryButton
+                      className="border-[#ffdad6] text-[#93000a] hover:bg-[#ffdad6]/40"
+                      onClick={() => void deleteLocalAssistantProfile(profile.id)}
+                    >
+                      Delete
+                    </SecondaryButton>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
     const renderStudioOverview = () => {
       const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
       const localChangesPending = Boolean(
         activeLocalProfile &&
         (
+          activeLocalProfile.name !== profile.name ||
+          activeLocalProfile.description !== profile.description ||
           activeLocalProfile.provider !== profile.provider ||
           activeLocalProfile.model !== profile.model ||
           activeLocalProfile.useCase !== profile.useCase ||
           activeLocalProfile.answerStyle !== profile.answerStyle ||
           activeLocalProfile.priority !== profile.priority ||
-          activeLocalProfile.localMode !== profile.localMode
+          activeLocalProfile.localMode !== profile.localMode ||
+          JSON.stringify(normalizePromptSettings(activeLocalProfile.prompt?.settings)) !== JSON.stringify(profile.prompt.settings)
         )
       );
       const syncBadgeTone = assistantProfileSyncState === "error"
@@ -3709,8 +4640,24 @@ function App() {
               <Badge tone={syncBadgeTone}>{syncLabel}</Badge>
             </div>
 
-            <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">{profile.name}</h3>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">{profile.description}</p>
+            <div className="mt-5 grid gap-4">
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Assistant name</span>
+                <input
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 font-heading text-xl font-bold text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={profileDetailsDraft.name}
+                  onChange={(event) => setProfileDetailsDraft((current) => ({ ...current, name: event.target.value }))}
+                />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Description</span>
+                <textarea
+                  className="min-h-[96px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#42474d] outline-none focus:border-[#35607f]"
+                  value={profileDetailsDraft.description}
+                  onChange={(event) => setProfileDetailsDraft((current) => ({ ...current, description: event.target.value }))}
+                />
+              </label>
+            </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
               {[
@@ -3762,6 +4709,518 @@ function App() {
               <Badge>Placeholder</Badge>
             </Panel>
           ))}
+        </div>
+      );
+    };
+
+    const renderPromptStudio = () => {
+      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const settings = profile.prompt.settings;
+      const updatePromptSettings = (updater: (current: PromptSettings) => PromptSettings) => {
+        setPromptSettingsDraft((current) => updater(current));
+      };
+      const updateSimplePrompt = (key: keyof PromptSettings["simple"], value: string) => {
+        updatePromptSettings((current) => ({
+          ...current,
+          simple: {
+            ...current.simple,
+            [key]: value,
+          },
+        }));
+      };
+      const updateToolConnection = (key: keyof PromptSettings["toolConnections"], enabled: boolean) => {
+        updatePromptSettings((current) => ({
+          ...current,
+          toolConnections: {
+            ...current.toolConnections,
+            [key]: enabled,
+          },
+        }));
+      };
+      const updateListItem = (key: "responseRules" | "safetyRules", index: number, value: string) => {
+        updatePromptSettings((current) => ({
+          ...current,
+          [key]: current[key].map((item, itemIndex) => itemIndex === index ? value : item),
+        }));
+      };
+      const addListItem = (key: "responseRules" | "safetyRules", value: string) => {
+        updatePromptSettings((current) => ({
+          ...current,
+          [key]: [...current[key], value],
+        }));
+      };
+      const removeListItem = (key: "responseRules" | "safetyRules", index: number) => {
+        updatePromptSettings((current) => ({
+          ...current,
+          [key]: current[key].filter((_, itemIndex) => itemIndex !== index),
+        }));
+      };
+      const toolOptions: Array<{
+        id: keyof PromptSettings["toolConnections"];
+        title: string;
+        label: string;
+        icon: string;
+        description: string;
+        role: string;
+        features: string[];
+      }> = [
+        {
+          id: "googleWorkspaceCli",
+          title: "Google Workspace CLI",
+          label: "Google apps",
+          icon: "workspaces",
+          description: "Connects Google Calendar, Gmail, Drive, and Workspace tasks after OAuth and CLI setup are added.",
+          role: "Lets the assistant prepare schedules, emails, document actions, and workspace automation. Until the tool confirms completion, MiVA should explain the draft action instead of saying it is done.",
+          features: ["Calendar planning", "Gmail draft support", "Drive and Workspace actions"],
+        },
+        {
+          id: "daisoCli",
+          title: "Daiso CLI",
+          label: "Daiso",
+          icon: "terminal",
+          description: "Reserved for Daiso CLI workflows that can run approved local or external commands later.",
+          role: "Lets the assistant understand that Daiso actions may become available. MiVA must still ask before tool use and only report completion after the connected CLI confirms it.",
+          features: ["Approved CLI workflows", "Local automation hooks", "Future tool actions"],
+        },
+      ];
+
+      const renderPromptPreview = () => (
+        <Panel>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="font-heading text-xl font-bold text-[#191c1d]">System prompt preview</h3>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                This is the assembled prompt sent to the local helper with each chat request.
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <SecondaryButton onClick={() => setPromptSettingsDraft(defaultPromptSettings)}>
+                Reset defaults
+              </SecondaryButton>
+              <PrimaryButton onClick={() => void saveCurrentLocalAssistantProfile(profile.status)}>
+                Save locally
+              </PrimaryButton>
+            </div>
+          </div>
+          <pre className="mt-5 max-h-[360px] w-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-[#191c1d] p-5 text-xs leading-6 text-[#e1e3e4]">
+            {profile.prompt.systemPrompt}
+          </pre>
+        </Panel>
+      );
+
+      const renderSimplePrompt = () => (
+        <>
+          <Panel>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="min-w-0">
+                <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                  <span className="material-symbols-outlined text-[24px]">edit_note</span>
+                </span>
+                <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">Simple prompt builder</h3>
+                <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                  Write what normal users actually want this assistant to do. MiVA turns these fields into structured prompt instructions.
+                </p>
+                <div className="mt-5 grid gap-3">
+                  {[
+                    ["Purpose", "What this assistant is for."],
+                    ["Tasks", "The work the user wants to ask for often."],
+                    ["Tone", "How the assistant should sound."],
+                    ["Limits", "What the assistant should avoid."],
+                  ].map(([title, body]) => (
+                    <div className="rounded-xl bg-[#f3f4f5] p-3" key={title}>
+                      <p className="text-sm font-bold text-[#191c1d]">{title}</p>
+                      <p className="mt-1 text-xs leading-5 text-[#72787e]">{body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid min-w-0 gap-4">
+                <label className="grid gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Assistant purpose</span>
+                  <textarea
+                    className="min-h-[96px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
+                    value={settings.simple.assistantPurpose}
+                    onChange={(event) => updateSimplePrompt("assistantPurpose", event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">What should this assistant do?</span>
+                  <textarea
+                    className="min-h-[140px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
+                    placeholder="Example: manage my schedule, remind me of deadlines, summarize study notes, help with emails."
+                    value={settings.simple.desiredTasks}
+                    onChange={(event) => updateSimplePrompt("desiredTasks", event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Preferred tone</span>
+                  <input
+                    className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                    value={settings.simple.preferredTone}
+                    onChange={(event) => updateSimplePrompt("preferredTone", event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Things to avoid</span>
+                  <textarea
+                    className="min-h-[92px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
+                    value={settings.simple.avoidances}
+                    onChange={(event) => updateSimplePrompt("avoidances", event.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+          </Panel>
+        </>
+      );
+
+      const renderToolsForAiCard = () => (
+        <Panel>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Tools for AI</p>
+              <h3 className="mt-2 font-heading text-xl font-bold text-[#191c1d]">Connected tool permissions</h3>
+              <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                Choose which external tools this assistant is allowed to prepare for. These toggles shape the prompt; real actions still require a connected tool and confirmation.
+              </p>
+            </div>
+            <SecondaryButton onClick={() => setToolsForAiOpen(true)}>
+              Manage tools
+            </SecondaryButton>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {toolOptions.map((tool) => {
+              const enabled = settings.toolConnections[tool.id];
+
+              return (
+                <div className="rounded-xl bg-[#f3f4f5] p-4" key={tool.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                        <span className="material-symbols-outlined text-[20px]">{tool.icon}</span>
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-[#191c1d]">{tool.title}</p>
+                        <p className="mt-1 text-xs text-[#72787e]">{tool.label}</p>
+                      </div>
+                    </div>
+                    <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "On" : "Off"}</Badge>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-[#42474d]">{tool.description}</p>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      );
+
+      const renderToolsForAiModal = () => {
+        if (!toolsForAiOpen) {
+          return null;
+        }
+
+        return (
+          <div className="fixed inset-0 z-[90] grid place-items-center bg-[#191c1d]/35 px-6 backdrop-blur-sm">
+            <section className="max-h-[86vh] w-full max-w-[720px] overflow-y-auto rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_24px_80px_rgba(25,28,29,0.24)]">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Tools for AI</p>
+                  <h3 className="mt-2 font-heading text-2xl font-bold text-[#191c1d]">Tool access settings</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                    Turn tools on when this assistant should prepare actions for that integration. Turning a tool on does not mean the action is already connected or completed.
+                  </p>
+                </div>
+                <button
+                  aria-label="Close tools settings"
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5]"
+                  onClick={() => setToolsForAiOpen(false)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="mt-6 grid gap-4">
+                {toolOptions.map((tool) => {
+                  const enabled = settings.toolConnections[tool.id];
+
+                  return (
+                    <article className="rounded-2xl border border-[#c2c7ce]/70 bg-[#f8f9fa] p-5" key={tool.id}>
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-start gap-4">
+                          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                            <span className="material-symbols-outlined text-[24px]">{tool.icon}</span>
+                          </span>
+                          <div className="min-w-0">
+                            <h4 className="font-heading text-lg font-bold text-[#191c1d]">{tool.title}</h4>
+                            <p className="mt-2 text-sm leading-6 text-[#42474d]">{tool.description}</p>
+                          </div>
+                        </div>
+                        <button
+                          aria-pressed={enabled}
+                          className={`flex h-9 w-[76px] shrink-0 items-center rounded-full p-1 transition ${
+                            enabled ? "justify-end bg-[#35607f]" : "justify-start bg-[#dfe3e6]"
+                          }`}
+                          onClick={() => updateToolConnection(tool.id, !enabled)}
+                          type="button"
+                        >
+                          <span className="grid h-7 w-7 place-items-center rounded-full bg-white text-[11px] font-bold text-[#35607f] shadow-sm">
+                            {enabled ? "On" : "Off"}
+                          </span>
+                        </button>
+                      </div>
+
+                      <div className="mt-4 rounded-xl bg-white p-4">
+                        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">What this gives the assistant</p>
+                        <p className="mt-2 text-sm leading-6 text-[#42474d]">{tool.role}</p>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {tool.features.map((feature) => (
+                          <Badge key={feature}>{feature}</Badge>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <PrimaryButton onClick={() => setToolsForAiOpen(false)}>
+                  Done
+                </PrimaryButton>
+              </div>
+            </section>
+          </div>
+        );
+      };
+
+      const renderDeveloperPrompt = () => (
+        <>
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold text-[#191c1d]">Developer prompt controls</h3>
+                <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                  Edit detailed prompt pieces used by local and cloud providers. These settings are stored in the active assistant profile.
+                </p>
+              </div>
+              <Badge tone="action">Advanced</Badge>
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2">
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Persona</span>
+                <textarea
+                  className="min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={settings.persona}
+                  onChange={(event) => updatePromptSettings((current) => ({ ...current, persona: event.target.value }))}
+                />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Role goal</span>
+                <textarea
+                  className="min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={settings.roleGoal}
+                  onChange={(event) => updatePromptSettings((current) => ({ ...current, roleGoal: event.target.value }))}
+                />
+              </label>
+            </div>
+          </Panel>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Panel>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="font-heading text-lg font-bold text-[#191c1d]">Response rules</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#42474d]">General behavior rules that apply to every provider.</p>
+                </div>
+                <SecondaryButton
+                  className="px-3 py-2 text-xs"
+                  onClick={() => addListItem("responseRules", "Add a clear response rule.")}
+                >
+                  Add rule
+                </SecondaryButton>
+              </div>
+              <div className="mt-5 grid gap-3">
+                {settings.responseRules.map((rule, index) => (
+                  <div className="flex gap-2" key={`response-${index}`}>
+                    <input
+                      className="min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                      value={rule}
+                      onChange={(event) => updateListItem("responseRules", index, event.target.value)}
+                    />
+                    <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("responseRules", index)}>
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </SecondaryButton>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="font-heading text-lg font-bold text-[#191c1d]">Safety rules</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#42474d]">Boundaries for tools, private data, and actions.</p>
+                </div>
+                <SecondaryButton
+                  className="px-3 py-2 text-xs"
+                  onClick={() => addListItem("safetyRules", "Add a clear safety rule.")}
+                >
+                  Add rule
+                </SecondaryButton>
+              </div>
+              <div className="mt-5 grid gap-3">
+                {settings.safetyRules.map((rule, index) => (
+                  <div className="flex gap-2" key={`safety-${index}`}>
+                    <input
+                      className="min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                      value={rule}
+                      onChange={(event) => updateListItem("safetyRules", index, event.target.value)}
+                    />
+                    <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("safetyRules", index)}>
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </SecondaryButton>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="font-heading text-xl font-bold text-[#191c1d]">Schedule and Workspace policy</h3>
+                <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                  Schedule drafting works with prompt rules only. Creating, editing, or deleting real calendar events requires a connected Google Workspace tool later.
+                </p>
+              </div>
+              <Badge tone={settings.workspaceRules.googleWorkspace === "disabled" ? "neutral" : "action"}>
+                Google Workspace {workspacePolicyCopy[settings.workspaceRules.googleWorkspace]}
+              </Badge>
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-3">
+              <label className="grid gap-2 xl:col-span-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Schedule mode</span>
+                <select
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={settings.scheduleRules.mode}
+                  onChange={(event) => updatePromptSettings((current) => ({
+                    ...current,
+                    scheduleRules: {
+                      ...current.scheduleRules,
+                      mode: event.target.value as CalendarActionMode,
+                    },
+                  }))}
+                >
+                  <option value="draftOnly">Draft only</option>
+                  <option value="confirmBeforeAction">Confirm before action</option>
+                  <option value="connectedActions">Connected actions after OAuth</option>
+                </select>
+                <span className="text-xs leading-5 text-[#72787e]">{scheduleModeCopy[settings.scheduleRules.mode]}</span>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Timezone</span>
+                <input
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={settings.scheduleRules.timezone}
+                  onChange={(event) => updatePromptSettings((current) => ({
+                    ...current,
+                    scheduleRules: {
+                      ...current.scheduleRules,
+                      timezone: event.target.value,
+                    },
+                  }))}
+                />
+              </label>
+              <label className="grid gap-2 xl:col-span-3">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Reminder preference</span>
+                <input
+                  className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                  value={settings.scheduleRules.reminderPreference}
+                  onChange={(event) => updatePromptSettings((current) => ({
+                    ...current,
+                    scheduleRules: {
+                      ...current.scheduleRules,
+                      reminderPreference: event.target.value,
+                    },
+                  }))}
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {(["googleWorkspace", "calendar", "gmail", "drive"] as Array<keyof PromptSettings["workspaceRules"]>).map((key) => (
+                <label className="grid gap-2 rounded-xl bg-[#f3f4f5] p-3" key={key}>
+                  <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{key}</span>
+                  <select
+                    className="rounded-lg border border-[#c2c7ce] bg-white px-3 py-2 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+                    value={settings.workspaceRules[key]}
+                    onChange={(event) => updatePromptSettings((current) => ({
+                      ...current,
+                      workspaceRules: {
+                        ...current.workspaceRules,
+                        [key]: event.target.value as WorkspaceToolPolicy,
+                      },
+                    }))}
+                  >
+                    <option value="disabled">Disabled</option>
+                    <option value="askFirst">Ask first</option>
+                    <option value="connectedOnly">Connected only</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+          </Panel>
+        </>
+      );
+
+      return (
+        <div className="grid gap-6">
+          <Panel>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold text-[#191c1d]">Prompt profile</h3>
+                <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+                  Simple mode is for normal users. Developer mode exposes detailed prompt policy and tool behavior.
+                </p>
+              </div>
+              <Badge tone="action">Local profile</Badge>
+            </div>
+
+            <div className="mt-6 inline-flex rounded-2xl border border-[#c2c7ce] bg-[#f3f4f5] p-1">
+              {([
+                ["simple", "Simple"],
+                ["developer", "Developer"],
+              ] as Array<[PromptEditorMode, string]>).map(([mode, label]) => (
+                <button
+                  className={`rounded-xl px-5 py-2.5 text-sm font-bold transition ${
+                    promptEditorMode === mode
+                      ? "bg-white text-[#35607f] shadow-sm"
+                      : "text-[#72787e] hover:text-[#191c1d]"
+                  }`}
+                  key={mode}
+                  onClick={() => setPromptEditorMode(mode)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Panel>
+
+          {promptEditorMode === "simple" ? (
+            <>
+              {renderSimplePrompt()}
+              {renderToolsForAiCard()}
+            </>
+          ) : renderDeveloperPrompt()}
+          {renderPromptPreview()}
+          {renderToolsForAiModal()}
         </div>
       );
     };
@@ -3883,7 +5342,7 @@ function App() {
     );
 
     return (
-      <div className="mx-auto max-w-[980px]">
+      <div className="mx-auto w-full min-w-0 max-w-[980px]">
         <header className="mb-8">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Studio</p>
           <h2 className="mt-2 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">
@@ -3894,10 +5353,14 @@ function App() {
           </p>
         </header>
 
-        {studioSection === "overview" ? (
+        {studioSection === "myAssistants" ? (
+          renderMyAssistants()
+        ) : studioSection === "overview" ? (
           renderStudioOverview()
         ) : studioSection === "models" ? (
           renderModelStudio()
+        ) : studioSection === "prompts" ? (
+          renderPromptStudio()
         ) : (
           <div className="grid gap-6 md:grid-cols-3">
             {placeholderCards[studioSection].map(([title, body, icon]) => (

@@ -26,9 +26,9 @@ const profileInstructionMap = {
     quality: "Priority: quality. Prefer careful, accurate answers even if they are slightly longer."
   },
   languageUse: {
-    korean: "Language preference: Korean-first. Default to Korean.",
-    english: "Language preference: English-first. Default to English.",
-    both: "Language preference: Korean and English. Use the user's current language, and include English terms only when useful."
+    korean: "Stored language preference: Korean-first. If the user's latest message is clearly in English or another language, answer in that language.",
+    english: "Stored language preference: English-first. If the user's latest message is clearly in Korean or another language, answer in that language.",
+    both: "Stored language preference: Korean and English. Use the user's current message language, and include English terms only when useful."
   },
   localMode: {
     localOnly: "Operation preference: local only. Do not suggest cloud-only features unless the user asks.",
@@ -68,6 +68,110 @@ function buildProfileInstructions(profile) {
     }
   }
 
+  const promptSettings = profile.prompt?.settings;
+  if (promptSettings && typeof promptSettings === "object") {
+    const simple = promptSettings.simple && typeof promptSettings.simple === "object"
+      ? promptSettings.simple
+      : null;
+
+    if (simple) {
+      if (typeof simple.assistantPurpose === "string" && simple.assistantPurpose.trim()) {
+        instructions.push(`Assistant purpose: ${simple.assistantPurpose.trim()}`);
+      }
+
+      if (typeof simple.desiredTasks === "string" && simple.desiredTasks.trim()) {
+        instructions.push(`User-requested tasks: ${simple.desiredTasks.trim()}`);
+      }
+
+      if (typeof simple.preferredTone === "string" && simple.preferredTone.trim()) {
+        instructions.push(`Preferred tone: ${simple.preferredTone.trim()}`);
+      }
+
+      if (typeof simple.avoidances === "string" && simple.avoidances.trim()) {
+        instructions.push(`Avoidances: ${simple.avoidances.trim()}`);
+      }
+    }
+
+    const toolConnections = promptSettings.toolConnections && typeof promptSettings.toolConnections === "object"
+      ? promptSettings.toolConnections
+      : null;
+    if (toolConnections) {
+      const googleWorkspaceCli = toolConnections.googleWorkspaceCli === true;
+      const daisoCli = toolConnections.daisoCli === true;
+
+      instructions.push(`Google Workspace CLI tool access: ${googleWorkspaceCli ? "on" : "off"}.`);
+      if (googleWorkspaceCli) {
+        instructions.push("When Google Workspace CLI is available, you may prepare Calendar, Gmail, Drive, and Workspace actions. Only say an action is done after the connected tool confirms completion.");
+      } else {
+        instructions.push("Google Workspace CLI is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.");
+      }
+
+      instructions.push(`Daiso CLI tool access: ${daisoCli ? "on" : "off"}.`);
+      if (daisoCli) {
+        instructions.push("When Daiso CLI is available, you may prepare approved Daiso CLI workflows. Ask before tool use and only report completion after the connected CLI confirms it.");
+      } else {
+        instructions.push("Daiso CLI is off. Do not claim Daiso CLI actions are available or completed.");
+      }
+    }
+
+    if (typeof promptSettings.persona === "string" && promptSettings.persona.trim()) {
+      instructions.push(`Persona: ${promptSettings.persona.trim()}`);
+    }
+
+    if (typeof promptSettings.roleGoal === "string" && promptSettings.roleGoal.trim()) {
+      instructions.push(`Role goal: ${promptSettings.roleGoal.trim()}`);
+    }
+
+    if (Array.isArray(promptSettings.responseRules)) {
+      for (const rule of promptSettings.responseRules) {
+        if (typeof rule === "string" && rule.trim()) {
+          instructions.push(`Response rule: ${rule.trim()}`);
+        }
+      }
+    }
+
+    const scheduleRules = promptSettings.scheduleRules && typeof promptSettings.scheduleRules === "object"
+      ? promptSettings.scheduleRules
+      : null;
+    if (scheduleRules) {
+      if (scheduleRules.mode === "draftOnly") {
+        instructions.push("Schedule tool policy: draft schedules only. You may suggest plans, but you must not claim that calendar events were created, edited, or deleted.");
+      } else if (scheduleRules.mode === "confirmBeforeAction") {
+        instructions.push("Schedule tool policy: prepare calendar actions and ask for explicit confirmation before any connected calendar tool runs.");
+      } else if (scheduleRules.mode === "connectedActions") {
+        instructions.push("Schedule tool policy: confirmed calendar actions are allowed only after Google Workspace is connected and the tool confirms completion.");
+      }
+
+      if (typeof scheduleRules.timezone === "string" && scheduleRules.timezone.trim()) {
+        instructions.push(`Schedule timezone: ${scheduleRules.timezone.trim()}.`);
+      }
+
+      if (typeof scheduleRules.reminderPreference === "string" && scheduleRules.reminderPreference.trim()) {
+        instructions.push(`Reminder preference: ${scheduleRules.reminderPreference.trim()}`);
+      }
+    }
+
+    const workspaceRules = promptSettings.workspaceRules && typeof promptSettings.workspaceRules === "object"
+      ? promptSettings.workspaceRules
+      : null;
+    if (workspaceRules) {
+      const googleWorkspacePolicy = workspaceRules.googleWorkspace || "disabled";
+      const calendarPolicy = workspaceRules.calendar || "disabled";
+      instructions.push(`Google Workspace policy: ${googleWorkspacePolicy}. Calendar policy: ${calendarPolicy}.`);
+      if (googleWorkspacePolicy === "disabled") {
+        instructions.push("Google Workspace tools are not connected. Do not say you can read Gmail, Drive, or Calendar yet.");
+      }
+    }
+
+    if (Array.isArray(promptSettings.safetyRules)) {
+      for (const rule of promptSettings.safetyRules) {
+        if (typeof rule === "string" && rule.trim()) {
+          instructions.push(`Safety rule: ${rule.trim()}`);
+        }
+      }
+    }
+  }
+
   return instructions;
 }
 
@@ -85,6 +189,7 @@ export function buildSystemPrompt({ locale = "ko", provider = "ollama", model = 
     languageInstruction,
     "Be practical, concise, and direct. If you are unsure, say so instead of inventing facts.",
     ...buildProfileInstructions(profile),
+    "If any stored language preference conflicts with the user's latest message language, answer in the user's latest message language.",
     `Current date and time in Korea: ${getCurrentDateLabel(locale)}.`,
     `Active provider: ${provider}. Active model: ${model || "unknown"}.`,
     providerInstruction

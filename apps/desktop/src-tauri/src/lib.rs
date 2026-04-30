@@ -104,6 +104,25 @@ struct HardwareInfo {
     arch: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeRequirement {
+    id: String,
+    label: String,
+    required_for: String,
+    installed: bool,
+    meets_minimum: bool,
+    command: Option<String>,
+    version: Option<String>,
+    note: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeRequirements {
+    python: RuntimeRequirement,
+}
+
 fn empty_assistant_profile_store() -> Value {
     json!({
         "schemaVersion": 1,
@@ -114,7 +133,10 @@ fn empty_assistant_profile_store() -> Value {
 }
 
 fn assistant_profile_store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     Ok(dir.join(ASSISTANT_PROFILE_STORE_FILE))
 }
@@ -263,6 +285,136 @@ fn run_command_to_string(mut command: Command) -> Result<String, String> {
             combined
         })
     }
+}
+
+fn command_version(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let version = if stdout.is_empty() { stderr } else { stdout };
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn parse_python_version(value: &str) -> Option<(u32, u32, u32)> {
+    let token = value.split_whitespace().find(|part| {
+        part.chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit())
+    })?;
+    let mut parts = token.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next().unwrap_or("0").parse::<u32>().ok()?;
+    let patch = parts.next().unwrap_or("0").parse::<u32>().ok()?;
+    Some((major, minor, patch))
+}
+
+fn detect_python_requirement() -> RuntimeRequirement {
+    let candidates: [(&str, &[&str]); 3] = [
+        ("python", &["--version"]),
+        ("python3", &["--version"]),
+        ("py", &["-3", "--version"]),
+    ];
+
+    for (program, args) in candidates {
+        if let Some(version) = command_version(program, args) {
+            let parsed = parse_python_version(&version);
+            let meets_minimum =
+                parsed.is_some_and(|(major, minor, _)| major > 3 || (major == 3 && minor >= 8));
+            let command = if args.is_empty() {
+                program.to_string()
+            } else {
+                format!("{program} {}", args.join(" "))
+            };
+
+            return RuntimeRequirement {
+                id: "python".to_string(),
+                label: "Python 3.8+".to_string(),
+                required_for:
+                    "Optional developer tools, local TTS/STT helpers, and future model utilities."
+                        .to_string(),
+                installed: true,
+                meets_minimum,
+                command: Some(command),
+                version: Some(version),
+                note: if meets_minimum {
+                    "Detected. Ollama itself does not require Python.".to_string()
+                } else {
+                    "Detected, but some optional tools may require Python 3.8 or newer. Ollama itself does not require Python.".to_string()
+                },
+            };
+        }
+    }
+
+    RuntimeRequirement {
+        id: "python".to_string(),
+        label: "Python 3.8+".to_string(),
+        required_for:
+            "Optional developer tools, local TTS/STT helpers, and future model utilities."
+                .to_string(),
+        installed: false,
+        meets_minimum: false,
+        command: None,
+        version: None,
+        note: "Not detected. Ollama can still install and run without Python.".to_string(),
+    }
+}
+
+fn get_runtime_requirements_inner() -> RuntimeRequirements {
+    RuntimeRequirements {
+        python: detect_python_requirement(),
+    }
+}
+
+fn default_python_install_dir_inner() -> String {
+    env::var("LOCALAPPDATA")
+        .map(|value| {
+            PathBuf::from(value)
+                .join("Programs")
+                .join("Python")
+                .join("Python312")
+        })
+        .unwrap_or_else(|_| PathBuf::from(r"C:\Python312"))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn install_python_inner(target_dir: Option<String>) -> Result<String, String> {
+    let current = detect_python_requirement();
+    if current.meets_minimum {
+        return Ok("Python 3.8+ is already installed.".to_string());
+    }
+
+    let install_dir = target_dir
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(default_python_install_dir_inner);
+
+    fs::create_dir_all(&install_dir).map_err(|error| error.to_string())?;
+
+    let mut command = Command::new("winget");
+    command.args([
+        "install",
+        "--id",
+        "Python.Python.3.12",
+        "--source",
+        "winget",
+        "--scope",
+        "user",
+        "--location",
+        &install_dir,
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+    ]);
+
+    run_command_to_string(command)
 }
 
 fn bytes_to_gb(bytes: u64) -> f64 {
@@ -511,11 +663,12 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
             }
         }
 
-        let (aggregate_completed, aggregate_total) = layer_progress
-            .values()
-            .fold((0_u64, 0_u64), |(completed_sum, total_sum), (completed, total)| {
+        let (aggregate_completed, aggregate_total) = layer_progress.values().fold(
+            (0_u64, 0_u64),
+            |(completed_sum, total_sum), (completed, total)| {
                 (completed_sum + completed.min(total), total_sum + total)
-            });
+            },
+        );
 
         let completed = if aggregate_total > 0 {
             Some(aggregate_completed)
@@ -540,11 +693,12 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         );
     }
 
-    let (aggregate_completed, aggregate_total) = layer_progress
-        .values()
-        .fold((0_u64, 0_u64), |(completed_sum, total_sum), (completed, total)| {
+    let (aggregate_completed, aggregate_total) = layer_progress.values().fold(
+        (0_u64, 0_u64),
+        |(completed_sum, total_sum), (completed, total)| {
             (completed_sum + completed.min(total), total_sum + total)
-        });
+        },
+    );
     let completed = if aggregate_total > 0 {
         Some(aggregate_completed)
     } else {
@@ -569,7 +723,11 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
     Ok(format!("{model} downloaded."))
 }
 
-fn chat_ollama_direct_inner(model: String, prompt: String, locale: String) -> Result<String, String> {
+fn chat_ollama_direct_inner(
+    model: String,
+    prompt: String,
+    locale: String,
+) -> Result<String, String> {
     if !allowed_model(&model) {
         return Err(format!("{model} is not allowed in Phase 1."));
     }
@@ -660,7 +818,10 @@ fn chat_via_local_helper(
         .filter(|answer| !answer.trim().is_empty())
         .or(chat.message)
         .filter(|answer| !answer.trim().is_empty())
-        .ok_or_else(|| chat.error.unwrap_or_else(|| "Local helper returned an empty response.".to_string()))
+        .ok_or_else(|| {
+            chat.error
+                .unwrap_or_else(|| "Local helper returned an empty response.".to_string())
+        })
 }
 
 fn chat_once_inner(
@@ -808,8 +969,8 @@ async fn chat_once(
     tauri::async_runtime::spawn_blocking(move || {
         chat_once_inner(provider, model, prompt, locale, api_key, profile)
     })
-        .await
-        .map_err(|error| error.to_string())?
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -817,6 +978,25 @@ async fn get_hardware_info() -> Result<HardwareInfo, String> {
     tauri::async_runtime::spawn_blocking(get_hardware_info_inner)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_runtime_requirements() -> Result<RuntimeRequirements, String> {
+    tauri::async_runtime::spawn_blocking(get_runtime_requirements_inner)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_default_python_install_dir() -> Result<String, String> {
+    Ok(default_python_install_dir_inner())
+}
+
+#[tauri::command]
+async fn install_python(target_dir: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || install_python_inner(target_dir))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -836,6 +1016,7 @@ async fn save_assistant_profile_store(app: AppHandle, store: Value) -> Result<Va
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|_| {
             start_desktop_bridge();
@@ -848,6 +1029,9 @@ pub fn run() {
             pull_model,
             chat_once,
             get_hardware_info,
+            get_runtime_requirements,
+            get_default_python_install_dir,
+            install_python,
             load_assistant_profile_store,
             save_assistant_profile_store
         ])

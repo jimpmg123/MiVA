@@ -63,6 +63,8 @@ VtuberLLM/
 vtuberllm/
 
 # Local AI-coding planning docs
+AGENTS.md
+.claw/
 docs/CODING_GUIDELINES.md
 docs/PRD.md
 docs/RULES.md
