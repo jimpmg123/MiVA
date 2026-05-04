@@ -112,9 +112,9 @@ User PC
 
 ```text
 User Browser
-  -> Hosted MiVA Web Dashboard
-  -> MiVA Cloud API
-  -> PostgreSQL
+  -> Vercel-hosted MiVA Web Dashboard
+  -> Railway-hosted MiVA Cloud API
+  -> Supabase PostgreSQL
   -> Google OAuth / Workspace APIs
 
 User Desktop
@@ -125,6 +125,19 @@ User Desktop
 ```
 
 The cloud server cannot directly access a user's computer. Remote web control must be mediated by a paired desktop app that initiates connection to the cloud API.
+
+### Selected Hosting Plan
+
+```text
+Frontend hosting: Vercel
+Backend hosting:  Railway
+Database hosting: Supabase PostgreSQL
+ORM:              Prisma
+```
+
+Vercel is used only for the MiVA web frontend. The NestJS backend runs as a separate long-running service on Railway because future assistant sync, OAuth callbacks, Workspace integration, and runtime coordination should not depend on serverless function size, memory, or duration limits.
+
+Supabase is used as the managed PostgreSQL database provider only. The MiVA backend connects to Supabase PostgreSQL through Prisma using the database connection string.
 
 ## 5. Technology Stack
 
@@ -151,7 +164,9 @@ The cloud server cannot directly access a user's computer. Remote web control mu
 | ORM | Prisma | Typed schema, migrations, and database access |
 | Background jobs | Redis + BullMQ later | Long-running sync/indexing jobs when needed |
 | OAuth | Google OAuth 2.0 | Google login and Workspace authorization |
-| Deployment | Vercel/Render/Supabase or AWS equivalent | Public web/API/DB hosting |
+| Frontend deployment | Vercel | Hosts the public MiVA web dashboard |
+| Backend deployment | Railway | Runs the long-running NestJS API service |
+| Database hosting | Supabase PostgreSQL | Managed PostgreSQL database used through Prisma |
 
 ## 6. Code Conventions
 
@@ -190,7 +205,7 @@ User-facing text: Korean/English localization-ready
 ### Security Rules
 
 - Local conversations stay local by default.
-- Do not upload local chat contents unless the user explicitly enables sync.
+- Do not upload local chat contents to the cloud database.
 - Do not store plaintext provider API keys.
 - OAuth tokens must be encrypted at rest.
 - Google Workspace scopes must be minimal and clearly explained.
@@ -203,14 +218,11 @@ User-facing text: Korean/English localization-ready
 ```text
 users
 devices
-device_pairings
 assistant_profiles
 model_preferences
 provider_credentials
 workspace_connections
 tool_permissions
-chat_sessions
-chat_messages
 usage_events
 audit_logs
 ```
@@ -236,15 +248,6 @@ devices
   last_seen_at
   created_at
   updated_at
-
-device_pairings
-  id
-  user_id
-  device_id
-  code_hash
-  expires_at
-  confirmed_at
-  created_at
 
 assistant_profiles
   id
@@ -334,16 +337,24 @@ audit_logs
 
 ### Data Storage Policy
 
+Cloud database policy:
+
+```text
+The cloud database does not store local chat messages by default.
+Web is treated as setup/admin/sync console.
+Local model chat happens in MiVA Desktop through Local Helper and Ollama.
+```
+
 | Data | Default Location | Notes |
 | --- | --- | --- |
 | User account | Cloud DB | Required for web account features |
 | Device records | Cloud DB | Stores summary status only |
 | Assistant profiles | Cloud DB, synced to desktop | Structured profile data |
-| Local chat history | Local device by default | Cloud sync must be opt-in |
+| Local chat history | Local device only by default | Not stored in the cloud DB |
 | Local model files | User PC through Ollama | Never uploaded to cloud |
 | OAuth tokens | Cloud DB encrypted or local keychain | Depends on integration mode |
 | Provider API keys | Prefer local keychain for MVP | Server storage requires encryption |
-| Usage statistics | Cloud DB | Non-sensitive summaries only |
+| Usage statistics | Cloud DB | Non-sensitive summaries only, no chat text |
 
 ## 8. Web / App Views
 
@@ -385,16 +396,9 @@ Setup mode
 - Model Setup
 - Assistant Rules
 - Validation
-
-Runtime mode
-- Console
-- Sessions
-- Activity
-- Logs
-- Runtime Settings
 ```
 
-The Launch Assistant action should exist only in Runtime mode. Setup pages should focus on configuration and validation.
+Web is not the default runtime chat surface. Launch Assistant and local model conversation should happen in MiVA Desktop runtime mode. The web app remains focused on setup, profile management, device visibility, integration settings, and admin views.
 
 ## 9. API Design
 
@@ -472,25 +476,21 @@ sequenceDiagram
   Web-->>User: Show dashboard
 ```
 
-### Desktop Device Pairing
+### Desktop Device Registration
 
 ```mermaid
 sequenceDiagram
   actor User
   participant Desktop as MiVA Desktop
   participant API as MiVA Cloud API
-  participant Web as MiVA Web
   participant DB as PostgreSQL
 
-  Desktop->>API: POST /auth/device/start
-  API->>DB: Create device auth request
-  API-->>Desktop: Return user code and verification URL
-  User->>Web: Sign in and confirm device code
-  Web->>API: POST /auth/device/complete
-  API->>DB: Mark device request authorized
-  Desktop->>API: Poll /auth/device/:code
-  API-->>Desktop: Return authorized session
-  Desktop-->>User: Device connected
+  User->>Desktop: Sign in or connect account
+  Desktop->>API: POST /devices
+  API->>DB: Upsert device record
+  DB-->>API: Device stored
+  API-->>Desktop: Return device summary
+  Desktop-->>User: Device registered
 ```
 
 ### Local Model Setup
@@ -520,7 +520,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   actor User
-  participant Runtime as Runtime UI
+  participant Runtime as MiVA Desktop Runtime
   participant Helper as Local Helper
   participant Ollama as Ollama
 
@@ -578,12 +578,12 @@ sequenceDiagram
 ## 11. Security and Privacy Design
 
 - Local model conversations should remain local by default.
-- Cloud sync for chat history must be explicit and optional.
+- Local chat messages are not stored in the cloud database by default.
 - The cloud server stores device summaries, not detailed local hardware, unless the user opts in.
 - OAuth scopes should be requested incrementally.
 - Google Workspace write actions should require confirmation.
 - Local helper should bind to localhost and use CORS allowlists.
-- Production local-helper access should require pairing tokens or signed local requests.
+- Production local-helper access should require signed local requests or a desktop-issued local session token.
 - Arbitrary shell execution must never be exposed through web requests.
 
 ## 12. Development Roadmap
@@ -599,18 +599,19 @@ sequenceDiagram
 ### Phase 2: Web Account and Device Sync
 
 - NestJS API
-- PostgreSQL + Prisma
+- Railway backend deployment
+- Supabase PostgreSQL + Prisma
 - Auth and Google login
-- Device pairing
+- Device registration and sync
 - Assistant profile persistence
 
 ### Phase 3: Assistant Profile and Runtime
 
 - Web profile editor
-- Runtime mode
-- Launch Assistant flow
+- Desktop runtime mode
+- Launch Assistant flow in Desktop
 - Local/cloud provider routing
-- Session/activity/log views
+- Local session/activity/log views
 
 ### Phase 4: Integrations
 
@@ -628,8 +629,6 @@ sequenceDiagram
 
 ## 13. Open Decisions
 
-- Production hosting choice: Vercel/Render/Supabase versus AWS App Runner/RDS.
-- Whether web runtime should support full chat or remain setup/admin-focused.
 - Whether provider API keys are stored only locally or encrypted in the cloud.
 - Which Google Workspace scopes are acceptable for the first integration release.
 - Whether chat history remains local-only forever by default or supports optional sync.

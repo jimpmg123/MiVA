@@ -1,4 +1,5 @@
 export const CLOUD_API_URL = "http://127.0.0.1:4000";
+const WEB_AUTH_STORAGE_KEY = "miva.web.auth.v1";
 
 export type ProviderId = "ollama" | "openai" | "gemini";
 export type ServiceStatus = "checking" | "connected" | "offline";
@@ -57,6 +58,12 @@ export interface AuthUser {
   displayName: string;
   role: Exclude<AuthRole, "guest">;
   locale: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  token: string;
+  isNewUser?: boolean;
 }
 
 export interface AssistantProfile {
@@ -209,8 +216,45 @@ export const initialCloudState: CloudState = {
   lastChecked: null,
 };
 
+function getStoredAuthToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const saved = window.localStorage.getItem(WEB_AUTH_STORAGE_KEY);
+    if (!saved) {
+      return null;
+    }
+
+    const parsed = JSON.parse(saved) as { token?: unknown };
+    return typeof parsed.token === "string" && parsed.token ? parsed.token : null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldAttachCloudAuth(url: string) {
+  return url.startsWith(CLOUD_API_URL);
+}
+
+function buildRequestHeaders(url: string, initHeaders?: HeadersInit) {
+  const headers = new Headers(initHeaders);
+  if (shouldAttachCloudAuth(url) && !headers.has("authorization")) {
+    const token = getStoredAuthToken();
+    if (token) {
+      headers.set("authorization", `Bearer ${token}`);
+    }
+  }
+
+  return headers;
+}
+
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    headers: buildRequestHeaders(url, init?.headers),
+  });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
@@ -222,7 +266,7 @@ export async function checkCloudApi() {
 }
 
 export async function login(email: string, password: string) {
-  return fetchJson<{ user: AuthUser; token: string }>(`${CLOUD_API_URL}/auth/login`, {
+  return fetchJson<AuthResponse>(`${CLOUD_API_URL}/auth/login`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -232,7 +276,7 @@ export async function login(email: string, password: string) {
 }
 
 export async function loginWithGoogleCredential(credential: string) {
-  return fetchJson<{ user: AuthUser; token: string }>(`${CLOUD_API_URL}/auth/google`, {
+  return fetchJson<AuthResponse>(`${CLOUD_API_URL}/auth/google`, {
     method: "POST",
     headers: {
       "content-type": "application/json",

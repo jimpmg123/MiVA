@@ -1,12 +1,19 @@
 import http from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import "dotenv/config";
 import { OAuth2Client } from "google-auth-library";
+import { prisma } from "./db.mjs";
 import { lightweightModels } from "../../../packages/shared/src/index.js";
 
 const PORT = Number(process.env.MIVA_API_PORT || 4000);
 const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
 const googleOAuthClient = GOOGLE_OAUTH_CLIENT_ID ? new OAuth2Client(GOOGLE_OAUTH_CLIENT_ID) : null;
 const seedTimestamp = new Date().toISOString();
+const DEV_USER_ID = "dev_user";
+const DEV_PASSWORDS = {
+  "dev@miva.local": "miva1234",
+  "admin@miva.local": "admin1234"
+};
 
 const allowedOrigins = new Set([
   "http://localhost:1420",
@@ -109,25 +116,6 @@ const apiKeys = [
   }
 ];
 
-const demoUsers = [
-  {
-    id: "dev_user",
-    email: "dev@miva.local",
-    password: "miva1234",
-    displayName: "MiVA User",
-    role: "user",
-    locale: "ko"
-  },
-  {
-    id: "admin_user",
-    email: "admin@miva.local",
-    password: "admin1234",
-    displayName: "MiVA Admin",
-    role: "admin",
-    locale: "ko"
-  }
-];
-
 const defaultPromptSettings = {
   persona: "A practical personal assistant named MiVA.",
   roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
@@ -200,7 +188,6 @@ const localUsageEvents = [
   }
 ];
 
-const authSessions = new Map();
 const deviceAuthRequests = new Map();
 
 function writeCorsHeaders(res, origin) {
@@ -258,38 +245,289 @@ function countProfilesBy(field) {
   }, {});
 }
 
-function getAdminStats() {
+function toDbProvider(provider) {
+  const normalized = String(provider || "").toUpperCase();
+  return ["OLLAMA", "OPENAI", "GEMINI", "ANTHROPIC", "CUSTOM"].includes(normalized) ? normalized : "CUSTOM";
+}
+
+function fromDbProvider(provider) {
+  return String(provider || "CUSTOM").toLowerCase();
+}
+
+function toDbProfileStatus(status) {
+  return status === "finalized" ? "FINALIZED" : "DRAFT";
+}
+
+function fromDbProfileStatus(status) {
+  return status === "FINALIZED" ? "finalized" : "draft";
+}
+
+function toDbProfileSource(source) {
+  const normalized = String(source || "").replaceAll("-", "_").toUpperCase();
+  return ["DESKTOP_SETUP", "WEB_CONSOLE", "API"].includes(normalized) ? normalized : "WEB_CONSOLE";
+}
+
+function fromDbProfileSource(source) {
+  return String(source || "WEB_CONSOLE").toLowerCase().replaceAll("_", "-");
+}
+
+function toDbCredentialStatus(status) {
+  const normalized = String(status || "").replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase().replace(/^_/, "");
+  return ["NOT_CONFIGURED", "CONFIGURED", "VERIFIED", "ERROR"].includes(normalized) ? normalized : "CONFIGURED";
+}
+
+function fromDbCredentialStatus(status) {
+  if (status === "NOT_CONFIGURED") {
+    return "notConfigured";
+  }
+  return String(status || "CONFIGURED").toLowerCase();
+}
+
+function toDbUsageMode(mode) {
+  return mode === "cloud" ? "CLOUD" : "LOCAL";
+}
+
+function fromDbUsageMode(mode) {
+  return mode === "CLOUD" ? "cloud" : "local";
+}
+
+function hashSecret(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
+}
+
+function serializeUser(user) {
   return {
-    users: {
-      total: 1,
-      active: 1
-    },
-    devices: {
-      total: devices.length,
-      connected: devices.filter((device) => device.status === "connected").length
-    },
-    assistantProfiles: {
-      total: assistantProfiles.length,
-      finalized: assistantProfiles.filter((profile) => profile.status === "finalized").length,
-      useCases: toTopList(countBy(usageEvents, "assistant_use_case_selected")),
-      localModes: toTopList(countBy(usageEvents, "local_mode_selected")),
-      codingCapabilities: toTopList(countBy(usageEvents, "coding_capability_selected")),
-      statuses: toTopList(countProfilesBy("status"))
-    },
-    providers: toTopList(countBy(usageEvents, "provider_selected")),
-    models: toTopList(countBy(usageEvents, "model_selected")),
-    recentEvents: usageEvents.slice(-8).reverse()
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: String(user.role || "USER").toLowerCase(),
+    locale: user.locale
   };
 }
 
-function normalizeAssistantProfile(payload) {
+function serializeAssistantProfile(profile) {
+  return {
+    id: profile.id,
+    userId: profile.userId,
+    name: profile.name,
+    description: profile.description,
+    useCase: profile.useCase,
+    answerStyle: profile.answerStyle,
+    priority: profile.priority,
+    languageUse: profile.languageUse,
+    localMode: profile.localMode,
+    provider: fromDbProvider(profile.provider),
+    model: profile.model,
+    futureFeatures: Array.isArray(profile.futureFeatures) ? profile.futureFeatures : [],
+    isDefault: profile.isDefault,
+    status: fromDbProfileStatus(profile.status),
+    source: fromDbProfileSource(profile.source),
+    createdAt: profile.createdAt.toISOString(),
+    updatedAt: profile.updatedAt.toISOString(),
+    completedAt: profile.completedAt ? profile.completedAt.toISOString() : null,
+    prompt: profile.prompt || undefined,
+    capabilities: profile.capabilities || undefined
+  };
+}
+
+function serializeApiKey(key) {
+  return {
+    id: key.id,
+    userId: key.userId,
+    provider: fromDbProvider(key.provider),
+    label: key.label,
+    maskedKey: key.maskedKey,
+    status: fromDbCredentialStatus(key.status),
+    lastValidatedAt: key.lastValidatedAt ? key.lastValidatedAt.toISOString() : null,
+    createdAt: key.createdAt.toISOString(),
+    updatedAt: key.updatedAt.toISOString()
+  };
+}
+
+function serializeDevice(device) {
+  return {
+    id: device.id,
+    userId: device.userId,
+    name: device.name,
+    os: device.os,
+    appVersion: device.appVersion,
+    status: device.localStatus?.status || (device.lastSeenAt ? "connected" : "offline"),
+    lastSeenAt: device.lastSeenAt ? device.lastSeenAt.toISOString() : null,
+    createdAt: device.createdAt.toISOString(),
+    updatedAt: device.updatedAt.toISOString()
+  };
+}
+
+function serializeLocalUsageEvent(event) {
+  return {
+    id: event.id,
+    userId: event.userId,
+    deviceId: event.deviceId,
+    assistantProfileId: event.assistantProfileId,
+    mode: fromDbUsageMode(event.mode),
+    provider: event.provider,
+    model: event.model,
+    inputChars: event.inputChars,
+    outputChars: event.outputChars,
+    durationMs: event.durationMs,
+    success: event.success,
+    createdAt: event.createdAt.toISOString()
+  };
+}
+
+function countMetric(events, type) {
+  return events.reduce((acc, event) => {
+    if (event.metadata?.type === type && typeof event.metadata.value === "string") {
+      acc[event.metadata.value] = (acc[event.metadata.value] || 0) + 1;
+    }
+    return acc;
+  }, {});
+}
+
+async function ensureDevData() {
+  await prisma.user.upsert({
+    where: { id: DEV_USER_ID },
+    update: {
+      passwordHash: hashSecret(DEV_PASSWORDS["dev@miva.local"])
+    },
+    create: {
+      id: DEV_USER_ID,
+      email: "dev@miva.local",
+      displayName: "MiVA User",
+      passwordHash: hashSecret(DEV_PASSWORDS["dev@miva.local"]),
+      role: "USER",
+      locale: "ko"
+    }
+  });
+
+  await prisma.user.upsert({
+    where: { id: "admin_user" },
+    update: {
+      passwordHash: hashSecret(DEV_PASSWORDS["admin@miva.local"])
+    },
+    create: {
+      id: "admin_user",
+      email: "admin@miva.local",
+      displayName: "MiVA Admin",
+      passwordHash: hashSecret(DEV_PASSWORDS["admin@miva.local"]),
+      role: "ADMIN",
+      locale: "ko"
+    }
+  });
+
+  const profileCount = await prisma.assistantProfile.count({ where: { userId: DEV_USER_ID } });
+  if (profileCount === 0) {
+    await prisma.assistantProfile.createMany({
+      data: assistantProfiles.map((profile) => ({
+        id: profile.id,
+        userId: profile.userId,
+        name: profile.name,
+        description: profile.description,
+        useCase: profile.useCase,
+        answerStyle: profile.answerStyle,
+        priority: profile.priority,
+        languageUse: profile.languageUse,
+        localMode: profile.localMode,
+        provider: toDbProvider(profile.provider),
+        model: profile.model,
+        futureFeatures: profile.futureFeatures,
+        isDefault: profile.isDefault,
+        status: toDbProfileStatus(profile.status),
+        source: toDbProfileSource(profile.source),
+        completedAt: profile.completedAt ? new Date(profile.completedAt) : null
+      }))
+    });
+  }
+
+  await prisma.device.upsert({
+    where: { id: "device_local_dev" },
+    update: {
+      lastSeenAt: new Date(),
+      localStatus: { status: "connected" }
+    },
+    create: {
+      id: "device_local_dev",
+      userId: DEV_USER_ID,
+      name: "Local Development PC",
+      os: "Windows",
+      appVersion: "0.1.0",
+      lastSeenAt: new Date(),
+      localStatus: { status: "connected" }
+    }
+  });
+
+  const credentialCount = await prisma.providerCredential.count({ where: { userId: DEV_USER_ID } });
+  if (credentialCount === 0) {
+    await prisma.providerCredential.create({
+      data: {
+        id: "key_gemini_dev",
+        userId: DEV_USER_ID,
+        provider: "GEMINI",
+        label: "Gemini",
+        encryptedKey: "",
+        maskedKey: "AIza...demo",
+        status: "CONFIGURED"
+      }
+    });
+  }
+}
+
+async function getAdminStats() {
+  const [userCount, deviceRows, profiles, metricEvents] = await Promise.all([
+    prisma.user.count(),
+    prisma.device.findMany(),
+    prisma.assistantProfile.findMany(),
+    prisma.usageEvent.findMany({
+      where: {
+        eventType: "admin_metric"
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200
+    })
+  ]);
+
+  const statusCounts = profiles.reduce((acc, profile) => {
+    const status = fromDbProfileStatus(profile.status);
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    users: {
+      total: userCount,
+      active: userCount
+    },
+    devices: {
+      total: deviceRows.length,
+      connected: deviceRows.filter((device) => device.localStatus?.status === "connected" || device.lastSeenAt).length
+    },
+    assistantProfiles: {
+      total: profiles.length,
+      finalized: profiles.filter((profile) => profile.status === "FINALIZED").length,
+      useCases: toTopList(countMetric(metricEvents, "assistant_use_case_selected")),
+      localModes: toTopList(countMetric(metricEvents, "local_mode_selected")),
+      codingCapabilities: toTopList(countMetric(metricEvents, "coding_capability_selected")),
+      statuses: toTopList(statusCounts)
+    },
+    providers: toTopList(countMetric(metricEvents, "provider_selected")),
+    models: toTopList(countMetric(metricEvents, "model_selected")),
+    recentEvents: metricEvents.slice(0, 8).map((event) => ({
+      id: event.id,
+      type: event.metadata?.type || event.eventType,
+      value: event.metadata?.value || "",
+      createdAt: event.createdAt.toISOString()
+    }))
+  };
+}
+
+function normalizeAssistantProfile(payload, userId = DEV_USER_ID) {
   const now = new Date().toISOString();
   const status = payload.status === "finalized" ? "finalized" : "draft";
   const prompt = normalizePromptPayload(payload.prompt);
   const capabilities = normalizeCapabilitiesPayload(payload.capabilities, prompt.settings);
   return {
     id: payload.id || `profile_${Date.now()}`,
-    userId: "dev_user",
+    userId,
     name: String(payload.name || "Untitled Assistant"),
     description: String(payload.description || ""),
     useCase: payload.useCase || "daily",
@@ -422,12 +660,19 @@ function normalizePromptPayload(value) {
   };
 }
 
-function recordUsageEvent(type, value) {
-  usageEvents.push({
-    id: `event_${Date.now()}_${usageEvents.length}`,
-    type,
-    value,
-    createdAt: new Date().toISOString()
+async function recordUsageEvent(type, value, userId = DEV_USER_ID) {
+  await prisma.usageEvent.create({
+    data: {
+      userId,
+      mode: "CLOUD",
+      provider: "system",
+      model: "system",
+      eventType: "admin_metric",
+      metadata: {
+        type,
+        value
+      }
+    }
   });
 }
 
@@ -465,10 +710,18 @@ function normalizeApiKeyPayload(payload) {
   };
 }
 
-function getUsageSummary() {
-  const totals = localUsageEvents.reduce((acc, event) => {
+async function getUsageSummary() {
+  const events = await prisma.usageEvent.findMany({
+    where: {
+      eventType: "chat"
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200
+  });
+
+  const totals = events.reduce((acc, event) => {
     acc.events += 1;
-    if (event.mode === "local") {
+    if (event.mode === "LOCAL") {
       acc.localEvents += 1;
     } else {
       acc.cloudEvents += 1;
@@ -495,24 +748,22 @@ function getUsageSummary() {
       estimatedOutputChars: totals.estimatedOutputChars,
       averageLatencyMs: totals.events ? Math.round(totals.totalLatencyMs / totals.events) : 0
     },
-    byProvider: toTopList(localUsageEvents.reduce((acc, event) => {
+    byProvider: toTopList(events.reduce((acc, event) => {
       acc[event.provider] = (acc[event.provider] || 0) + 1;
       return acc;
     }, {})),
-    byModel: toTopList(localUsageEvents.reduce((acc, event) => {
+    byModel: toTopList(events.reduce((acc, event) => {
       acc[event.model] = (acc[event.model] || 0) + 1;
       return acc;
     }, {})),
-    recentEvents: localUsageEvents.slice(-10).reverse()
+    recentEvents: events.slice(0, 10).map(serializeLocalUsageEvent)
   };
 }
 
-function normalizeLocalUsagePayload(payload) {
-  const now = new Date().toISOString();
-
+function normalizeLocalUsagePayload(payload, userId = DEV_USER_ID) {
   return {
-    id: payload.id || `usage_${Date.now()}_${localUsageEvents.length}`,
-    userId: "dev_user",
+    id: payload.id || undefined,
+    userId,
     deviceId: String(payload.deviceId || "device_local_dev"),
     assistantProfileId: payload.assistantProfileId ? String(payload.assistantProfileId) : null,
     mode: payload.mode === "cloud" ? "cloud" : "local",
@@ -522,26 +773,23 @@ function normalizeLocalUsagePayload(payload) {
     outputChars: Number.isFinite(Number(payload.outputChars)) ? Math.max(0, Math.round(Number(payload.outputChars))) : 0,
     durationMs: Number.isFinite(Number(payload.durationMs)) ? Math.max(0, Math.round(Number(payload.durationMs))) : 0,
     success: payload.success !== false,
-    createdAt: payload.createdAt || now
+    createdAt: payload.createdAt ? new Date(payload.createdAt) : undefined
   };
 }
 
-function createAuthSession(user) {
-  const token = `dev-token-${user.role}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  authSessions.set(token, {
-    userId: user.id,
-    createdAt: new Date().toISOString()
+async function createAuthSession(user) {
+  const token = `miva_${randomBytes(32).toString("hex")}`;
+  await prisma.authSession.create({
+    data: {
+      userId: user.id,
+      tokenHash: hashSecret(token),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    }
   });
 
   return {
     token,
-    user: {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      locale: user.locale
-    }
+    user: serializeUser(user)
   };
 }
 
@@ -573,42 +821,80 @@ async function verifyGoogleCredential(credential) {
   return payload;
 }
 
-function upsertGoogleUser(payload) {
+async function upsertGoogleUser(payload) {
   const email = String(payload.email).toLowerCase();
-  const existing = demoUsers.find((user) => user.email.toLowerCase() === email);
-  if (existing) {
-    existing.displayName = payload.name || existing.displayName;
-    existing.locale = payload.locale || existing.locale;
-    return existing;
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+
+  if (existingUser) {
+    const user = await prisma.user.update({
+      where: { id: existingUser.id },
+      data: {
+        googleSubject: payload.sub,
+        displayName: payload.name || existingUser.displayName,
+        locale: payload.locale || existingUser.locale,
+        lastLoginAt: new Date()
+      }
+    });
+    return { user, isNewUser: false };
   }
 
-  const user = {
-    id: `google_${payload.sub}`,
-    email,
-    password: "",
-    displayName: payload.name || email.split("@")[0] || "MiVA User",
-    role: "user",
-    locale: payload.locale || "en"
-  };
-  demoUsers.push(user);
-  return user;
+  const user = await prisma.user.create({
+    data: {
+      id: `google_${payload.sub}`,
+      email,
+      displayName: payload.name || email.split("@")[0] || "MiVA User",
+      googleSubject: payload.sub,
+      role: "USER",
+      locale: payload.locale || "en",
+      lastLoginAt: new Date()
+    }
+  });
+  return { user, isNewUser: true };
 }
 
-function getUserFromSessionToken(token) {
-  const session = authSessions.get(token);
-  if (session) {
-    return demoUsers.find((user) => user.id === session.userId) || null;
+async function getUserFromSessionToken(token) {
+  if (!token) {
+    return null;
   }
 
   if (token === "dev-token-admin") {
-    return demoUsers.find((user) => user.role === "admin") || null;
+    return prisma.user.findUnique({ where: { id: "admin_user" } });
   }
 
   if (token === "dev-token-user") {
-    return demoUsers.find((user) => user.role === "user") || null;
+    return prisma.user.findUnique({ where: { id: DEV_USER_ID } });
   }
 
-  return null;
+  const session = await prisma.authSession.findUnique({
+    where: { tokenHash: hashSecret(token) },
+    include: { user: true }
+  });
+
+  if (!session) {
+    return null;
+  }
+
+  if (session.expiresAt && session.expiresAt.getTime() < Date.now()) {
+    await prisma.authSession.delete({ where: { id: session.id } });
+    return null;
+  }
+
+  return session.user;
+}
+
+function getBearerToken(req) {
+  const authorization = String(req.headers.authorization || "");
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : "";
+}
+
+async function getRequestUser(req) {
+  const sessionUser = await getUserFromSessionToken(getBearerToken(req));
+  if (sessionUser) {
+    return sessionUser;
+  }
+
+  return prisma.user.findUnique({ where: { id: DEV_USER_ID } });
 }
 
 function createDeviceAuthRequest() {
@@ -629,13 +915,15 @@ function createDeviceAuthRequest() {
   return request;
 }
 
-function recordAssistantProfileSyncEvents(profile) {
-  recordUsageEvent("assistant_profile_synced", profile.id);
-  recordUsageEvent("assistant_use_case_selected", profile.useCase);
-  recordUsageEvent("provider_selected", profile.provider);
-  recordUsageEvent("model_selected", profile.model);
-  recordUsageEvent("local_mode_selected", profile.localMode);
-  recordUsageEvent("coding_capability_selected", profile.prompt?.settings?.coding?.capability || "chatOnly");
+async function recordAssistantProfileSyncEvents(profile) {
+  await Promise.all([
+    recordUsageEvent("assistant_profile_synced", profile.id, profile.userId),
+    recordUsageEvent("assistant_use_case_selected", profile.useCase, profile.userId),
+    recordUsageEvent("provider_selected", profile.provider, profile.userId),
+    recordUsageEvent("model_selected", profile.model, profile.userId),
+    recordUsageEvent("local_mode_selected", profile.localMode, profile.userId),
+    recordUsageEvent("coding_capability_selected", profile.prompt?.settings?.coding?.capability || "chatOnly", profile.userId)
+  ]);
 }
 
 function applyAssistantProfilePayload(profile, payload) {
@@ -655,6 +943,44 @@ function applyAssistantProfilePayload(profile, payload) {
   return profile;
 }
 
+function toAssistantProfileDbData(profile, userId = profile.userId || DEV_USER_ID) {
+  return {
+    userId,
+    name: profile.name,
+    description: profile.description,
+    useCase: profile.useCase,
+    answerStyle: profile.answerStyle,
+    priority: profile.priority,
+    languageUse: profile.languageUse,
+    localMode: profile.localMode,
+    provider: toDbProvider(profile.provider),
+    model: profile.model,
+    futureFeatures: profile.futureFeatures,
+    isDefault: profile.isDefault,
+    status: toDbProfileStatus(profile.status),
+    source: toDbProfileSource(profile.source),
+    prompt: profile.prompt,
+    capabilities: profile.capabilities,
+    completedAt: profile.completedAt ? new Date(profile.completedAt) : null
+  };
+}
+
+function normalizeDevicePayload(payload, userId = DEV_USER_ID) {
+  return {
+    id: payload.id ? String(payload.id) : undefined,
+    userId,
+    name: String(payload.name || "MiVA Desktop"),
+    os: payload.os ? String(payload.os) : null,
+    appVersion: payload.appVersion ? String(payload.appVersion) : null,
+    lastSeenAt: new Date(),
+    localStatus: {
+      status: payload.status === "offline" ? "offline" : "connected",
+      modelRuntime: payload.modelRuntime || null,
+      updatedAt: new Date().toISOString()
+    }
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -671,19 +997,15 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         service: "miva-api",
-        note: "Temporary cloud API contract. Move to NestJS and Prisma when persistence starts."
+        note: "Temporary cloud API contract backed by Prisma/PostgreSQL."
       }, origin);
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/me") {
-      sendJson(res, 200, {
-        id: "dev_user",
-        email: "dev@miva.local",
-        displayName: "MiVA User",
-        role: "user",
-        locale: "ko"
-      }, origin);
+      const sessionUser = await getUserFromSessionToken(getBearerToken(req));
+      const user = sessionUser || await prisma.user.findUnique({ where: { id: DEV_USER_ID } });
+      sendJson(res, 200, serializeUser(user), origin);
       return;
     }
 
@@ -691,9 +1013,9 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJson(req);
       const email = String(payload.email || "").trim().toLowerCase();
       const password = String(payload.password || "");
-      const user = demoUsers.find((item) => item.email === email && item.password === password);
+      const user = await prisma.user.findUnique({ where: { email } });
 
-      if (!user) {
+      if (!user || user.passwordHash !== hashSecret(password)) {
         sendJson(res, 401, {
           error: "INVALID_CREDENTIALS",
           message: "Use dev@miva.local / miva1234 or admin@miva.local / admin1234 for local testing."
@@ -701,7 +1023,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 200, createAuthSession(user), origin);
+      sendJson(res, 200, {
+        ...await createAuthSession(user),
+        isNewUser: false
+      }, origin);
       return;
     }
 
@@ -716,9 +1041,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       const googlePayload = await verifyGoogleCredential(credential);
-      const user = upsertGoogleUser(googlePayload);
-      recordUsageEvent("google_login_completed", user.role);
-      sendJson(res, 200, createAuthSession(user), origin);
+      const { user, isNewUser } = await upsertGoogleUser(googlePayload);
+      await recordUsageEvent("google_login_completed", serializeUser(user).role);
+      sendJson(res, 200, {
+        ...await createAuthSession(user),
+        isNewUser
+      }, origin);
       return;
     }
 
@@ -770,15 +1098,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const user = getUserFromSessionToken(String(payload.token || ""));
+      const user = await getUserFromSessionToken(String(payload.token || ""));
       if (!user) {
         sendJson(res, 401, { error: "INVALID_SESSION_TOKEN" }, origin);
         return;
       }
 
       request.status = "authorized";
-      request.session = createAuthSession(user);
-      recordUsageEvent("desktop_device_login_completed", user.role);
+      request.session = await createAuthSession(user);
+      await recordUsageEvent("desktop_device_login_completed", serializeUser(user).role);
       sendJson(res, 200, {
         status: request.status,
         session: request.session
@@ -794,155 +1122,277 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/devices") {
+      const requestUser = await getRequestUser(req);
+      const deviceRows = await prisma.device.findMany({
+        where: { userId: requestUser.id },
+        orderBy: { updatedAt: "desc" }
+      });
       sendJson(res, 200, {
-        devices
+        devices: deviceRows.map(serializeDevice)
+      }, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/devices") {
+      const requestUser = await getRequestUser(req);
+      const payload = await readJson(req);
+      const devicePayload = normalizeDevicePayload(payload, requestUser.id);
+      const { id: deviceId, ...deviceData } = devicePayload;
+      const resolvedDeviceId = deviceId || "device_local_dev";
+      const existingDevice = await prisma.device.findUnique({ where: { id: resolvedDeviceId } });
+      const device = existingDevice
+        ? await prisma.device.update({
+          where: { id: resolvedDeviceId },
+          data: deviceData
+        })
+        : await prisma.device.create({
+          data: {
+            ...deviceData,
+            id: resolvedDeviceId
+          }
+        });
+      if (!existingDevice) {
+        await recordUsageEvent("device_registered", device.id, requestUser.id);
+      }
+      sendJson(res, 201, {
+        device: serializeDevice(device)
       }, origin);
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/api-keys") {
+      const keys = await prisma.providerCredential.findMany({
+        where: { userId: DEV_USER_ID },
+        orderBy: { updatedAt: "desc" }
+      });
       sendJson(res, 200, {
-        keys: apiKeys
+        keys: keys.map(serializeApiKey)
       }, origin);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api-keys") {
       const payload = await readJson(req);
-      const existingKey = payload.id
-        ? apiKeys.find((item) => item.id === payload.id)
-        : payload.provider !== "custom"
-          ? apiKeys.find((item) => item.provider === payload.provider)
-          : null;
       const nextKey = normalizeApiKeyPayload({
-        ...payload,
-        id: existingKey?.id || payload.id,
-        createdAt: existingKey?.createdAt
+        ...payload
       });
+      const existingKey = payload.id
+        ? await prisma.providerCredential.findUnique({ where: { id: payload.id } })
+        : payload.provider !== "custom"
+          ? await prisma.providerCredential.findFirst({
+            where: {
+              userId: DEV_USER_ID,
+              provider: toDbProvider(payload.provider)
+            }
+          })
+          : null;
+      const key = existingKey
+        ? await prisma.providerCredential.update({
+          where: { id: existingKey.id },
+          data: {
+            provider: toDbProvider(nextKey.provider),
+            label: nextKey.label,
+            encryptedKey: String(payload.key || ""),
+            maskedKey: nextKey.maskedKey,
+            status: toDbCredentialStatus(nextKey.status),
+            lastValidatedAt: null
+          }
+        })
+        : await prisma.providerCredential.create({
+          data: {
+            id: nextKey.id,
+            userId: DEV_USER_ID,
+            provider: toDbProvider(nextKey.provider),
+            label: nextKey.label,
+            encryptedKey: String(payload.key || ""),
+            maskedKey: nextKey.maskedKey,
+            status: toDbCredentialStatus(nextKey.status),
+            lastValidatedAt: null
+          }
+        });
 
-      if (existingKey) {
-        Object.assign(existingKey, nextKey);
-      } else {
-        apiKeys.unshift(nextKey);
-      }
-
-      recordUsageEvent("api_key_configured", nextKey.provider);
+      await recordUsageEvent("api_key_configured", nextKey.provider);
       sendJson(res, existingKey ? 200 : 201, {
-        key: existingKey || nextKey
+        key: serializeApiKey(key)
       }, origin);
       return;
     }
 
     const apiKeyTestMatch = url.pathname.match(/^\/api-keys\/([^/]+)\/test$/);
     if (req.method === "POST" && apiKeyTestMatch) {
-      const key = apiKeys.find((item) => item.id === apiKeyTestMatch[1]);
+      const existingKey = await prisma.providerCredential.findUnique({ where: { id: apiKeyTestMatch[1] } });
+      const key = existingKey
+        ? await prisma.providerCredential.update({
+          where: { id: existingKey.id },
+          data: {
+            status: existingKey.maskedKey ? "VERIFIED" : "ERROR",
+            lastValidatedAt: new Date()
+          }
+        })
+        : null;
       if (!key) {
         sendJson(res, 404, { error: "API_KEY_NOT_FOUND" }, origin);
         return;
       }
 
-      key.status = key.maskedKey ? "verified" : "error";
-      key.lastValidatedAt = new Date().toISOString();
-      key.updatedAt = key.lastValidatedAt;
-      recordUsageEvent("api_key_tested", key.provider);
+      await recordUsageEvent("api_key_tested", fromDbProvider(key.provider));
       sendJson(res, 200, {
-        key
+        key: serializeApiKey(key)
       }, origin);
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/assistant-profiles") {
+      const requestUser = await getRequestUser(req);
+      const profiles = await prisma.assistantProfile.findMany({
+        where: { userId: requestUser.id },
+        orderBy: [
+          { isDefault: "desc" },
+          { updatedAt: "desc" }
+        ]
+      });
       sendJson(res, 200, {
-        profiles: assistantProfiles
+        profiles: profiles.map(serializeAssistantProfile)
       }, origin);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/assistant-profiles") {
+      const requestUser = await getRequestUser(req);
       const payload = await readJson(req);
       const existingProfile = payload.id
-        ? assistantProfiles.find((item) => item.id === payload.id)
+        ? await prisma.assistantProfile.findFirst({ where: { id: payload.id, userId: requestUser.id } })
         : null;
-      const profile = existingProfile
-        ? applyAssistantProfilePayload(existingProfile, payload)
-        : normalizeAssistantProfile(payload);
+      const normalizedProfile = normalizeAssistantProfile({
+        ...existingProfile,
+        ...(existingProfile ? serializeAssistantProfile(existingProfile) : {}),
+        ...payload,
+        id: existingProfile?.id || payload.id,
+        createdAt: existingProfile?.createdAt?.toISOString() || payload.createdAt
+      }, requestUser.id);
 
-      if (!existingProfile) {
-        assistantProfiles.unshift(profile);
-        if (profile.isDefault) {
-          assistantProfiles.forEach((item) => {
-            item.isDefault = item.id === profile.id;
-          });
-        }
+      if (normalizedProfile.isDefault) {
+        await prisma.assistantProfile.updateMany({
+          where: { userId: requestUser.id },
+          data: { isDefault: false }
+        });
       }
 
-      recordAssistantProfileSyncEvents(profile);
+      const profile = existingProfile
+        ? await prisma.assistantProfile.update({
+          where: { id: existingProfile.id },
+          data: toAssistantProfileDbData(normalizedProfile)
+        })
+        : await prisma.assistantProfile.create({
+          data: {
+            id: normalizedProfile.id,
+            ...toAssistantProfileDbData(normalizedProfile, requestUser.id)
+          }
+        });
+
+      await recordAssistantProfileSyncEvents(normalizedProfile);
       sendJson(res, existingProfile ? 200 : 201, {
-        profile
+        profile: serializeAssistantProfile(profile)
       }, origin);
       return;
     }
 
     const finalizeMatch = url.pathname.match(/^\/assistant-profiles\/([^/]+)\/finalize$/);
     if (req.method === "POST" && finalizeMatch) {
-      const profile = assistantProfiles.find((item) => item.id === finalizeMatch[1]);
-      if (!profile) {
+      const requestUser = await getRequestUser(req);
+      const existingProfile = await prisma.assistantProfile.findFirst({
+        where: { id: finalizeMatch[1], userId: requestUser.id }
+      });
+      if (!existingProfile) {
         sendJson(res, 404, { error: "PROFILE_NOT_FOUND" }, origin);
         return;
       }
 
-      const now = new Date().toISOString();
-      assistantProfiles.forEach((item) => {
-        item.isDefault = item.id === profile.id;
+      await prisma.assistantProfile.updateMany({
+        where: { userId: requestUser.id },
+        data: { isDefault: false }
       });
-      profile.status = "finalized";
-      profile.completedAt = now;
-      profile.updatedAt = now;
-      recordUsageEvent("assistant_profile_status", "finalized");
-      recordUsageEvent("assistant_profile_finalized", profile.id);
-      recordUsageEvent("provider_selected", profile.provider);
-      recordUsageEvent("model_selected", profile.model);
+      const profile = await prisma.assistantProfile.update({
+        where: { id: existingProfile.id },
+        data: {
+          isDefault: true,
+          status: "FINALIZED",
+          completedAt: new Date()
+        }
+      });
+      await Promise.all([
+        recordUsageEvent("assistant_profile_status", "finalized", requestUser.id),
+        recordUsageEvent("assistant_profile_finalized", profile.id, requestUser.id),
+        recordUsageEvent("provider_selected", fromDbProvider(profile.provider), requestUser.id),
+        recordUsageEvent("model_selected", profile.model, requestUser.id)
+      ]);
       sendJson(res, 200, {
-        profile
+        profile: serializeAssistantProfile(profile)
       }, origin);
       return;
     }
 
     const profileMatch = url.pathname.match(/^\/assistant-profiles\/([^/]+)$/);
     if (profileMatch) {
+      const requestUser = await getRequestUser(req);
       const profileId = profileMatch[1];
-      const profile = assistantProfiles.find((item) => item.id === profileId);
+      const profile = await prisma.assistantProfile.findFirst({
+        where: { id: profileId, userId: requestUser.id }
+      });
       if (!profile) {
         sendJson(res, 404, { error: "PROFILE_NOT_FOUND" }, origin);
         return;
       }
 
       if (req.method === "GET") {
-        sendJson(res, 200, { profile }, origin);
+        sendJson(res, 200, { profile: serializeAssistantProfile(profile) }, origin);
         return;
       }
 
       if (req.method === "PATCH") {
         const payload = await readJson(req);
-        applyAssistantProfilePayload(profile, payload);
-        recordAssistantProfileSyncEvents(profile);
+        const normalizedProfile = normalizeAssistantProfile({
+          ...serializeAssistantProfile(profile),
+          ...payload,
+          id: profile.id,
+          createdAt: profile.createdAt.toISOString()
+        }, requestUser.id);
+        if (normalizedProfile.isDefault) {
+          await prisma.assistantProfile.updateMany({
+            where: { userId: requestUser.id },
+            data: { isDefault: false }
+          });
+        }
+        const updatedProfile = await prisma.assistantProfile.update({
+          where: { id: profile.id },
+          data: toAssistantProfileDbData(normalizedProfile)
+        });
+        await recordAssistantProfileSyncEvents(normalizedProfile);
         sendJson(res, 200, {
-          profile
+          profile: serializeAssistantProfile(updatedProfile)
         }, origin);
         return;
       }
 
       if (req.method === "DELETE") {
-        const deletedIndex = assistantProfiles.findIndex((item) => item.id === profileId);
-        const deletedProfile = assistantProfiles.splice(deletedIndex, 1)[0];
-        if (deletedProfile?.isDefault && assistantProfiles[0]) {
-          assistantProfiles[0].isDefault = true;
+        const deletedProfile = await prisma.assistantProfile.delete({ where: { id: profileId } });
+        if (deletedProfile.isDefault) {
+          const fallbackProfile = await prisma.assistantProfile.findFirst({
+            where: { userId: requestUser.id },
+            orderBy: { updatedAt: "desc" }
+          });
+          if (fallbackProfile) {
+            await prisma.assistantProfile.update({
+              where: { id: fallbackProfile.id },
+              data: { isDefault: true }
+            });
+          }
         }
 
-        recordUsageEvent("assistant_profile_deleted", profileId);
+        await recordUsageEvent("assistant_profile_deleted", profileId, requestUser.id);
         sendJson(res, 200, {
           ok: true,
-          profile: deletedProfile
+          profile: serializeAssistantProfile(deletedProfile)
         }, origin);
         return;
       }
@@ -957,7 +1407,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      recordUsageEvent(payload.type, payload.value);
+      await recordUsageEvent(payload.type, payload.value);
       sendJson(res, 201, {
         ok: true
       }, origin);
@@ -965,18 +1415,53 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/usage/summary") {
-      sendJson(res, 200, getUsageSummary(), origin);
+      sendJson(res, 200, await getUsageSummary(), origin);
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/usage/local-events") {
+      const requestUser = await getRequestUser(req);
       const payload = await readJson(req);
       const events = Array.isArray(payload.events) ? payload.events : [payload];
-      const normalizedEvents = events.map(normalizeLocalUsagePayload);
-      localUsageEvents.push(...normalizedEvents);
-      for (const event of normalizedEvents) {
-        recordUsageEvent("local_usage_synced", `${event.provider}:${event.model}`);
-      }
+      const normalizedEvents = events.map((event) => normalizeLocalUsagePayload(event, requestUser.id));
+      const [knownDevices, knownProfiles] = await Promise.all([
+        prisma.device.findMany({
+          where: {
+            id: {
+              in: [...new Set(normalizedEvents.map((event) => event.deviceId).filter(Boolean))]
+            }
+          },
+          select: { id: true }
+        }),
+        prisma.assistantProfile.findMany({
+          where: {
+            id: {
+              in: [...new Set(normalizedEvents.map((event) => event.assistantProfileId).filter(Boolean))]
+            }
+          },
+          select: { id: true }
+        })
+      ]);
+      const knownDeviceIds = new Set(knownDevices.map((device) => device.id));
+      const knownProfileIds = new Set(knownProfiles.map((profile) => profile.id));
+      await prisma.usageEvent.createMany({
+        data: normalizedEvents.map((event) => ({
+          id: event.id,
+          userId: event.userId,
+          deviceId: knownDeviceIds.has(event.deviceId) ? event.deviceId : null,
+          assistantProfileId: knownProfileIds.has(event.assistantProfileId) ? event.assistantProfileId : null,
+          mode: toDbUsageMode(event.mode),
+          provider: event.provider,
+          model: event.model,
+          eventType: "chat",
+          inputChars: event.inputChars,
+          outputChars: event.outputChars,
+          durationMs: event.durationMs,
+          success: event.success,
+          createdAt: event.createdAt
+        }))
+      });
+      await Promise.all(normalizedEvents.map((event) => recordUsageEvent("local_usage_synced", `${event.provider}:${event.model}`, requestUser.id)));
       sendJson(res, 201, {
         ok: true,
         accepted: normalizedEvents.length
@@ -985,7 +1470,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/admin/stats") {
-      sendJson(res, 200, getAdminStats(), origin);
+      sendJson(res, 200, await getAdminStats(), origin);
       return;
     }
 
@@ -1002,6 +1487,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`MiVA API placeholder listening on http://localhost:${PORT}`);
-});
+ensureDevData()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`MiVA API placeholder listening on http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to initialize MiVA API data", error);
+    process.exit(1);
+  });

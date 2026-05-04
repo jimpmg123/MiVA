@@ -102,7 +102,7 @@ Required:
 - Development auth endpoints.
 - Device auth scaffolding for later desktop/web login.
 
-The API can remain in-memory for Scope 1. Persistence moves to NestJS, Prisma, and PostgreSQL after the data design is finalized.
+The API can remain in-memory for Scope 1. Persistence moves to a Railway-hosted NestJS API with Prisma and Supabase PostgreSQL after the data design is finalized.
 
 ## Out Of Scope For Scope 1
 
@@ -136,4 +136,3 @@ Scope 1 is complete when:
   - `node scripts/check.mjs`
   - `node scripts/build.mjs` in `apps/desktop`
   - `cargo check` in `apps/desktop/src-tauri`
-

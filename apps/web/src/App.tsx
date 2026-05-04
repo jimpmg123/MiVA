@@ -1535,20 +1535,17 @@ const LoginPage = ({
         <Card className="p-8">
           <h2 className="text-2xl font-bold font-display tracking-tight">Sign in to Console</h2>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Use Google OAuth when a client ID is configured. Local test accounts remain available during development.
+            Continue with your Google account, or use a temporary development account while testing.
           </p>
 
           <div className="mt-7 rounded-3xl border border-slate-100 bg-slate-50 p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-black text-slate-900">Continue with Google</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Requires `VITE_GOOGLE_CLIENT_ID` in the web app and `GOOGLE_OAUTH_CLIENT_ID` in the API.
-                </p>
               </div>
               {googleLoginPending && <Badge variant="warning">Signing in</Badge>}
             </div>
-            <div className="mt-4 min-h-[44px]">
+            <div className="mt-4 flex min-h-[44px] justify-center">
               {GOOGLE_CLIENT_ID ? (
                 <div ref={googleButtonRef} />
               ) : (
@@ -2189,23 +2186,26 @@ export default function App() {
     setActivePage('dashboard');
   };
 
-  const toggleTemporaryAdminRole = () => {
-    if (!auth.user || !auth.token) return;
+  const switchDevAccount = async (role: 'user' | 'admin') => {
+    const credentials = role === 'admin'
+      ? { email: 'admin@miva.local', password: 'admin1234' }
+      : { email: 'dev@miva.local', password: 'miva1234' };
 
-    const nextRole = auth.role === 'admin' ? 'user' : 'admin';
-    const nextAuth: AuthState = {
-      role: nextRole,
-      user: {
-        ...auth.user,
-        role: nextRole,
-        displayName: nextRole === 'admin' ? 'MiVA Admin' : 'MiVA User',
-      },
-      token: `dev-token-${nextRole}`,
-    };
-    window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
-    setAuth(nextAuth);
-    if (nextRole !== 'admin' && activePage === 'admin') {
-      setActivePage('dashboard');
+    try {
+      const response = await login(credentials.email, credentials.password);
+      const nextAuth: AuthState = {
+        role: response.user.role,
+        user: response.user,
+        token: response.token,
+      };
+      window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
+      setAuth(nextAuth);
+      if (response.user.role !== 'admin' && activePage === 'admin') {
+        setActivePage('dashboard');
+      }
+      await refreshCloud();
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Could not switch development account.');
     }
   };
 
@@ -2574,14 +2574,28 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-8">
-            <button
-              className="rounded-full border border-dashed border-amber-300 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-amber-700 transition hover:bg-amber-100 active:scale-[0.98]"
-              onClick={toggleTemporaryAdminRole}
-              type="button"
-              title="Temporary dev-only role switch. Remove before release."
-            >
-              Dev: {auth.role === 'admin' ? 'Admin' : 'User'}
-            </button>
+            <div className="flex items-center gap-2 rounded-full border border-dashed border-amber-300 bg-amber-50 p-1">
+              <button
+                className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] transition active:scale-[0.98] ${
+                  auth.role === 'user' ? 'bg-white text-amber-800 shadow-sm' : 'text-amber-700 hover:bg-amber-100'
+                }`}
+                onClick={() => void switchDevAccount('user')}
+                type="button"
+                title="Temporary development login as user."
+              >
+                Dev User
+              </button>
+              <button
+                className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] transition active:scale-[0.98] ${
+                  auth.role === 'admin' ? 'bg-white text-amber-800 shadow-sm' : 'text-amber-700 hover:bg-amber-100'
+                }`}
+                onClick={() => void switchDevAccount('admin')}
+                type="button"
+                title="Temporary development login as admin."
+              >
+                Dev Admin
+              </button>
+            </div>
             <div className={`flex items-center gap-2.5 px-4 py-2 rounded-full ${topStatus.bg}`}>
               <span className={`w-2.5 h-2.5 rounded-full ${topStatus.dot}`}></span>
               <span className={`text-xs font-bold tracking-tight ${topStatus.text}`}>{topStatus.label}</span>
