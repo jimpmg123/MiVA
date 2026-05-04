@@ -7,6 +7,9 @@ export type AssistantProfileSource = "desktop-setup" | "web-console" | "api";
 export type AuthRole = "guest" | "user" | "admin";
 export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
 export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+export type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
+export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
+export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
 export type ApiKeyProviderId = "openai" | "gemini" | "anthropic" | "custom";
 export type ApiKeyStatus = "notConfigured" | "configured" | "verified" | "error";
 export type UsageMode = "local" | "cloud";
@@ -25,6 +28,13 @@ export interface PromptSettings {
     calendar: WorkspaceToolPolicy;
     gmail: WorkspaceToolPolicy;
     drive: WorkspaceToolPolicy;
+  };
+  coding?: {
+    capability: CodingCapability;
+    providerPolicy: CodingProviderPolicy;
+    localExperimental: boolean;
+    accessMode: CodingAccessMode;
+    workspaceAllowlistRequired: boolean;
   };
   safetyRules: string[];
 }
@@ -68,6 +78,16 @@ export interface AssistantProfile {
   updatedAt: string;
   completedAt?: string | null;
   prompt?: AssistantPromptConfig;
+  capabilities?: {
+    coding?: {
+      capability: CodingCapability;
+      providerPolicy: CodingProviderPolicy;
+      localExperimental: boolean;
+      accessMode: CodingAccessMode;
+      workspaceAllowlistRequired: boolean;
+    };
+    [key: string]: unknown;
+  };
 }
 
 export type AssistantProfileDraft = Omit<
@@ -106,6 +126,7 @@ export interface AdminStats {
     finalized: number;
     useCases: AdminTopItem[];
     localModes: AdminTopItem[];
+    codingCapabilities?: AdminTopItem[];
     statuses: AdminTopItem[];
   };
   providers: AdminTopItem[];
@@ -234,6 +255,10 @@ export async function getAssistantProfiles() {
   return fetchJson<{ profiles: AssistantProfile[] }>(`${CLOUD_API_URL}/assistant-profiles`);
 }
 
+export async function getAssistantProfile(profileId: string) {
+  return fetchJson<{ profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(profileId)}`);
+}
+
 export async function createAssistantProfile(profile: AssistantProfileDraft) {
   return fetchJson<{ profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles`, {
     method: "POST",
@@ -241,6 +266,12 @@ export async function createAssistantProfile(profile: AssistantProfileDraft) {
       "content-type": "application/json",
     },
     body: JSON.stringify(profile),
+  });
+}
+
+export async function deleteAssistantProfile(profileId: string) {
+  return fetchJson<{ ok: boolean; profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(profileId)}`, {
+    method: "DELETE",
   });
 }
 

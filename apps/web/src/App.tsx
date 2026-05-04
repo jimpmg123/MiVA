@@ -29,6 +29,7 @@ import {
   checkCloudApi,
   completeDesktopDeviceLogin,
   createAssistantProfile,
+  deleteAssistantProfile,
   fetchJson,
   finalizeAssistantProfile,
   getAdminStats,
@@ -232,22 +233,21 @@ function getActiveModel(connection: ConnectionState) {
 interface NavItem {
   id: PageId;
   label: string;
-  labelKr?: string;
   icon: any;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', labelKr: '대시보드', icon: LayoutDashboard },
-  { id: 'devices', label: 'Devices', labelKr: '장치', icon: Cpu },
-  { id: 'models', label: 'Models', labelKr: '모델', icon: Database },
-  { id: 'profiles', label: 'My Assistants', labelKr: 'Profiles', icon: UserCircle },
-  { id: 'apiKeys', label: 'API Keys', labelKr: 'Keys', icon: KeyRound },
-  { id: 'usage', label: 'Usage', labelKr: 'Usage', icon: Activity },
-  { id: 'billing', label: 'Billing', labelKr: 'Billing', icon: CreditCard },
-  { id: 'integrations', label: 'Integrations', labelKr: '연동', icon: Blocks },
-  { id: 'voice', label: 'Voice & Character', labelKr: '음성 및 캐릭터', icon: AudioLines },
-  { id: 'admin', label: 'Admin Analytics', labelKr: '관리자 통계', icon: BarChart3 },
-  { id: 'settings', label: 'Settings', labelKr: '설정', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'devices', label: 'Devices', icon: Cpu },
+  { id: 'models', label: 'Models', icon: Database },
+  { id: 'profiles', label: 'My Assistants', icon: UserCircle },
+  { id: 'apiKeys', label: 'API Keys', icon: KeyRound },
+  { id: 'usage', label: 'Usage', icon: Activity },
+  { id: 'billing', label: 'Billing', icon: CreditCard },
+  { id: 'integrations', label: 'Integrations', icon: Blocks },
+  { id: 'voice', label: 'Voice & Character', icon: AudioLines },
+  { id: 'admin', label: 'Admin Analytics', icon: BarChart3 },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 const authStorageKey = 'miva.web.auth.v1';
@@ -317,7 +317,7 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
     <div className="flex justify-between items-end">
       <div>
-        <h2 className="text-3xl font-bold font-display tracking-tight">Dashboard / 대시보드</h2>
+        <h2 className="text-3xl font-bold font-display tracking-tight">Dashboard</h2>
         <p className="text-slate-500 mt-1">System operational. Last checked: {formatRelativeTime(connection.lastChecked)}.</p>
       </div>
       <div className="flex gap-3">
@@ -338,7 +338,7 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
     <div className="grid grid-cols-12 gap-6">
       <Card className="col-span-12 lg:col-span-8 relative overflow-hidden">
         <div className="flex items-center justify-between mb-8">
-          <h3 className="text-xl font-bold font-display">System Health / 시스템 상태</h3>
+          <h3 className="text-xl font-bold font-display">System Health</h3>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Live Status</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
@@ -385,7 +385,7 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
 
       <Card className="col-span-12 md:col-span-7">
         <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold font-display">Active Assistant / 활성 어시스턴트</h3>
+          <h3 className="text-xl font-bold font-display">Active Assistant</h3>
           <button className="text-primary-container font-semibold text-sm hover:underline">Change Profile</button>
         </div>
         <div className="flex items-start gap-6 p-6 bg-primary-container/5 rounded-2xl border border-primary-container/10">
@@ -757,15 +757,19 @@ const MyAssistantsPage = ({
   cloud,
   creatingProfile,
   finalizingProfileId,
+  deletingProfileId,
   onCreateProfile,
   onFinalizeProfile,
+  onDeleteProfile,
   onRefreshCloud,
 }: {
   cloud: CloudState;
   creatingProfile: boolean;
   finalizingProfileId: string | null;
+  deletingProfileId: string | null;
   onCreateProfile: (profile: AssistantProfileDraft) => Promise<void>;
   onFinalizeProfile: (profileId: string) => Promise<void>;
+  onDeleteProfile: (profileId: string) => Promise<void>;
   onRefreshCloud: () => Promise<void>;
 }) => {
   const profiles = cloud.profiles;
@@ -788,6 +792,33 @@ const MyAssistantsPage = ({
   }, [profiles, selectedProfileId]);
 
   const promptSettings = activeProfile?.prompt?.settings;
+  const defaultCoding = {
+    capability: 'chatOnly',
+    providerPolicy: 'localAllowed',
+    localExperimental: false,
+    accessMode: 'readOnly',
+    workspaceAllowlistRequired: false,
+  };
+  const getCodingSettings = (profile = activeProfile) => profile?.prompt?.settings?.coding
+    || profile?.capabilities?.coding
+    || defaultCoding;
+  const codingSettings = getCodingSettings(activeProfile);
+  const codingCapabilityLabel = (capability?: string) => {
+    if (capability === 'codeExplain') return 'Code explanation';
+    if (capability === 'codeEdit') return 'Code editing';
+    if (capability === 'clawCode') return 'Claw Code';
+    return 'Chat only';
+  };
+  const codingProviderPolicyLabel = (policy?: string) => {
+    if (policy === 'cloudRequired') return 'Cloud API required';
+    if (policy === 'cloudRecommended') return 'Cloud recommended';
+    return 'Local allowed';
+  };
+  const codingAccessModeLabel = (accessMode?: string) => {
+    if (accessMode === 'fileEdits') return 'File edits';
+    if (accessMode === 'shellCommands') return 'Shell commands';
+    return 'Read-only';
+  };
   const scheduleModeLabel = promptSettings?.scheduleRules.mode === 'confirmBeforeAction'
     ? 'Confirm before action'
     : promptSettings?.scheduleRules.mode === 'connectedActions'
@@ -855,6 +886,7 @@ const MyAssistantsPage = ({
                     {profiles.map((profile) => {
                       const Icon = profile.useCase === 'work' ? Blocks : profile.useCase === 'daily' ? LayoutDashboard : UserCircle;
                       const active = profile.id === activeProfile?.id;
+                      const profileCoding = getCodingSettings(profile);
 
                       return (
                         <button
@@ -870,7 +902,9 @@ const MyAssistantsPage = ({
                                 <div>
                                     <h4 className="font-bold text-slate-900">{profile.name}</h4>
                                     <p className="text-xs text-slate-400">{profile.useCase} / {profile.localMode} / {profile.status || 'draft'}</p>
-                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">{sourceLabel(profile.source)}</p>
+                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                                      {sourceLabel(profile.source)} / {codingCapabilityLabel(profileCoding.capability)}
+                                    </p>
                                 </div>
                                 {active && <div className="ml-auto w-2 h-2 rounded-full bg-primary-container"></div>}
                             </div>
@@ -896,6 +930,9 @@ const MyAssistantsPage = ({
                                 <Badge variant={activeProfile?.status === 'finalized' ? 'success' : 'warning'}>{activeProfile?.status || 'draft'}</Badge>
                                 <Badge variant={activeProfile?.source === 'desktop-setup' ? 'success' : 'info'}>
                                   {sourceLabel(activeProfile?.source)}
+                                </Badge>
+                                <Badge variant={codingSettings.providerPolicy === 'cloudRequired' ? 'warning' : 'info'}>
+                                  {codingProviderPolicyLabel(codingSettings.providerPolicy)}
                                 </Badge>
                             </div>
                             <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant from the desktop setup survey or the web console.'}</p>
@@ -939,6 +976,27 @@ const MyAssistantsPage = ({
                             </div>
                         </div>
                         <div>
+                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Coding Capability</label>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="p-4 bg-slate-50 rounded-2xl">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Mode</p>
+                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingCapabilityLabel(codingSettings.capability)}</p>
+                              </div>
+                              <div className="p-4 bg-slate-50 rounded-2xl">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Provider</p>
+                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingProviderPolicyLabel(codingSettings.providerPolicy)}</p>
+                              </div>
+                              <div className="p-4 bg-slate-50 rounded-2xl">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Access</p>
+                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingAccessModeLabel(codingSettings.accessMode)}</p>
+                              </div>
+                              <div className="p-4 bg-slate-50 rounded-2xl">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Safety</p>
+                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingSettings.workspaceAllowlistRequired ? 'Workspace allowlist' : 'No repo actions'}</p>
+                              </div>
+                            </div>
+                        </div>
+                        <div>
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Prompt Settings</label>
                             <div className="space-y-3">
                               <div className="p-4 bg-slate-50 rounded-2xl">
@@ -967,6 +1025,7 @@ const MyAssistantsPage = ({
                              <span className="text-white">You are MiVA</span>, a {activeProfile?.localMode || 'hybrid'} AI assistant. 
                              Use case: {activeProfile?.useCase || 'daily'}. Answer style: {activeProfile?.answerStyle || 'moderate'}.
                              Language mode: {activeProfile?.languageUse || 'korean'}. Future tools: {(activeProfile?.futureFeatures || []).join(', ') || 'none'}.
+                             Coding: {codingCapabilityLabel(codingSettings.capability)} / {codingProviderPolicyLabel(codingSettings.providerPolicy)}.
                             </p>
                            {promptSettings && (
                             <div className="mt-5 space-y-2">
@@ -995,7 +1054,21 @@ const MyAssistantsPage = ({
                       Last modified {activeProfile ? formatRelativeTime(new Date(activeProfile.updatedAt)) : 'Not saved yet'}
                       {activeProfile?.completedAt ? ` / finalized ${formatRelativeTime(new Date(activeProfile.completedAt))}` : ''}
                     </span>
-                    <button className="text-red-500 font-bold hover:underline">DELETE ASSISTANT</button>
+                    <button
+                      className="inline-flex items-center gap-2 font-bold text-red-500 transition hover:text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!activeProfile || deletingProfileId === activeProfile.id}
+                      onClick={() => {
+                        if (!activeProfile) return;
+                        const confirmed = window.confirm(`Delete "${activeProfile.name}" from the web API? Desktop local copies are not deleted.`);
+                        if (confirmed) {
+                          void onDeleteProfile(activeProfile.id);
+                        }
+                      }}
+                      type="button"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {deletingProfileId === activeProfile?.id ? 'DELETING...' : 'DELETE ASSISTANT'}
+                    </button>
                 </div>
             </Card>
         </div>
@@ -1566,7 +1639,7 @@ const IntegrationsPage = () => (
         <div className="flex justify-between items-start">
             <div>
                 <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-                    Integrations <span className="text-slate-300 font-medium text-2xl">/ 연동</span>
+                    Integrations
                 </h2>
                 <p className="text-slate-500 mt-2 max-w-2xl">Connect your local MiVA instance to external capabilities and productivity tools. All data routing remains under your explicit control.</p>
             </div>
@@ -1721,7 +1794,7 @@ const VoiceCharacterPage = () => (
         <div className="flex justify-between items-end">
             <div>
                  <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-                    Voice & Character <span className="text-slate-300 font-medium text-2xl">/ 음성 및 캐릭터</span>
+                    Voice & Character
                 </h2>
                 <p className="text-slate-500 mt-2 max-w-2xl text-lg">Configure the auditory and visual persona of your local AI assistant. Manage how MiVA hears, speaks, and presents itself.</p>
             </div>
@@ -1907,6 +1980,7 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
     { title: 'Top Providers', items: stats?.providers || [] },
     { title: 'Assistant Roles', items: stats?.assistantProfiles.useCases || [] },
     { title: 'Local Modes', items: stats?.assistantProfiles.localModes || [] },
+    { title: 'Coding Capabilities', items: stats?.assistantProfiles.codingCapabilities || [] },
     { title: 'Profile Status', items: stats?.assistantProfiles.statuses || [] },
   ];
 
@@ -1915,7 +1989,7 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
       <div className="flex items-end justify-between gap-6">
         <div>
           <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-            Admin Analytics <span className="text-slate-300 font-medium text-2xl">/ 관리자 통계</span>
+            Admin Analytics
           </h2>
           <p className="text-slate-500 mt-2 max-w-2xl">
             Track product-level choices without storing private chat content. Phase 1 measures selected models, providers, assistant roles, and device status.
@@ -2014,6 +2088,7 @@ export default function App() {
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [finalizingProfileId, setFinalizingProfileId] = useState<string | null>(null);
+  const [deletingProfileId, setDeletingProfileId] = useState<string | null>(null);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
   const visibleNavItems = useMemo(
@@ -2153,6 +2228,17 @@ export default function App() {
       setActivePage('profiles');
     } finally {
       setFinalizingProfileId(null);
+    }
+  };
+
+  const deleteCloudProfile = async (profileId: string) => {
+    setDeletingProfileId(profileId);
+    try {
+      await deleteAssistantProfile(profileId);
+      await refreshCloud();
+      setActivePage('profiles');
+    } finally {
+      setDeletingProfileId(null);
     }
   };
 
@@ -2341,7 +2427,7 @@ export default function App() {
   const topStatus = useMemo(() => {
     if (connection.desktop === 'connected' || connection.helper === 'connected' || cloud.status === 'connected') {
       return {
-        label: 'Connected / 연결됨',
+        label: 'Connected',
         dot: 'bg-green-500 status-glow',
         text: 'text-green-700',
         bg: 'bg-green-50',
@@ -2350,7 +2436,7 @@ export default function App() {
 
     if (connection.desktop === 'checking' || connection.helper === 'checking' || cloud.status === 'checking') {
       return {
-        label: 'Checking / 확인 중',
+        label: 'Checking',
         dot: 'bg-amber-400',
         text: 'text-amber-700',
         bg: 'bg-amber-50',
@@ -2358,7 +2444,7 @@ export default function App() {
     }
 
     return {
-      label: 'Offline / 연결 안 됨',
+      label: 'Offline',
       dot: 'bg-red-500',
       text: 'text-red-700',
       bg: 'bg-red-50',
@@ -2375,8 +2461,10 @@ export default function App() {
           cloud={cloud}
           creatingProfile={creatingProfile}
           finalizingProfileId={finalizingProfileId}
+          deletingProfileId={deletingProfileId}
           onCreateProfile={createCloudProfile}
           onFinalizeProfile={finalizeCloudProfile}
+          onDeleteProfile={deleteCloudProfile}
           onRefreshCloud={refreshCloud}
         />
       );
@@ -2440,7 +2528,7 @@ export default function App() {
                 }`}
               >
                 <item.icon className={`w-5 h-5 transition-colors ${activePage === item.id ? 'text-white' : 'text-slate-400 group-hover:text-slate-900'}`} />
-                <span className="font-display tracking-tight">{activePage === item.id ? `${item.label} / ${item.labelKr}` : item.label}</span>
+                <span className="font-display tracking-tight">{item.label}</span>
               </button>
             ))}
           </nav>
@@ -2531,7 +2619,7 @@ const SettingsPage = () => (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
         <div>
             <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-                Settings <span className="text-slate-400 text-2xl font-medium">/ 설정</span>
+                Settings
             </h2>
             <p className="text-slate-500 mt-1">Configure your local web console and bridge preferences.</p>
         </div>

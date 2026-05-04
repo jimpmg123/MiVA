@@ -39,6 +39,9 @@ type CloudProviderId = Exclude<ProviderId, "ollama">;
 type ProviderMode = "local" | "cloud";
 type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
 type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
+type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
+type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
 type AuthRole = "user" | "admin";
 type PromptEditorMode = "simple" | "developer";
 
@@ -95,6 +98,13 @@ type PromptSettings = {
     calendar: WorkspaceToolPolicy;
     gmail: WorkspaceToolPolicy;
     drive: WorkspaceToolPolicy;
+  };
+  coding: {
+    capability: CodingCapability;
+    providerPolicy: CodingProviderPolicy;
+    localExperimental: boolean;
+    accessMode: CodingAccessMode;
+    workspaceAllowlistRequired: boolean;
   };
   safetyRules: string[];
 };
@@ -157,6 +167,17 @@ type SurveyState = {
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+  createdAt?: string;
+  provider?: ProviderId;
+  model?: string;
+  latencyMs?: number;
+};
+
+type ChatMetrics = {
+  provider: ProviderId;
+  model: string;
+  latencyMs: number;
+  measuredAt: string;
 };
 
 type ProviderKeyState = {
@@ -235,6 +256,13 @@ type LocalAssistantProfile = {
     googleWorkspace: { enabled: boolean; accountId: string | null; scopes: string[] };
     files: { enabled: boolean; allowedRoots: string[] };
     tools: { enabled: boolean; enabledToolIds: string[] };
+    coding: {
+      capability: CodingCapability;
+      providerPolicy: CodingProviderPolicy;
+      localExperimental: boolean;
+      accessMode: CodingAccessMode;
+      workspaceAllowlistRequired: boolean;
+    };
     mcp: { enabled: boolean; serverIds: string[] };
     skills: { enabled: boolean; skillIds: string[] };
     externalApis: { enabled: boolean; providerIds: string[] };
@@ -306,6 +334,13 @@ const defaultPromptSettings: PromptSettings = {
     gmail: "disabled",
     drive: "disabled",
   },
+  coding: {
+    capability: "chatOnly",
+    providerPolicy: "localAllowed",
+    localExperimental: false,
+    accessMode: "readOnly",
+    workspaceAllowlistRequired: false,
+  },
   safetyRules: [
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
     "Before changing calendars, files, or email, explain the planned action and wait for user confirmation.",
@@ -322,6 +357,25 @@ const workspacePolicyCopy: Record<WorkspaceToolPolicy, string> = {
   disabled: "Disabled",
   askFirst: "Ask first",
   connectedOnly: "Connected only",
+};
+
+const codingCapabilityCopy: Record<CodingCapability, string> = {
+  chatOnly: "Chat only",
+  codeExplain: "Code explanation",
+  codeEdit: "Code editing",
+  clawCode: "Claw Code",
+};
+
+const codingProviderPolicyCopy: Record<CodingProviderPolicy, string> = {
+  localAllowed: "Local allowed",
+  cloudRecommended: "Cloud recommended",
+  cloudRequired: "Cloud API required",
+};
+
+const codingAccessModeCopy: Record<CodingAccessMode, string> = {
+  readOnly: "Read-only",
+  fileEdits: "File edits",
+  shellCommands: "Shell commands",
 };
 
 const emptyAssistantProfileStore: LocalAssistantProfileStore = {
@@ -1259,6 +1313,27 @@ function formatBytes(value: number | null | undefined) {
   return `${nextValue.toFixed(unitIndex >= 2 ? 1 : 0)} ${units[unitIndex]}`;
 }
 
+function formatChatLatency(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "Latency: -";
+  }
+
+  if (value < 1000) {
+    return `Latency: ${Math.round(value)} ms`;
+  }
+
+  return `Latency: ${(value / 1000).toFixed(1)} s`;
+}
+
+function formatLogTime() {
+  return new Date().toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function recommendModel(survey: SurveyState, hardware: HardwareInfo | null) {
   const ram = hardware?.totalMemoryGb ?? 0;
 
@@ -1468,6 +1543,9 @@ function normalizePromptSettings(value: unknown): PromptSettings {
   const workspaceRules = source.workspaceRules && typeof source.workspaceRules === "object"
     ? source.workspaceRules as Partial<PromptSettings["workspaceRules"]>
     : {};
+  const coding = source.coding && typeof source.coding === "object"
+    ? source.coding as Partial<PromptSettings["coding"]>
+    : {};
 
   const scheduleMode: CalendarActionMode =
     scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
@@ -1478,6 +1556,21 @@ function normalizePromptSettings(value: unknown): PromptSettings {
     value === "askFirst" || value === "connectedOnly" || value === "disabled"
       ? value
       : "disabled"
+  );
+  const normalizeCodingCapability = (value: unknown): CodingCapability => (
+    value === "codeExplain" || value === "codeEdit" || value === "clawCode" || value === "chatOnly"
+      ? value
+      : defaultPromptSettings.coding.capability
+  );
+  const normalizeCodingProviderPolicy = (value: unknown): CodingProviderPolicy => (
+    value === "cloudRecommended" || value === "cloudRequired" || value === "localAllowed"
+      ? value
+      : defaultPromptSettings.coding.providerPolicy
+  );
+  const normalizeCodingAccessMode = (value: unknown): CodingAccessMode => (
+    value === "fileEdits" || value === "shellCommands" || value === "readOnly"
+      ? value
+      : defaultPromptSettings.coding.accessMode
   );
 
   return {
@@ -1527,7 +1620,52 @@ function normalizePromptSettings(value: unknown): PromptSettings {
       gmail: normalizeWorkspacePolicy(workspaceRules.gmail),
       drive: normalizeWorkspacePolicy(workspaceRules.drive),
     },
+    coding: {
+      capability: normalizeCodingCapability(coding.capability),
+      providerPolicy: normalizeCodingProviderPolicy(coding.providerPolicy),
+      localExperimental: typeof coding.localExperimental === "boolean"
+        ? coding.localExperimental
+        : defaultPromptSettings.coding.localExperimental,
+      accessMode: normalizeCodingAccessMode(coding.accessMode),
+      workspaceAllowlistRequired: typeof coding.workspaceAllowlistRequired === "boolean"
+        ? coding.workspaceAllowlistRequired
+        : defaultPromptSettings.coding.workspaceAllowlistRequired,
+    },
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
+  };
+}
+
+function codingSettingsToCapability(settings: PromptSettings): LocalAssistantProfile["capabilities"]["coding"] {
+  return {
+    capability: settings.coding.capability,
+    providerPolicy: settings.coding.providerPolicy,
+    localExperimental: settings.coding.localExperimental,
+    accessMode: settings.coding.accessMode,
+    workspaceAllowlistRequired: settings.coding.workspaceAllowlistRequired,
+  };
+}
+
+function normalizeProfileCapabilities(
+  value: Partial<LocalAssistantProfile["capabilities"]> | undefined,
+  settings: PromptSettings,
+): LocalAssistantProfile["capabilities"] {
+  const coding = value?.coding && typeof value.coding === "object"
+    ? value.coding
+    : codingSettingsToCapability(settings);
+
+  return {
+    voice: value?.voice ?? { enabled: false, sttProvider: null, ttsProvider: null },
+    character: value?.character ?? { enabled: false, renderer: null, characterId: null },
+    googleWorkspace: value?.googleWorkspace ?? { enabled: false, accountId: null, scopes: [] },
+    files: value?.files ?? { enabled: false, allowedRoots: [] },
+    tools: value?.tools ?? { enabled: false, enabledToolIds: [] },
+    coding: {
+      ...codingSettingsToCapability(settings),
+      ...coding,
+    },
+    mcp: value?.mcp ?? { enabled: false, serverIds: [] },
+    skills: value?.skills ?? { enabled: false, skillIds: [] },
+    externalApis: value?.externalApis ?? { enabled: false, providerIds: [] },
   };
 }
 
@@ -1576,6 +1714,7 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
   const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages());
+  const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [providerKeys, setProviderKeys] = useState<ProviderKeyState>(() => loadProviderKeys());
@@ -1626,7 +1765,7 @@ function App() {
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
 
   function log(message: string) {
-    setLogs((current) => [`${new Date().toLocaleTimeString()} ${message}`, ...current].slice(0, 40));
+    setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
   }
 
   function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
@@ -1752,6 +1891,15 @@ function App() {
       "Tools for AI:",
       `- Google Workspace CLI: ${promptSettings.toolConnections.googleWorkspaceCli ? "on" : "off"}. When on, MiVA may prepare Google Calendar, Gmail, Drive, and Workspace actions, but it must only say an action is done after the connected tool confirms completion.`,
       `- Daiso CLI: ${promptSettings.toolConnections.daisoCli ? "on" : "off"}. When on, MiVA may prepare approved Daiso CLI workflows, but it must only run or report actions after the connected tool confirms completion.`,
+      "Coding policy:",
+      `- Capability: ${codingCapabilityCopy[promptSettings.coding.capability]}.`,
+      `- Model policy: ${codingProviderPolicyCopy[promptSettings.coding.providerPolicy]}.`,
+      `- Access mode: ${codingAccessModeCopy[promptSettings.coding.accessMode]}.`,
+      `- Workspace allowlist required: ${promptSettings.coding.workspaceAllowlistRequired ? "yes" : "no"}.`,
+      `- Local coding experimental: ${promptSettings.coding.localExperimental ? "yes" : "no"}.`,
+      promptSettings.coding.providerPolicy === "cloudRequired"
+        ? "- Code editing and Claw Code must use a cloud API model unless the user explicitly enables advanced local experimental mode."
+        : "- Local models may be used only within the selected read-only or limited coding policy.",
       `Persona: ${promptSettings.persona}`,
       `Role goal: ${promptSettings.roleGoal}`,
       `Use case: ${profile.useCase ?? "daily"}.`,
@@ -1839,16 +1987,7 @@ function App() {
           guardrails: [],
         },
       },
-      capabilities: existing?.capabilities ?? {
-        voice: { enabled: false, sttProvider: null, ttsProvider: null },
-        character: { enabled: false, renderer: null, characterId: null },
-        googleWorkspace: { enabled: false, accountId: null, scopes: [] },
-        files: { enabled: false, allowedRoots: [] },
-        tools: { enabled: false, enabledToolIds: [] },
-        mcp: { enabled: false, serverIds: [] },
-        skills: { enabled: false, skillIds: [] },
-        externalApis: { enabled: false, providerIds: [] },
-      },
+      capabilities: normalizeProfileCapabilities(existing?.capabilities, promptSettings),
       sync: existing?.sync ?? {
         cloudEnabled: false,
         cloudProfileId: null,
@@ -1983,16 +2122,7 @@ function App() {
           guardrails: [],
         },
       },
-      capabilities: {
-        voice: { enabled: false, sttProvider: null, ttsProvider: null },
-        character: { enabled: false, renderer: null, characterId: null },
-        googleWorkspace: { enabled: false, accountId: null, scopes: [] },
-        files: { enabled: false, allowedRoots: [] },
-        tools: { enabled: false, enabledToolIds: [] },
-        mcp: { enabled: false, serverIds: [] },
-        skills: { enabled: false, skillIds: [] },
-        externalApis: { enabled: false, providerIds: [] },
-      },
+      capabilities: normalizeProfileCapabilities(undefined, promptSettings),
       sync: {
         cloudEnabled: false,
         cloudProfileId: null,
@@ -2108,6 +2238,7 @@ function App() {
       source: "desktop-setup",
       completedAt: profile.completedAt,
       prompt: profile.prompt,
+      capabilities: profile.capabilities,
     };
   }
 
@@ -2434,7 +2565,12 @@ function App() {
     setChatInput("");
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
-    updateChatMessages(chatMode, (current) => [...current, { role: "user", content: prompt }]);
+    const startedAt = performance.now();
+    const requestedAt = new Date().toISOString();
+    updateChatMessages(chatMode, (current) => [
+      ...current,
+      { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+    ]);
     setBusyAction("chat");
 
     try {
@@ -2446,11 +2582,37 @@ function App() {
         apiKey: apiKey || null,
         profile: assistantProfile,
       });
-      updateChatMessages(chatMode, (current) => [...current, { role: "assistant", content: answer }]);
+      const latencyMs = Math.round(performance.now() - startedAt);
+      setChatMetrics({
+        provider: selectedProvider,
+        model: providerModel,
+        latencyMs,
+        measuredAt: new Date().toISOString(),
+      });
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        {
+          role: "assistant",
+          content: answer,
+          createdAt: new Date().toISOString(),
+          provider: selectedProvider,
+          model: providerModel,
+          latencyMs,
+        },
+      ]);
       log("Chat response received.");
     } catch (error) {
       const message = `Chat failed: ${String(error)}`;
-      updateChatMessages(chatMode, (current) => [...current, { role: "assistant", content: message }]);
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        {
+          role: "assistant",
+          content: message,
+          createdAt: new Date().toISOString(),
+          provider: selectedProvider,
+          model: providerModel,
+        },
+      ]);
       log(message);
     } finally {
       setBusyAction(null);
@@ -3887,6 +4049,9 @@ function App() {
       ? !selectedModelInstalled || !status?.running
       : false;
     const chatSubmitDisabled = chatUnavailable || busyAction === "chat";
+    const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
+    const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
+    const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
     const showAssistantRuntimePanel = runtimeChat;
     const chatShellClass = !showAssistantRuntimePanel
       ? "relative mx-auto min-h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
@@ -4108,15 +4273,15 @@ function App() {
           <div className="mt-3 flex justify-center gap-6">
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-[#4a654e]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{t.latencyMetric}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatLatencyMetric}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-[#35607f]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{t.tokensMetric}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatMessageMetric}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-[#555d63]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{t.vramMetric}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatProviderMetric}</span>
             </div>
           </div>
         </div>
@@ -4500,6 +4665,7 @@ function App() {
               const active = profile.id === activeLocalProfileId;
               const syncLabel = profile.sync?.cloudEnabled ? "Cloud synced" : "Local only";
               const syncTone = profile.sync?.cloudEnabled ? "success" : "neutral";
+              const codingSettings = normalizePromptSettings(profile.prompt?.settings).coding;
 
               return (
                 <article
@@ -4521,11 +4687,12 @@ function App() {
                   <h4 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">{profile.name}</h4>
                   <p className="mt-2 text-sm leading-6 text-[#42474d]">{profile.description}</p>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {[
                       ["Role", profile.useCase ?? "daily"],
                       ["Provider", providerMeta[profile.provider]?.label ?? profile.provider],
                       ["Model", profile.modelLabel || profile.model],
+                      ["Coding", codingCapabilityCopy[codingSettings.capability]],
                     ].map(([label, value]) => (
                       <div className="rounded-xl bg-[#f3f4f5] p-3" key={label}>
                         <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">{label}</span>
@@ -4535,6 +4702,9 @@ function App() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
+                    <Badge tone={codingSettings.providerPolicy === "cloudRequired" ? "action" : "neutral"}>
+                      {codingProviderPolicyCopy[codingSettings.providerPolicy]}
+                    </Badge>
                     {profile.futureFeatures.map((feature) => (
                       <Badge key={feature}>{feature}</Badge>
                     ))}
@@ -4659,11 +4829,12 @@ function App() {
               </label>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 ["Status", profile.status],
                 ["Provider", providerMeta[profile.provider]?.label ?? profile.provider],
                 ["Model", profile.modelLabel || profile.model],
+                ["Coding", codingCapabilityCopy[profile.prompt.settings.coding.capability]],
               ].map(([label, value]) => (
                 <div className="rounded-xl bg-[#f3f4f5] p-3" key={label}>
                   <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">{label}</span>
@@ -5225,6 +5396,235 @@ function App() {
       );
     };
 
+    const renderStudioTools = () => {
+      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const coding = profile.prompt.settings.coding;
+      const codingOptions: Array<{
+        id: CodingCapability;
+        title: string;
+        body: string;
+        icon: string;
+        providerPolicy: CodingProviderPolicy;
+        accessMode: CodingAccessMode;
+        workspaceAllowlistRequired: boolean;
+      }> = [
+        {
+          id: "chatOnly",
+          title: "General assistant",
+          body: "No repository actions. Use this for normal personal assistant chat.",
+          icon: "chat_bubble",
+          providerPolicy: "localAllowed",
+          accessMode: "readOnly",
+          workspaceAllowlistRequired: false,
+        },
+        {
+          id: "codeExplain",
+          title: "Code explanation",
+          body: "Read-only code help. Local models are allowed for small snippets and simple explanations.",
+          icon: "terminal",
+          providerPolicy: "localAllowed",
+          accessMode: "readOnly",
+          workspaceAllowlistRequired: false,
+        },
+        {
+          id: "codeEdit",
+          title: "Code editing",
+          body: "Multi-file edits and repository changes. Requires a cloud coding model by default.",
+          icon: "edit_square",
+          providerPolicy: "cloudRequired",
+          accessMode: "fileEdits",
+          workspaceAllowlistRequired: true,
+        },
+        {
+          id: "clawCode",
+          title: "Claw Code",
+          body: "Agentic coding loop with file reads, edits, and shell commands. Cloud API is required by default.",
+          icon: "precision_manufacturing",
+          providerPolicy: "cloudRequired",
+          accessMode: "shellCommands",
+          workspaceAllowlistRequired: true,
+        },
+      ];
+      const selectedOption = codingOptions.find((option) => option.id === coding.capability) ?? codingOptions[0];
+      const cloudRequired = coding.providerPolicy === "cloudRequired" && !coding.localExperimental;
+      const cloudRequirementUnmet = cloudRequired && selectedProvider === "ollama";
+      const updateCodingPolicy = (option: typeof codingOptions[number]) => {
+        setPromptSettingsDraft((current) => ({
+          ...current,
+          coding: {
+            capability: option.id,
+            providerPolicy: option.providerPolicy,
+            localExperimental: false,
+            accessMode: option.accessMode,
+            workspaceAllowlistRequired: option.workspaceAllowlistRequired,
+          },
+        }));
+
+        if (option.providerPolicy === "cloudRequired" && selectedProvider === "ollama") {
+          setSelectedProvider("gemini");
+          setSelectedCloudModel("gemini-2.5-flash");
+        }
+      };
+      const setLocalExperimental = (enabled: boolean) => {
+        setPromptSettingsDraft((current) => ({
+          ...current,
+          coding: {
+            ...current.coding,
+            localExperimental: enabled,
+          },
+        }));
+      };
+
+      return (
+        <div className="grid gap-6">
+          <Panel>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Coding assistant policy</p>
+                <h3 className="mt-2 font-heading text-xl font-bold text-[#191c1d]">Choose what this assistant can do with code</h3>
+                <p className="mt-2 max-w-[720px] text-sm leading-6 text-[#42474d]">
+                  Code editing and Claw Code require a cloud API model by default. Local models can explain code, but full repository automation is kept behind an advanced experimental path.
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Badge tone={cloudRequired ? "action" : "neutral"}>{codingProviderPolicyCopy[coding.providerPolicy]}</Badge>
+                <Badge>{codingAccessModeCopy[coding.accessMode]}</Badge>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2">
+              {codingOptions.map((option) => {
+                const active = option.id === coding.capability;
+                return (
+                  <button
+                    className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition ${
+                      active ? "border-[#35607f] ring-4 ring-[#cae6ff]" : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                    }`}
+                    key={option.id}
+                    onClick={() => updateCodingPolicy(option)}
+                    type="button"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                        <span className="material-symbols-outlined text-[22px]">{option.icon}</span>
+                      </span>
+                      {active && <Badge tone="action">Selected</Badge>}
+                    </div>
+                    <h4 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">{option.title}</h4>
+                    <p className="mt-2 text-sm leading-6 text-[#42474d]">{option.body}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Badge tone={option.providerPolicy === "cloudRequired" ? "action" : "neutral"}>
+                        {codingProviderPolicyCopy[option.providerPolicy]}
+                      </Badge>
+                      <Badge>{codingAccessModeCopy[option.accessMode]}</Badge>
+                      {option.workspaceAllowlistRequired && <Badge>Workspace allowlist</Badge>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Panel>
+              <div className="flex items-start justify-between gap-4">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                  <span className="material-symbols-outlined text-[22px]">policy</span>
+                </span>
+                <Badge tone={cloudRequirementUnmet ? "action" : "success"}>
+                  {cloudRequirementUnmet ? "Action needed" : "Policy ready"}
+                </Badge>
+              </div>
+              <h3 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">Current coding guardrail</h3>
+              <div className="mt-4 grid gap-3">
+                {[
+                  ["Capability", codingCapabilityCopy[coding.capability]],
+                  ["Provider policy", codingProviderPolicyCopy[coding.providerPolicy]],
+                  ["Access mode", codingAccessModeCopy[coding.accessMode]],
+                  ["Selected model", `${providerMeta[selectedProvider].label} / ${activeModelLabel}`],
+                ].map(([label, value]) => (
+                  <div className="flex items-center justify-between gap-3 rounded-xl bg-[#f3f4f5] p-3" key={label}>
+                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{label}</span>
+                    <span className="truncate text-sm font-semibold text-[#191c1d]">{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {cloudRequirementUnmet && (
+                <div className="mt-4 rounded-xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">
+                  This coding mode requires a cloud API model. Switch to Gemini/OpenAI before saving this assistant for code editing.
+                </div>
+              )}
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <SecondaryButton onClick={() => enterSettings("aiModels")}>
+                  Manage API keys
+                </SecondaryButton>
+                <PrimaryButton
+                  onClick={() => {
+                    setSelectedProvider("gemini");
+                    setSelectedCloudModel("gemini-2.5-flash");
+                  }}
+                >
+                  Use Gemini 2.5 Flash
+                </PrimaryButton>
+              </div>
+            </Panel>
+
+            <Panel>
+              <div className="flex items-start justify-between gap-4">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                  <span className="material-symbols-outlined text-[22px]">science</span>
+                </span>
+                <Badge>Advanced</Badge>
+              </div>
+              <h3 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">Experimental local coding</h3>
+              <p className="mt-3 text-sm leading-6 text-[#42474d]">
+                Local coding can be slow, forget context, or fail on larger repositories. Keep it read-only unless the user deliberately accepts the risk.
+              </p>
+              <label className="mt-5 flex items-start gap-3 rounded-xl bg-[#f3f4f5] p-4">
+                <input
+                  checked={coding.localExperimental}
+                  className="mt-1 h-4 w-4 accent-[#35607f]"
+                  disabled={selectedOption.providerPolicy !== "cloudRequired"}
+                  onChange={(event) => setLocalExperimental(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <span className="block text-sm font-bold text-[#191c1d]">Allow advanced local coding fallback</span>
+                  <span className="mt-1 block text-xs leading-5 text-[#72787e]">
+                    This does not install or run Claw Code yet. It only records that the assistant is allowed to try local coding later.
+                  </span>
+                </span>
+              </label>
+              <div className="mt-5 rounded-xl bg-[#f3f4f5] p-4 text-xs leading-5 text-[#42474d]">
+                Recommended local coding candidates: qwen3-coder:30b, devstral:24b, gpt-oss:20b, qwen2.5-coder:32b.
+              </div>
+            </Panel>
+          </div>
+
+          <Panel>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="font-heading text-lg font-bold text-[#191c1d]">Save this coding policy</h3>
+                <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                  The selected coding capability is saved into the assistant profile and appears on the web after Sync to Web.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <SecondaryButton onClick={() => void saveCurrentLocalAssistantProfile(profile.status)}>
+                  Save locally
+                </SecondaryButton>
+                <PrimaryButton onClick={() => void syncCurrentAssistantProfileToCloud()}>
+                  Sync to Web
+                </PrimaryButton>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      );
+    };
+
     const renderModelStudio = () => (
       <div className="grid gap-6">
         <Panel>
@@ -5361,6 +5761,8 @@ function App() {
           renderModelStudio()
         ) : studioSection === "prompts" ? (
           renderPromptStudio()
+        ) : studioSection === "tools" ? (
+          renderStudioTools()
         ) : (
           <div className="grid gap-6 md:grid-cols-3">
             {placeholderCards[studioSection].map(([title, body, icon]) => (

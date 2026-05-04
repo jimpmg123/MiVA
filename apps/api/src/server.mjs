@@ -147,6 +147,13 @@ const defaultPromptSettings = {
     gmail: "disabled",
     drive: "disabled"
   },
+  coding: {
+    capability: "chatOnly",
+    providerPolicy: "localAllowed",
+    localExperimental: false,
+    accessMode: "readOnly",
+    workspaceAllowlistRequired: false
+  },
   safetyRules: [
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
     "Before changing calendars, files, or email, explain the planned action and wait for user confirmation."
@@ -266,6 +273,7 @@ function getAdminStats() {
       finalized: assistantProfiles.filter((profile) => profile.status === "finalized").length,
       useCases: toTopList(countBy(usageEvents, "assistant_use_case_selected")),
       localModes: toTopList(countBy(usageEvents, "local_mode_selected")),
+      codingCapabilities: toTopList(countBy(usageEvents, "coding_capability_selected")),
       statuses: toTopList(countProfilesBy("status"))
     },
     providers: toTopList(countBy(usageEvents, "provider_selected")),
@@ -278,6 +286,7 @@ function normalizeAssistantProfile(payload) {
   const now = new Date().toISOString();
   const status = payload.status === "finalized" ? "finalized" : "draft";
   const prompt = normalizePromptPayload(payload.prompt);
+  const capabilities = normalizeCapabilitiesPayload(payload.capabilities, prompt.settings);
   return {
     id: payload.id || `profile_${Date.now()}`,
     userId: "dev_user",
@@ -297,7 +306,8 @@ function normalizeAssistantProfile(payload) {
     createdAt: payload.createdAt || now,
     updatedAt: now,
     completedAt: status === "finalized" ? (payload.completedAt || now) : null,
-    prompt
+    prompt,
+    capabilities
   };
 }
 
@@ -316,6 +326,39 @@ function normalizeStringList(value, fallback) {
 
 function normalizeWorkspacePolicy(value) {
   return ["disabled", "askFirst", "connectedOnly"].includes(value) ? value : "disabled";
+}
+
+function normalizeCodingCapability(value) {
+  return ["chatOnly", "codeExplain", "codeEdit", "clawCode"].includes(value)
+    ? value
+    : defaultPromptSettings.coding.capability;
+}
+
+function normalizeCodingProviderPolicy(value) {
+  return ["localAllowed", "cloudRecommended", "cloudRequired"].includes(value)
+    ? value
+    : defaultPromptSettings.coding.providerPolicy;
+}
+
+function normalizeCodingAccessMode(value) {
+  return ["readOnly", "fileEdits", "shellCommands"].includes(value)
+    ? value
+    : defaultPromptSettings.coding.accessMode;
+}
+
+function normalizeCodingPolicy(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    capability: normalizeCodingCapability(source.capability),
+    providerPolicy: normalizeCodingProviderPolicy(source.providerPolicy),
+    localExperimental: typeof source.localExperimental === "boolean"
+      ? source.localExperimental
+      : defaultPromptSettings.coding.localExperimental,
+    accessMode: normalizeCodingAccessMode(source.accessMode),
+    workspaceAllowlistRequired: typeof source.workspaceAllowlistRequired === "boolean"
+      ? source.workspaceAllowlistRequired
+      : defaultPromptSettings.coding.workspaceAllowlistRequired
+  };
 }
 
 function normalizePromptSettings(value) {
@@ -349,7 +392,16 @@ function normalizePromptSettings(value) {
       gmail: normalizeWorkspacePolicy(workspaceRules.gmail),
       drive: normalizeWorkspacePolicy(workspaceRules.drive)
     },
+    coding: normalizeCodingPolicy(source.coding),
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules)
+  };
+}
+
+function normalizeCapabilitiesPayload(value, promptSettings) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    ...source,
+    coding: normalizeCodingPolicy(source.coding || promptSettings.coding)
   };
 }
 
@@ -583,6 +635,7 @@ function recordAssistantProfileSyncEvents(profile) {
   recordUsageEvent("provider_selected", profile.provider);
   recordUsageEvent("model_selected", profile.model);
   recordUsageEvent("local_mode_selected", profile.localMode);
+  recordUsageEvent("coding_capability_selected", profile.prompt?.settings?.coding?.capability || "chatOnly");
 }
 
 function applyAssistantProfilePayload(profile, payload) {
@@ -856,20 +909,43 @@ const server = http.createServer(async (req, res) => {
     }
 
     const profileMatch = url.pathname.match(/^\/assistant-profiles\/([^/]+)$/);
-    if (req.method === "PATCH" && profileMatch) {
-      const profile = assistantProfiles.find((item) => item.id === profileMatch[1]);
+    if (profileMatch) {
+      const profileId = profileMatch[1];
+      const profile = assistantProfiles.find((item) => item.id === profileId);
       if (!profile) {
         sendJson(res, 404, { error: "PROFILE_NOT_FOUND" }, origin);
         return;
       }
 
-      const payload = await readJson(req);
-      applyAssistantProfilePayload(profile, payload);
-      recordAssistantProfileSyncEvents(profile);
-      sendJson(res, 200, {
-        profile
-      }, origin);
-      return;
+      if (req.method === "GET") {
+        sendJson(res, 200, { profile }, origin);
+        return;
+      }
+
+      if (req.method === "PATCH") {
+        const payload = await readJson(req);
+        applyAssistantProfilePayload(profile, payload);
+        recordAssistantProfileSyncEvents(profile);
+        sendJson(res, 200, {
+          profile
+        }, origin);
+        return;
+      }
+
+      if (req.method === "DELETE") {
+        const deletedIndex = assistantProfiles.findIndex((item) => item.id === profileId);
+        const deletedProfile = assistantProfiles.splice(deletedIndex, 1)[0];
+        if (deletedProfile?.isDefault && assistantProfiles[0]) {
+          assistantProfiles[0].isDefault = true;
+        }
+
+        recordUsageEvent("assistant_profile_deleted", profileId);
+        sendJson(res, 200, {
+          ok: true,
+          profile: deletedProfile
+        }, origin);
+        return;
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/usage-events") {

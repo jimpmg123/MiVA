@@ -19,6 +19,8 @@ packages/shared    Shared constants and model catalog
 docs               Product and architecture notes
 ```
 
+Scope 1 completion target: `docs/SCOPE_1.md`
+
 ## Quick Start
 
 Install dependencies from the repository root:
@@ -56,4 +58,3 @@ Ollama should be installed and running at:
 ```text
 http://localhost:11434
 ```
-

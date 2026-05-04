@@ -45,7 +45,7 @@ const profileInstructionMap = {
   }
 };
 
-function buildProfileInstructions(profile) {
+function buildProfileInstructions(profile, provider) {
   if (!profile || typeof profile !== "object") {
     return [];
   }
@@ -111,6 +111,35 @@ function buildProfileInstructions(profile) {
         instructions.push("When Daiso CLI is available, you may prepare approved Daiso CLI workflows. Ask before tool use and only report completion after the connected CLI confirms it.");
       } else {
         instructions.push("Daiso CLI is off. Do not claim Daiso CLI actions are available or completed.");
+      }
+    }
+
+    const coding = promptSettings.coding && typeof promptSettings.coding === "object"
+      ? promptSettings.coding
+      : null;
+    if (coding) {
+      const capability = coding.capability || "chatOnly";
+      const providerPolicy = coding.providerPolicy || "localAllowed";
+      const accessMode = coding.accessMode || "readOnly";
+      const localExperimental = coding.localExperimental === true;
+      const workspaceAllowlistRequired = coding.workspaceAllowlistRequired !== false;
+
+      instructions.push(`Coding capability: ${capability}. Provider policy: ${providerPolicy}. Access mode: ${accessMode}.`);
+      if (capability === "codeExplain") {
+        instructions.push("Code policy: explain code and reason about snippets, but do not claim file edits or shell commands were performed.");
+      } else if (capability === "codeEdit" || capability === "clawCode") {
+        instructions.push("Code policy: full code editing and Claw Code workflows require a connected cloud coding model by default.");
+        instructions.push("If no connected coding tool confirms a file edit or command result, describe the intended steps instead of claiming completion.");
+      } else {
+        instructions.push("Code policy: this assistant is not configured for repository work. Keep code help general unless the user changes the assistant capability.");
+      }
+
+      if (providerPolicy === "cloudRequired" && provider === "ollama" && !localExperimental) {
+        instructions.push("Current model violates the coding policy for code editing. Refuse repository edits and ask the user to switch to a cloud API model.");
+      }
+
+      if (workspaceAllowlistRequired) {
+        instructions.push("Workspace safety: repository actions require an explicit allowed workspace folder before reading, editing, or running commands.");
       }
     }
 
@@ -188,7 +217,7 @@ export function buildSystemPrompt({ locale = "ko", provider = "ollama", model = 
     "You are MiVA, the user's personal AI assistant.",
     languageInstruction,
     "Be practical, concise, and direct. If you are unsure, say so instead of inventing facts.",
-    ...buildProfileInstructions(profile),
+    ...buildProfileInstructions(profile, provider),
     "If any stored language preference conflicts with the user's latest message language, answer in the user's latest message language.",
     `Current date and time in Korea: ${getCurrentDateLabel(locale)}.`,
     `Active provider: ${provider}. Active model: ${model || "unknown"}.`,
