@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum AssistantProfileStatus {
+  DRAFT
+  FINALIZED
+}
+
+enum AssistantProfileSource {
+  DESKTOP_SETUP
+  WEB_CONSOLE
+  API
+}
+
+enum ProviderId {
+  OLLAMA
+  OPENAI
+  GEMINI
+  ANTHROPIC
+  CUSTOM
+}
+
+enum UsageMode {
+  LOCAL
+  CLOUD
+}
+
+enum CredentialStatus {
+  NOT_CONFIGURED
+  CONFIGURED
+  VERIFIED
+  ERROR
+}
+
+enum WorkspaceConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  NEEDS_AUTH
+  ERROR
+}
+
+model User {
+  id                   String                @id @default(cuid())
+  email                String                @unique
+  displayName          String
+  googleSubject        String?               @unique
+  passwordHash         String?
+  role                 UserRole              @default(USER)
+  locale               String                @default("ko")
+  lastLoginAt          DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  authSessions         AuthSession[]
+  devices              Device[]
+  assistantProfiles    AssistantProfile[]
+  modelPreferences     ModelPreference[]
+  providerCredentials  ProviderCredential[]
+  workspaceConnections WorkspaceConnection[]
+  toolPermissions      ToolPermission[]
+  usageEvents          UsageEvent[]
+  auditLogs            AuditLog[]
+
+  @@map("users")
+}
+
+model AuthSession {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+model Device {
+  id              String           @id @default(cuid())
+  userId          String
+  name            String
+  os              String?
+  appVersion      String?
+  lastSeenAt      DateTime?
+  localStatus     Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolPermissions ToolPermission[]
+  usageEvents     UsageEvent[]
+  auditLogs       AuditLog[]
+
+  @@index([userId])
+  @@map("devices")
+}
+
+model AssistantProfile {
+  id               String                 @id @default(cuid())
+  userId           String
+  name             String
+  description      String                 @default("")
+  useCase          String                 @default("daily")
+  answerStyle      String                 @default("moderate")
+  priority         String                 @default("balanced")
+  languageUse      String                 @default("korean")
+  localMode        String                 @default("local")
+  provider         ProviderId             @default(OLLAMA)
+  model            String
+  futureFeatures   Json                   @default("[]")
+  isDefault        Boolean                @default(false)
+  status           AssistantProfileStatus @default(DRAFT)
+  source           AssistantProfileSource @default(WEB_CONSOLE)
+  prompt           Json?
+  capabilities     Json?
+  completedAt      DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelPreferences ModelPreference[]
+  usageEvents      UsageEvent[]
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@map("assistant_profiles")
+}
+
+model ModelPreference {
+  id                 String            @id @default(cuid())
+  userId             String
+  assistantProfileId String?
+  provider           ProviderId
+  localModel         String?
+  cloudModel         String?
+  fallbackPolicy     String            @default("default")
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assistantProfile   AssistantProfile? @relation(fields: [assistantProfileId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([assistantProfileId])
+  @@map("model_preferences")
+}
+
+model ProviderCredential {
+  id              String           @id @default(cuid())
+  userId          String
+  provider        ProviderId
+  label           String
+  encryptedKey    String
+  maskedKey       String
+  status          CredentialStatus @default(CONFIGURED)
+  lastValidatedAt DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("provider_credentials")
+}
+
+model WorkspaceConnection {
+  id                    String                    @id @default(cuid())
+  userId                String
+  provider              String                    @default("google")
+  accountEmail          String?
+  encryptedAccessToken  String?
+  encryptedRefreshToken String?
+  scopes                Json                      @default("[]")
+  status                WorkspaceConnectionStatus @default(NEEDS_AUTH)
+  connectedAt           DateTime?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+  user                  User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("workspace_connections")
+}
+
+model ToolPermission {
+  id              String   @id @default(cuid())
+  userId          String
+  deviceId        String?
+  toolId          String
+  permissionScope Json     @default("{}")
+  riskLevel       String   @default("low")
+  enabled         Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device          Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@map("tool_permissions")
+}
+
+model UsageEvent {
+  id                 String            @id @default(cuid())
+  userId             String?
+  deviceId           String?
+  assistantProfileId String?
+  mode               UsageMode
+  provider           String
+  model              String
+  eventType          String            @default("chat")
+  inputChars         Int               @default(0)
+  outputChars        Int               @default(0)
+  durationMs         Int               @default(0)
+  success            Boolean           @default(true)
+  metadata           Json?
+  createdAt          DateTime          @default(now())
+  user               User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  device             Device?           @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  assistantProfile   AssistantProfile? @relation(fields: [assistantProfileId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([assistantProfileId])
+  @@index([createdAt])
+  @@map("usage_events")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  deviceId  String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  device    Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

@@ -4,6 +4,8 @@ const files = [
   "apps/local-helper/src/server.mjs",
   "apps/web/server.mjs",
   "apps/api/src/server.mjs",
+  "apps/api/src/db.mjs",
+  "apps/api/scripts/db-check.mjs",
   "packages/shared/src/index.js"
 ];
 
