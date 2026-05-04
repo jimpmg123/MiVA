@@ -31,6 +31,7 @@ type AnswerStyle = "short" | "moderate" | "detailed";
 type LanguageUse = "korean" | "english" | "both";
 type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
+type MemorySyncMode = "profileOnly" | "summaryMemory";
 type AppMode = "setup" | "studio" | "runtime" | "auth";
 type SettingsSection = "general" | "aiModels" | "security" | "logs";
 type StudioSection = "myAssistants" | "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
@@ -70,6 +71,15 @@ type DeviceAuthStatus = {
   status: "pending" | "authorized" | "expired";
   session: AuthSession | null;
   expiresAt: string;
+};
+
+type CloudDeviceRecord = {
+  id: string;
+  name: string;
+  os?: string | null;
+  appVersion?: string | null;
+  status?: string;
+  lastSeenAt?: string | null;
 };
 
 type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error";
@@ -162,6 +172,7 @@ type SurveyState = {
   languageUse: LanguageUse | null;
   localMode: LocalMode | null;
   futureFeatures: FutureFeature[];
+  memorySyncMode: MemorySyncMode;
 };
 
 type ChatMessage = {
@@ -266,6 +277,14 @@ type LocalAssistantProfile = {
     mcp: { enabled: boolean; serverIds: string[] };
     skills: { enabled: boolean; skillIds: string[] };
     externalApis: { enabled: boolean; providerIds: string[] };
+    memory: {
+      syncMode: MemorySyncMode;
+      snapshotPolicy: {
+        firstConversations: number;
+        recentConversations: number;
+        highEffortConversations: number;
+      };
+    };
   };
   sync: {
     cloudEnabled: boolean;
@@ -291,6 +310,7 @@ const PROVIDER_KEYS_STORAGE_KEY = "miva.providerKeys.v1";
 const ASSISTANT_PROFILE_STORAGE_KEY = "miva.assistantProfiles.v1";
 const RUNTIME_CHAT_STORAGE_KEY = "miva.runtimeChat.v1";
 const AUTH_STORAGE_KEY = "miva.desktop.auth.v1";
+const DEVICE_STORAGE_KEY = "miva.desktop.deviceId.v1";
 const CLOUD_API_URL = "http://127.0.0.1:4000";
 const LOCAL_PROFILE_SCHEMA_VERSION = 1;
 const DEFAULT_LOCAL_PROFILE_ID = "local_default";
@@ -384,6 +404,14 @@ const emptyAssistantProfileStore: LocalAssistantProfileStore = {
   profiles: [],
   updatedAt: null,
 };
+
+function isSupportedGpuName(value?: string | null) {
+  if (!value) {
+    return false;
+  }
+
+  return !/parsec|virtual|remote|microsoft basic|basic display|displaylink|indirect display|mirror driver|spacedesk|radmin|nomachine|vmware|virtualbox|hyper-v/i.test(value);
+}
 
 const providerMeta: Record<ProviderId, { label: string; mode: ProviderMode; icon: string }> = {
   ollama: { label: "Ollama", mode: "local", icon: "dns" },
@@ -754,6 +782,11 @@ const copy = {
     languageUseTitle: "二쇰줈 ?대뼡 ?몄뼱濡??ъ슜???덉젙?멸???",
     localModeTitle: "MiVA瑜??대뼡 諛⑹떇?쇰줈 ?곌퀬 ?띕굹??",
     futureFeatureTitle: "?섏쨷??愿???덈뒗 湲곕뒫? 臾댁뾿?멸???",
+    memorySyncTitle: "다른 기기에서 이 비서를 어떻게 이어쓸까요?",
+    profileOnlyMemory: "Settings sync only",
+    profileOnlyMemoryBody: "AI 비서 설정만 유지합니다.",
+    summaryMemory: "Summary memory sync",
+    summaryMemoryBody: "요약된 기억도 함께 유지합니다.",
     balanced: "洹좏삎",
     balancedBody: "?띾룄? ?듬? ?덉쭏???곷떦??留욎땅?덈떎.",
     speed: "?띾룄",
@@ -833,6 +866,8 @@ const copy = {
     memoryVerdictLimited: "珥덇꼍??紐⑤뜽遺???뚯뒪?명븯???몄씠 醫뗭뒿?덈떎.",
     gpuVerdictDetected: "GPU??媛먯??섏뿀吏留?VRAM ?섏튂???꾩쭅 placeholder?낅땲?? 異뷀썑 VRAM 媛먯?瑜?異붽??섎㈃ ???뺥솗??異붿쿇??媛?ν빀?덈떎.",
     gpuVerdictMissing: "?꾩슜 GPU ?뺣낫瑜??뺤씤?섏? 紐삵뻽?듬땲?? 1李?異붿쿇? CPU? RAM 湲곗??쇰줈 怨꾩궛?⑸땲??",
+    gpuMissing: "Missing",
+    noSupportedGpu: "No supported GPU detected",
     systemVerificationComplete: "?쒖뒪???뺤씤 ?꾨즺",
     hardwareMinimumMet: "MiVA 1李?濡쒖뺄 鍮꾩꽌 ?ㅽ뻾???꾪븳 湲곕낯 ?뺤씤???앸궗?듬땲??",
     continueRecommendations: "異붿쿇 寃곌낵濡??대룞",
@@ -961,6 +996,11 @@ const copy = {
     languageUseTitle: "Which language will you use most?",
     localModeTitle: "How do you want to use MiVA?",
     futureFeatureTitle: "Which future features interest you?",
+    memorySyncTitle: "How should this assistant continue on other devices?",
+    profileOnlyMemory: "Settings sync only",
+    profileOnlyMemoryBody: "Sync assistant settings only.",
+    summaryMemory: "Summary memory sync",
+    summaryMemoryBody: "Sync assistant settings and summary memory.",
     balanced: "Balanced",
     balancedBody: "Balance speed and answer quality.",
     speed: "Speed",
@@ -1040,6 +1080,8 @@ const copy = {
     memoryVerdictLimited: "Start with ultralight models first.",
     gpuVerdictDetected: "GPU detected, but VRAM is still a placeholder. A future VRAM check will make recommendations more precise.",
     gpuVerdictMissing: "Dedicated GPU details were not detected. Phase 1 recommendations use CPU and RAM first.",
+    gpuMissing: "Missing",
+    noSupportedGpu: "No supported GPU detected",
     systemVerificationComplete: "System Verification Complete",
     hardwareMinimumMet: "Basic checks for the MiVA Phase 1 local assistant are complete.",
     continueRecommendations: "Continue to Recommendations",
@@ -1131,7 +1173,7 @@ type SurveyOption = {
   icon: string;
 };
 
-type SurveyQuestionId = "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures";
+type SurveyQuestionId = "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "memorySyncMode";
 
 type SurveyQuestion = {
   id: SurveyQuestionId;
@@ -1216,12 +1258,18 @@ const futureFeatureOptions: SurveyOption[] = [
   { id: "unsure", titleKey: "unsureFeature", bodyKey: "unsureFeatureBody", icon: "help" },
 ];
 
+const memorySyncOptions: SurveyOption[] = [
+  { id: "profileOnly", titleKey: "profileOnlyMemory", bodyKey: "profileOnlyMemoryBody", icon: "sync" },
+  { id: "summaryMemory", titleKey: "summaryMemory", bodyKey: "summaryMemoryBody", icon: "memory" },
+];
+
 const surveyQuestions: SurveyQuestion[] = [
   { id: "useCase", titleKey: "surveyTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-2 xl:grid-cols-3", options: useCaseCards },
   { id: "answerStyle", titleKey: "answerStyleTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-3", options: answerStyleOptions },
   { id: "priority", titleKey: "priorityTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-3", options: priorityOptions },
   { id: "languageUse", titleKey: "languageUseTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-3", options: languageUseOptions },
   { id: "localMode", titleKey: "localModeTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-3", options: localModeOptions },
+  { id: "memorySyncMode", titleKey: "memorySyncTitle", helperKey: "selectOne", multi: false, columns: "grid-cols-2", options: memorySyncOptions },
   { id: "futureFeatures", titleKey: "futureFeatureTitle", helperKey: "selectMany", multi: true, columns: "grid-cols-2 xl:grid-cols-3", options: futureFeatureOptions },
 ];
 
@@ -1491,6 +1539,21 @@ function loadAuthSession(): AuthSession | null {
   }
 }
 
+function loadOrCreateDeviceId() {
+  if (typeof window === "undefined") {
+    return "device_desktop_local";
+  }
+
+  const existing = window.localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const nextId = `device_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`;
+  window.localStorage.setItem(DEVICE_STORAGE_KEY, nextId);
+  return nextId;
+}
+
 function loadRuntimeChatMessages(): ChatMessage[] {
   if (typeof window === "undefined") {
     return [];
@@ -1645,9 +1708,30 @@ function codingSettingsToCapability(settings: PromptSettings): LocalAssistantPro
   };
 }
 
+function normalizeMemoryCapability(
+  value: Partial<LocalAssistantProfile["capabilities"]["memory"]> | undefined,
+  syncMode: MemorySyncMode,
+): LocalAssistantProfile["capabilities"]["memory"] {
+  return {
+    syncMode: value?.syncMode === "summaryMemory" ? "summaryMemory" : syncMode,
+    snapshotPolicy: {
+      firstConversations: Number.isFinite(Number(value?.snapshotPolicy?.firstConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.firstConversations)))
+        : 3,
+      recentConversations: Number.isFinite(Number(value?.snapshotPolicy?.recentConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.recentConversations)))
+        : 3,
+      highEffortConversations: Number.isFinite(Number(value?.snapshotPolicy?.highEffortConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.highEffortConversations)))
+        : 1,
+    },
+  };
+}
+
 function normalizeProfileCapabilities(
   value: Partial<LocalAssistantProfile["capabilities"]> | undefined,
   settings: PromptSettings,
+  memorySyncMode: MemorySyncMode = "profileOnly",
 ): LocalAssistantProfile["capabilities"] {
   const coding = value?.coding && typeof value.coding === "object"
     ? value.coding
@@ -1666,6 +1750,7 @@ function normalizeProfileCapabilities(
     mcp: value?.mcp ?? { enabled: false, serverIds: [] },
     skills: value?.skills ?? { enabled: false, skillIds: [] },
     externalApis: value?.externalApis ?? { enabled: false, providerIds: [] },
+    memory: normalizeMemoryCapability(value?.memory, memorySyncMode),
   };
 }
 
@@ -1689,6 +1774,7 @@ function App() {
     languageUse: null,
     localMode: null,
     futureFeatures: [],
+    memorySyncMode: "profileOnly",
   });
   const [surveyQuestionIndex, setSurveyQuestionIndex] = useState(0);
   const [surveyTipExpanded, setSurveyTipExpanded] = useState(false);
@@ -1710,6 +1796,7 @@ function App() {
   const [authFlowState, setAuthFlowState] = useState<AuthFlowState>("idle");
   const [authFlowError, setAuthFlowError] = useState<string | null>(null);
   const [deviceAuthRequest, setDeviceAuthRequest] = useState<DeviceAuthStart | null>(null);
+  const [cloudDevice, setCloudDevice] = useState<CloudDeviceRecord | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
@@ -1737,6 +1824,7 @@ function App() {
   const shouldAutoScrollChatRef = useRef(true);
   const assistantProfileSaveTimerRef = useRef<number | null>(null);
   const assistantProfileHydratedRef = useRef(false);
+  const autoStartOllamaAttemptedRef = useRef(false);
 
   const t = copy[ACTIVE_LOCALE];
   const providerText = providerUiCopy[ACTIVE_LOCALE];
@@ -1805,6 +1893,13 @@ function App() {
     return response.json() as Promise<T>;
   }
 
+  function getCloudHeaders(extraHeaders?: Record<string, string>) {
+    return {
+      ...(extraHeaders ?? {}),
+      ...(authSession ? { authorization: `Bearer ${authSession.token}` } : {}),
+    };
+  }
+
   function saveAuthSession(session: AuthSession) {
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
     setAuthSession(session);
@@ -1813,9 +1908,64 @@ function App() {
   function clearAuthSession() {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     setAuthSession(null);
+    setCloudDevice(null);
     setDeviceAuthRequest(null);
     setAuthFlowState("idle");
     setAuthFlowError(null);
+  }
+
+  async function registerDeviceWithCloud() {
+    const deviceId = loadOrCreateDeviceId();
+    const deviceName = hardware?.osName
+      ? `MiVA Desktop - ${hardware.osName}`
+      : "MiVA Desktop";
+    const response = await fetchCloudJson<{ device: CloudDeviceRecord }>("/devices", {
+      method: "POST",
+      headers: getCloudHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        id: deviceId,
+        name: deviceName,
+        os: hardware?.osName ?? navigator.platform ?? null,
+        appVersion: "0.1.0",
+        status: "connected",
+        modelRuntime: {
+          provider: selectedProvider,
+          model: selectedProvider === "ollama" ? selectedModel : selectedCloudModel,
+          ollamaRunning: Boolean(status?.running),
+        },
+      }),
+    });
+    setCloudDevice(response.device);
+    log(`Registered desktop device: ${response.device.id}.`);
+    return response.device;
+  }
+
+  async function recordRuntimeUsageEvent(event: {
+    assistantProfileId: string | null;
+    provider: ProviderId;
+    model: string;
+    inputChars: number;
+    outputChars: number;
+    durationMs: number;
+    success: boolean;
+  }) {
+    await fetchCloudJson<{ ok: boolean; accepted: number }>("/usage/local-events", {
+      method: "POST",
+      headers: getCloudHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        events: [{
+          deviceId: cloudDevice?.id ?? loadOrCreateDeviceId(),
+          assistantProfileId: event.assistantProfileId,
+          mode: providerMeta[event.provider].mode,
+          provider: event.provider,
+          model: event.model,
+          inputChars: event.inputChars,
+          outputChars: event.outputChars,
+          durationMs: event.durationMs,
+          success: event.success,
+        }],
+      }),
+    });
   }
 
   async function startBrowserSignIn() {
@@ -1931,6 +2081,7 @@ function App() {
       languageUse: survey.languageUse,
       localMode: survey.localMode,
       futureFeatures: [...survey.futureFeatures],
+      memorySyncMode: survey.memorySyncMode,
     };
     const promptSettings = normalizePromptSettings(promptSettingsDraft);
     const profileBase = {
@@ -1987,7 +2138,7 @@ function App() {
           guardrails: [],
         },
       },
-      capabilities: normalizeProfileCapabilities(existing?.capabilities, promptSettings),
+      capabilities: normalizeProfileCapabilities(existing?.capabilities, promptSettings, safeSurvey.memorySyncMode),
       sync: existing?.sync ?? {
         cloudEnabled: false,
         cloudProfileId: null,
@@ -2063,6 +2214,7 @@ function App() {
       languageUse: null,
       localMode: null,
       futureFeatures: [],
+      memorySyncMode: "profileOnly",
     };
     const provider: ProviderId = "ollama";
     const providerModel = "qwen3:4b";
@@ -2122,7 +2274,7 @@ function App() {
           guardrails: [],
         },
       },
-      capabilities: normalizeProfileCapabilities(undefined, promptSettings),
+      capabilities: normalizeProfileCapabilities(undefined, promptSettings, initialSurvey.memorySyncMode),
       sync: {
         cloudEnabled: false,
         cloudProfileId: null,
@@ -2200,6 +2352,7 @@ function App() {
         languageUse: null,
         localMode: null,
         futureFeatures: [],
+        memorySyncMode: "profileOnly",
       });
       setSelectedProvider("ollama");
       setSelectedModel("qwen3:4b");
@@ -2248,9 +2401,7 @@ function App() {
     const request = async (method: "POST" | "PATCH", url: string) => {
       const response = await fetch(url, {
         method,
-        headers: {
-          "content-type": "application/json",
-        },
+        headers: getCloudHeaders({ "content-type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
@@ -2320,6 +2471,7 @@ function App() {
       languageUse: profile.survey?.languageUse ?? profile.languageUse ?? null,
       localMode: profile.survey?.localMode ?? profile.localMode ?? null,
       futureFeatures: Array.isArray(profile.survey?.futureFeatures) ? profile.survey.futureFeatures : profile.futureFeatures ?? [],
+      memorySyncMode: profile.survey?.memorySyncMode ?? profile.capabilities?.memory?.syncMode ?? "profileOnly",
     });
     setSelectedProvider(profile.provider ?? "ollama");
     setSelectedModel(profile.recommendation?.selectedModel ?? (profile.provider === "ollama" ? profile.model : selectedModel));
@@ -2494,6 +2646,38 @@ function App() {
     }
   }
 
+  async function ensureOllamaReadyForChat(model: string) {
+    if (selectedProvider !== "ollama") {
+      return true;
+    }
+
+    if (!status?.installed) {
+      log("Ollama is not installed. Install Ollama before using a local model.");
+      return false;
+    }
+
+    let nextStatus = status;
+    if (!nextStatus.running) {
+      log("Ollama is not running. Starting Ollama automatically before local chat.");
+      const output = await invokeCommand<string>("start_ollama");
+      log(output);
+      nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
+      setStatus(nextStatus);
+    }
+
+    if (!nextStatus.running) {
+      log("Ollama start was attempted, but the local runtime is still offline.");
+      return false;
+    }
+
+    if (!nextStatus.installedModels.includes(model)) {
+      log(`${model} is not installed. Download the model before starting local chat.`);
+      return false;
+    }
+
+    return true;
+  }
+
   async function downloadModel(model: string) {
     setBusyAction(`download:${model}`);
     setDownloadProgress({
@@ -2556,9 +2740,16 @@ function App() {
       : selectedProvider === "gemini"
         ? providerKeys.gemini.trim()
         : "";
-    const localUnavailable = selectedProvider === "ollama" && (!selectedModelInstalled || !status?.running);
+    const localUnavailable = selectedProvider === "ollama" && !status?.installed;
 
     if (!prompt || localUnavailable || busyAction === "chat") {
+      return;
+    }
+
+    setBusyAction("chat");
+    const runtimeReady = await ensureOllamaReadyForChat(providerModel);
+    if (!runtimeReady) {
+      setBusyAction(null);
       return;
     }
 
@@ -2571,7 +2762,6 @@ function App() {
       ...current,
       { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
     ]);
-    setBusyAction("chat");
 
     try {
       const answer = await invokeCommand<string>("chat_once", {
@@ -2601,8 +2791,22 @@ function App() {
         },
       ]);
       log("Chat response received.");
+      if (chatMode === "runtime") {
+        void recordRuntimeUsageEvent({
+          assistantProfileId: assistantProfile.sync.cloudProfileId ?? assistantProfile.id,
+          provider: selectedProvider,
+          model: providerModel,
+          inputChars: prompt.length,
+          outputChars: answer.length,
+          durationMs: latencyMs,
+          success: true,
+        }).catch((usageError) => {
+          log(`Runtime usage sync failed: ${String(usageError)}`);
+        });
+      }
     } catch (error) {
       const message = `Chat failed: ${String(error)}`;
+      const latencyMs = Math.round(performance.now() - startedAt);
       updateChatMessages(chatMode, (current) => [
         ...current,
         {
@@ -2614,6 +2818,19 @@ function App() {
         },
       ]);
       log(message);
+      if (chatMode === "runtime") {
+        void recordRuntimeUsageEvent({
+          assistantProfileId: assistantProfile.sync.cloudProfileId ?? assistantProfile.id,
+          provider: selectedProvider,
+          model: providerModel,
+          inputChars: prompt.length,
+          outputChars: message.length,
+          durationMs: latencyMs,
+          success: false,
+        }).catch((usageError) => {
+          log(`Runtime usage sync failed: ${String(usageError)}`);
+        });
+      }
     } finally {
       setBusyAction(null);
     }
@@ -2629,6 +2846,39 @@ function App() {
       })();
     }
   }, [tauriRuntime]);
+
+  useEffect(() => {
+    if (!tauriRuntime || !status || autoStartOllamaAttemptedRef.current) {
+      return;
+    }
+
+    if (!status.installed || status.running) {
+      return;
+    }
+
+    autoStartOllamaAttemptedRef.current = true;
+    void (async () => {
+      try {
+        log("Ollama is installed but offline. Starting automatically on app launch.");
+        const output = await invokeCommand<string>("start_ollama");
+        log(output);
+        const nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
+        setStatus(nextStatus);
+      } catch (error) {
+        log(`Automatic Ollama start failed: ${String(error)}`);
+      }
+    })();
+  }, [tauriRuntime, status]);
+
+  useEffect(() => {
+    if (!authSession) {
+      return;
+    }
+
+    void registerDeviceWithCloud().catch((error) => {
+      log(`Device registration failed: ${String(error)}`);
+    });
+  }, [authSession, hardware?.osName, selectedProvider, selectedModel, selectedCloudModel, status?.running]);
 
   useEffect(() => {
     if (!deviceAuthRequest || authFlowState !== "waiting") {
@@ -3198,6 +3448,7 @@ function App() {
       if (questionId === "priority") return survey.priority === optionId;
       if (questionId === "languageUse") return survey.languageUse === optionId;
       if (questionId === "localMode") return survey.localMode === optionId;
+      if (questionId === "memorySyncMode") return survey.memorySyncMode === optionId;
       return survey.futureFeatures.includes(optionId as FutureFeature);
     }
 
@@ -3207,6 +3458,7 @@ function App() {
       if (questionId === "priority") return survey.priority !== null;
       if (questionId === "languageUse") return survey.languageUse !== null;
       if (questionId === "localMode") return survey.localMode !== null;
+      if (questionId === "memorySyncMode") return survey.memorySyncMode !== null;
       return survey.futureFeatures.length > 0;
     }
 
@@ -3217,6 +3469,7 @@ function App() {
         if (questionId === "priority") return { ...current, priority: optionId as Priority };
         if (questionId === "languageUse") return { ...current, languageUse: optionId as LanguageUse };
         if (questionId === "localMode") return { ...current, localMode: optionId as LocalMode };
+        if (questionId === "memorySyncMode") return { ...current, memorySyncMode: optionId as MemorySyncMode };
 
         const feature = optionId as FutureFeature;
         if (feature === "unsure") {
@@ -3386,10 +3639,11 @@ function App() {
     const diskUsedGb = Math.max(diskTotalGb - diskAvailableGb, 0);
     const diskUsedPercent = diskTotalGb > 0 ? Math.min(100, Math.max(0, (diskUsedGb / diskTotalGb) * 100)) : 0;
     const modelCapacityCount = Math.max(1, Math.floor(diskAvailableGb / 4));
-    const gpuDetected = Boolean(hardware?.gpuName && !/basic|microsoft/i.test(hardware.gpuName));
+    const gpuDetected = isSupportedGpuName(hardware?.gpuName);
+    const gpuDisplayName = gpuDetected ? hardware?.gpuName : t.noSupportedGpu;
     const cpuBadge = !hardware ? t.checking : cpuCores >= 12 ? t.highEnd : cpuCores >= 8 ? t.great : cpuCores >= 4 ? t.basic : t.limited;
     const memoryBadge = !hardware ? t.checking : ramGb >= 32 ? t.great : ramGb >= 16 ? t.good : ramGb >= 8 ? t.basic : t.limited;
-    const gpuBadge = !hardware ? t.checking : gpuDetected ? t.optimal : t.vramPlaceholder;
+    const gpuBadge = !hardware ? t.checking : gpuDetected ? t.optimal : t.gpuMissing;
     const cpuVerdict = cpuCores >= 12 ? t.cpuVerdictHigh : cpuCores >= 4 ? t.cpuVerdictGood : t.cpuVerdictBasic;
     const memoryVerdict = ramGb >= 32 ? t.memoryVerdictGreat : ramGb >= 8 ? t.memoryVerdictGood : t.memoryVerdictLimited;
     const gpuVerdict = gpuDetected ? t.gpuVerdictDetected : t.gpuVerdictMissing;
@@ -3472,7 +3726,7 @@ function App() {
               <span className="rounded-full bg-[#cae6ff] px-3 py-1 text-xs font-semibold text-[#1c4b69]">{gpuBadge}</span>
             </div>
             <h3 className="font-heading mb-1 text-[22px] font-semibold leading-[30px] tracking-[-0.01em] text-[#191c1d]">{t.graphics}</h3>
-            <p className="mb-6 text-sm leading-5 text-[#72787e]">{hardware?.gpuName || t.unknown}</p>
+            <p className="mb-6 text-sm leading-5 text-[#72787e]">{hardware ? gpuDisplayName : t.unknown}</p>
             <div className="mb-8">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-[0.05em] text-[#72787e]">{t.vramUsage}</span>
@@ -4046,7 +4300,7 @@ function App() {
         : providerText.cloudDataNotice
       : `${t.chatSandboxBody} Current provider: ${activeProviderLabel} / ${activeModelLabel}.`;
     const chatUnavailable = selectedProvider === "ollama"
-      ? !selectedModelInstalled || !status?.running
+      ? !status?.installed || (status.running && !selectedModelInstalled)
       : false;
     const chatSubmitDisabled = chatUnavailable || busyAction === "chat";
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);

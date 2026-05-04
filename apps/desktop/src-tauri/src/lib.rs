@@ -427,7 +427,7 @@ fn detect_gpu_name() -> Option<String> {
         .args([
             "-NoProfile",
             "-Command",
-            "(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name)",
+            "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name)",
         ])
         .output()
         .ok()?;
@@ -436,12 +436,36 @@ fn detect_gpu_name() -> Option<String> {
         return None;
     }
 
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .find(|value| is_supported_gpu_name(value))
+        .map(String::from)
+}
+
+fn is_supported_gpu_name(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    let virtual_adapter_patterns = [
+        "parsec",
+        "virtual",
+        "remote",
+        "microsoft basic",
+        "basic display",
+        "displaylink",
+        "indirect display",
+        "mirror driver",
+        "spacedesk",
+        "radmin",
+        "nomachine",
+        "vmware",
+        "virtualbox",
+        "hyper-v",
+    ];
+
+    !virtual_adapter_patterns
+        .iter()
+        .any(|pattern| normalized.contains(pattern))
 }
 
 fn detect_primary_disk_space() -> (f64, f64) {
