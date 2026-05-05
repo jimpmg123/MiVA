@@ -8,7 +8,7 @@ import { AppShell } from "./app/AppShell";
 import { RuntimeNavigation, SetupNavigation, StudioNavigation } from "./app/AppNavigation";
 import type { RuntimeConversationNavItem } from "./app/AppNavigation";
 import { AppTopBar } from "./app/AppTopBar";
-import { invokeCommand, isTauriRuntime } from "./app/tauri";
+import { isTauriRuntime } from "./app/tauri";
 import { PrimaryButton, SecondaryButton } from "./components/ui";
 import { AuthPage } from "./pages/AuthPage";
 import { RuntimePage } from "./pages/RuntimePage";
@@ -26,11 +26,35 @@ import { StudioPage } from "./pages/StudioPage";
 import { formatLogTime, recommendCloudModel, recommendModel } from "./utils";
 import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, providerMeta } from "./features/models/catalog";
 import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
-import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, LOCAL_PROFILE_SCHEMA_VERSION, saveLocalAssistantProfileStore } from "./features/assistants/storage";
-import { clearAuthSessionStorage, clearProviderKeysStorage, emptyProviderKeys, loadAuthSession, loadOrCreateDeviceId, loadProviderKeys, saveAuthSessionToStorage, saveProviderKeysToStorage } from "./features/auth/storage";
+import {
+  getDefaultPythonInstallDir,
+  getHardwareInfo,
+  getOllamaStatus,
+  getRuntimeRequirements,
+  installOllamaRuntime,
+  installPythonRuntime,
+  pullOllamaModel,
+  runChatOnce,
+  startOllamaRuntime,
+} from "./features/models/ollamaRuntime";
+import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, saveLocalAssistantProfileStore } from "./features/assistants/storage";
+import { clearAuthSessionStorage, clearProviderKeysStorage, emptyProviderKeys, loadAuthSession, loadProviderKeys, saveAuthSessionToStorage, saveProviderKeysToStorage } from "./features/auth/storage";
 import { loadRuntimeChatMessages, saveRuntimeChatMessages } from "./features/chat/storage";
-import { defaultProfileDetails, defaultPromptSettings, normalizeProfileCapabilities, normalizePromptSettings } from "./features/assistants/profile";
-import { buildCloudAssistantProfilePayload } from "./features/assistants/cloudPayload";
+import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
+import { buildLocalAssistantProfile } from "./features/assistants/profileFactory";
+import {
+  addAssistantProfileStore,
+  removeAssistantProfileStore,
+  replaceSyncedAssistantProfileStore,
+  upsertAssistantProfileStore,
+} from "./features/assistants/storeOperations";
+import {
+  getDeviceAuthStatus,
+  recordLocalUsageEvent,
+  registerDesktopDevice,
+  startDeviceAuth,
+  upsertCloudAssistantProfile,
+} from "./features/cloud/client";
 import {
   createLocalProfileId,
   getAssistantProfileFingerprint,
@@ -38,7 +62,6 @@ import {
   getNewAssistantDraftBaseline as getDefaultNewAssistantDraftFingerprint,
   hasDuplicateAssistantProfileName,
 } from "./features/assistants/profileIdentity";
-import { buildSystemPromptPreview } from "./features/assistants/promptPreview";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
@@ -49,7 +72,6 @@ import type {
   ChatMetrics,
   CloudDeviceRecord,
   DeviceAuthStart,
-  DeviceAuthStatus,
   HardwareInfo,
   LocalAssistantProfile,
   LocalAssistantProfileStatus,
@@ -69,7 +91,6 @@ import type {
 } from "./types";
 
 
-const CLOUD_API_URL = "http://127.0.0.1:4000";
 const DEFAULT_LOCAL_PROFILE_ID = "local_default";
 const NEW_LOCAL_PROFILE_DRAFT_ID = "local_new_draft";
 const ACTIVE_LOCALE: Locale = "en";
@@ -171,9 +192,11 @@ function App() {
     profiles: visibleAssistantProfiles,
   };
   const savedActiveLocalProfile = assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId) ?? null;
-  const activeLocalProfile = savedActiveLocalProfile && visibleAssistantProfiles.some((profile) => profile.id === savedActiveLocalProfile.id)
-    ? savedActiveLocalProfile
-    : visibleAssistantProfiles[0] ?? null;
+  const activeLocalProfile = activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID
+    ? null
+    : savedActiveLocalProfile && visibleAssistantProfiles.some((profile) => profile.id === savedActiveLocalProfile.id)
+      ? savedActiveLocalProfile
+      : visibleAssistantProfiles[0] ?? null;
   const promptProfileId = activeLocalProfile?.id ?? (signedIn ? activeLocalProfileId : DEFAULT_LOCAL_PROFILE_ID);
   const chatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
   const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(chatIntroKey);
@@ -270,22 +293,6 @@ function App() {
     setProviderKeysSaved(false);
   }
 
-  async function fetchCloudJson<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${CLOUD_API_URL}${path}`, init);
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
-    }
-
-    return response.json() as Promise<T>;
-  }
-
-  function getCloudHeaders(extraHeaders?: Record<string, string>) {
-    return {
-      ...(extraHeaders ?? {}),
-      ...(authSession ? { authorization: `Bearer ${authSession.token}` } : {}),
-    };
-  }
-
   function saveAuthSession(session: AuthSession) {
     saveAuthSessionToStorage(session);
     setAuthSession(session);
@@ -308,28 +315,16 @@ function App() {
   }
 
   async function registerDeviceWithCloud() {
-    const deviceId = loadOrCreateDeviceId();
-    const deviceName = hardware?.osName
-      ? `MiVA Desktop - ${hardware.osName}`
-      : "MiVA Desktop";
-    const response = await fetchCloudJson<{ device: CloudDeviceRecord }>("/devices", {
-      method: "POST",
-      headers: getCloudHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({
-        id: deviceId,
-        name: deviceName,
-        os: hardware?.osName ?? navigator.platform ?? null,
-        appVersion: "0.1.0",
-        status: "connected",
-        modelRuntime: {
-          provider: selectedProvider,
-          model: selectedProvider === "ollama" ? selectedModel : selectedCloudModel,
-          ollamaRunning: Boolean(status?.running),
-        },
-      }),
+    const device = await registerDesktopDevice({
+      authSession,
+      hardware,
+      selectedProvider,
+      selectedModel,
+      selectedCloudModel,
+      status,
     });
-    setCloudDevice(response.device);
-    return response.device;
+    setCloudDevice(device);
+    return device;
   }
 
   async function recordRuntimeUsageEvent(event: {
@@ -341,22 +336,10 @@ function App() {
     durationMs: number;
     success: boolean;
   }) {
-    await fetchCloudJson<{ ok: boolean; accepted: number }>("/usage/local-events", {
-      method: "POST",
-      headers: getCloudHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({
-        events: [{
-          deviceId: cloudDevice?.id ?? loadOrCreateDeviceId(),
-          assistantProfileId: event.assistantProfileId,
-          mode: providerMeta[event.provider].mode,
-          provider: event.provider,
-          model: event.model,
-          inputChars: event.inputChars,
-          outputChars: event.outputChars,
-          durationMs: event.durationMs,
-          success: event.success,
-        }],
-      }),
+    await recordLocalUsageEvent({
+      authSession,
+      cloudDeviceId: cloudDevice?.id ?? null,
+      ...event,
     });
   }
 
@@ -365,11 +348,7 @@ function App() {
     setAuthFlowError(null);
 
     try {
-      const request = await fetchCloudJson<DeviceAuthStart>("/auth/device/start", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ app: "miva-desktop" }),
-      });
+      const request = await startDeviceAuth();
 
       setDeviceAuthRequest(request);
       setAuthFlowState("waiting");
@@ -398,89 +377,27 @@ function App() {
     status: LocalAssistantProfileStatus,
     options?: { forceNew?: boolean; profileId?: string },
   ): LocalAssistantProfile {
-    const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const existing = options?.forceNew
-      ? undefined
-      : assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId);
-    const profileId = options?.profileId ?? existing?.id ?? activeLocalProfileId;
-    const now = new Date().toISOString();
-    const safeSurvey: SurveyState = {
-      useCase: survey.useCase,
-      answerStyle: survey.answerStyle,
-      priority: survey.priority,
-      languageUse: survey.languageUse,
-      localMode: survey.localMode,
-      futureFeatures: [...survey.futureFeatures],
-      memorySyncMode: survey.memorySyncMode,
-    };
-    const promptSettings = normalizePromptSettings(promptSettingsDraft);
-    const profileBase = {
-      useCase: safeSurvey.useCase,
-      answerStyle: safeSurvey.answerStyle,
-      priority: safeSurvey.priority,
-      languageUse: safeSurvey.languageUse,
-      localMode: safeSurvey.localMode,
-      futureFeatures: safeSurvey.futureFeatures,
-      provider: selectedProvider,
-      model: providerModel,
-    };
-
-    return {
-      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
-      id: profileId,
-      name: profileDetailsDraft.name.trim() || existing?.name || defaultProfileDetails.name,
-      description: profileDetailsDraft.description.trim() || existing?.description || defaultProfileDetails.description,
+    return buildLocalAssistantProfile({
       status,
-      source: appMode === "runtime" ? "runtime" : "desktop-setup",
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      completedAt: status === "finalized" ? existing?.completedAt ?? now : null,
+      forceNew: options?.forceNew,
+      profileId: options?.profileId,
+      activeLocalProfileId,
+      appMode,
+      activeStep,
       locale: ACTIVE_LOCALE,
-      ...profileBase,
-      providerMode: activeProviderMode,
-      modelLabel: activeModelLabel,
-      survey: safeSurvey,
-      recommendation: {
-        localModel: recommendedModel,
-        cloudModel: recommendedCloudModel,
-        selectedProvider,
-        selectedModel,
-        selectedCloudModel,
-        hardwareMemoryGb: hardware?.totalMemoryGb ?? null,
-      },
-      prompt: {
-        profileId,
-        systemPrompt: buildSystemPromptPreview(profileBase, promptSettings),
-        settings: promptSettings,
-        variables: {
-          useCase: safeSurvey.useCase,
-          answerStyle: safeSurvey.answerStyle,
-          priority: safeSurvey.priority,
-          languageUse: safeSurvey.languageUse,
-          localMode: safeSurvey.localMode,
-          futureFeatures: safeSurvey.futureFeatures,
-          provider: selectedProvider,
-          model: providerModel,
-        },
-        overrides: existing?.prompt?.overrides ?? {
-          persona: null,
-          instructions: [],
-          guardrails: [],
-        },
-      },
-      capabilities: normalizeProfileCapabilities(existing?.capabilities, promptSettings, safeSurvey.memorySyncMode),
-      sync: existing?.sync ?? {
-        cloudEnabled: false,
-        cloudProfileId: null,
-        lastSyncedAt: null,
-      },
-      metadata: {
-        setupStep: activeStep,
-        appMode,
-        appVersion: "0.1.0",
-        hardwareSnapshot: hardware,
-      },
-    };
+      activeProviderMode,
+      activeModelLabel,
+      assistantProfiles: assistantProfileStore.profiles,
+      profileDetailsDraft,
+      promptSettingsDraft,
+      selectedProvider,
+      selectedModel,
+      selectedCloudModel,
+      recommendedModel,
+      recommendedCloudModel,
+      survey,
+      hardware,
+    });
   }
 
   function findDuplicateAssistantProfileName(profile: LocalAssistantProfile) {
@@ -546,15 +463,7 @@ function App() {
       throw new Error(message);
     }
 
-    const nextStore: LocalAssistantProfileStore = {
-      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
-      activeProfileId: profile.id,
-      profiles: [
-        profile,
-        ...assistantProfileStore.profiles.filter((item) => item.id !== profile.id),
-      ],
-      updatedAt: profile.updatedAt,
-    };
+    const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
 
     setAssistantProfileSaveState("saving");
     setAssistantProfileError(null);
@@ -591,15 +500,7 @@ function App() {
       throw new Error(message);
     }
 
-    const nextStore: LocalAssistantProfileStore = {
-      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
-      activeProfileId: profile.id,
-      profiles: [
-        profile,
-        ...assistantProfileStore.profiles,
-      ],
-      updatedAt: profile.updatedAt,
-    };
+    const nextStore = addAssistantProfileStore(assistantProfileStore, profile);
 
     setAssistantProfileSaveState("saving");
     setAssistantProfileError(null);
@@ -624,15 +525,7 @@ function App() {
   }
 
   async function persistLocalAssistantProfile(profile: LocalAssistantProfile) {
-    const nextStore: LocalAssistantProfileStore = {
-      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
-      activeProfileId: profile.id,
-      profiles: [
-        profile,
-        ...assistantProfileStore.profiles.filter((item) => item.id !== profile.id),
-      ],
-      updatedAt: profile.updatedAt,
-    };
+    const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
 
     setAssistantProfileStore(nextStore);
     setActiveLocalProfileId(profile.id);
@@ -651,14 +544,7 @@ function App() {
       return;
     }
 
-    const remainingProfiles = assistantProfileStore.profiles.filter((item) => item.id !== profileId);
-    const nextActiveProfile = remainingProfiles[0] ?? null;
-    const nextStore: LocalAssistantProfileStore = {
-      schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
-      activeProfileId: nextActiveProfile?.id ?? null,
-      profiles: remainingProfiles,
-      updatedAt: new Date().toISOString(),
-    };
+    const { nextStore, nextActiveProfile } = removeAssistantProfileStore(assistantProfileStore, profileId);
 
     setAssistantProfileSaveState("saving");
     setAssistantProfileError(null);
@@ -700,35 +586,7 @@ function App() {
   }
 
   async function sendProfileToCloud(profile: LocalAssistantProfile) {
-    const cloudProfileId = profile.sync.cloudProfileId;
-    const payload = buildCloudAssistantProfilePayload(profile);
-    const request = async (method: "POST" | "PATCH", url: string) => {
-      const response = await fetch(url, {
-        method,
-        headers: getCloudHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
-      }
-
-      return response.json() as Promise<{ profile?: { id?: string } }>;
-    };
-
-    if (!cloudProfileId) {
-      return request("POST", `${CLOUD_API_URL}/assistant-profiles`);
-    }
-
-    try {
-      return await request("PATCH", `${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(cloudProfileId)}`);
-    } catch (error) {
-      if (String(error).includes("404")) {
-        return request("POST", `${CLOUD_API_URL}/assistant-profiles`);
-      }
-
-      throw error;
-    }
+    return upsertCloudAssistantProfile({ authSession, profile });
   }
 
   async function syncLocalAssistantProfileToCloud(profile: LocalAssistantProfile) {
@@ -773,12 +631,11 @@ function App() {
         ? activeLocalProfileId
         : syncedProfiles[0]?.id ?? null;
       const syncedAt = new Date().toISOString();
-      const nextStore: LocalAssistantProfileStore = {
-        schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+      const nextStore = replaceSyncedAssistantProfileStore({
         activeProfileId,
         profiles: syncedProfiles,
-        updatedAt: syncedAt,
-      };
+        syncedAt,
+      });
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
       setAssistantProfileStore(savedStore);
       if (activeProfileId) {
@@ -922,7 +779,7 @@ function App() {
   async function refreshStatus() {
     setBusyAction("refreshStatus");
     try {
-      const nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
+      const nextStatus = await getOllamaStatus();
       setStatus(nextStatus);
     } catch (error) {
       log(`Status failed: ${String(error)}`);
@@ -935,7 +792,7 @@ function App() {
     setBusyAction("hardware");
     setHardwareError(null);
     try {
-      const nextHardware = await invokeCommand<HardwareInfo>("get_hardware_info");
+      const nextHardware = await getHardwareInfo();
       setHardware(nextHardware);
     } catch (error) {
       setHardwareError(String(error));
@@ -948,7 +805,7 @@ function App() {
   async function refreshRuntimeRequirements() {
     setRuntimeRequirementsError(null);
     try {
-      const nextRequirements = await invokeCommand<RuntimeRequirements>("get_runtime_requirements");
+      const nextRequirements = await getRuntimeRequirements();
       setRuntimeRequirements(nextRequirements);
     } catch (error) {
       setRuntimeRequirementsError(String(error));
@@ -958,7 +815,7 @@ function App() {
 
   async function refreshDefaultPythonInstallPath() {
     try {
-      const nextPath = await invokeCommand<string>("get_default_python_install_dir");
+      const nextPath = await getDefaultPythonInstallDir();
       setPythonInstallPath((current) => current || nextPath);
     } catch (error) {
       log(`Python install path check failed: ${String(error)}`);
@@ -993,7 +850,7 @@ function App() {
     try {
       const installPath = pythonInstallPath.trim();
       log(`Starting Python install through winget at ${installPath || "default location"}.`);
-      const output = await invokeCommand<string>("install_python", { targetDir: installPath || null });
+      const output = await installPythonRuntime(installPath || null);
       log(output);
       await refreshRuntimeRequirements();
     } catch (error) {
@@ -1008,7 +865,7 @@ function App() {
     setBusyAction("install");
     try {
       log("Starting Ollama install through winget.");
-      const output = await invokeCommand<string>("install_ollama");
+      const output = await installOllamaRuntime();
       log(output);
       await refreshStatus();
     } catch (error) {
@@ -1021,7 +878,7 @@ function App() {
   async function startOllama() {
     setBusyAction("start");
     try {
-      const output = await invokeCommand<string>("start_ollama");
+      const output = await startOllamaRuntime();
       log(output);
       await refreshStatus();
     } catch (error) {
@@ -1044,9 +901,9 @@ function App() {
     let nextStatus = status;
     if (!nextStatus.running) {
       log("Ollama is not running. Starting Ollama automatically before local chat.");
-      const output = await invokeCommand<string>("start_ollama");
+      const output = await startOllamaRuntime();
       log(output);
-      nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
+      nextStatus = await getOllamaStatus();
       setStatus(nextStatus);
     }
 
@@ -1076,7 +933,7 @@ function App() {
     });
     try {
       log(`Downloading ${model}.`);
-      const output = await invokeCommand<string>("pull_model", { model });
+      const output = await pullOllamaModel(model);
       log(output);
       setDismissedChatIntroKeys((current) => current.filter((key) => key !== `ollama:${model}:${promptProfileId}`));
       await refreshStatus();
@@ -1169,7 +1026,7 @@ function App() {
     ]);
 
     try {
-      const answer = await invokeCommand<string>("chat_once", {
+      const answer = await runChatOnce({
         provider: selectedProvider,
         model: providerModel,
         prompt,
@@ -1265,9 +1122,9 @@ function App() {
     void (async () => {
       try {
         log("Ollama is installed but offline. Starting automatically on app launch.");
-        const output = await invokeCommand<string>("start_ollama");
+        const output = await startOllamaRuntime();
         log(output);
-        const nextStatus = await invokeCommand<OllamaStatus>("get_ollama_status");
+        const nextStatus = await getOllamaStatus();
         setStatus(nextStatus);
       } catch (error) {
         log(`Automatic Ollama start failed: ${String(error)}`);
@@ -1295,9 +1152,7 @@ function App() {
 
     const pollDeviceAuth = async () => {
       try {
-        const statusResponse = await fetchCloudJson<DeviceAuthStatus>(
-          `/auth/device/${encodeURIComponent(deviceAuthRequest.deviceCode)}`,
-        );
+        const statusResponse = await getDeviceAuthStatus(deviceAuthRequest.deviceCode);
 
         if (cancelled) {
           return;
