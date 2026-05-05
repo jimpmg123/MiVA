@@ -1,0 +1,303 @@
+import type { Locale } from "./i18n";
+
+export type StepId =
+  | "welcome"
+  | "survey"
+  | "hardware"
+  | "recommendation"
+  | "ollama"
+  | "clawCode"
+  | "download"
+  | "chat"
+  | "profile"
+  | "settings";
+
+export type UseCase = "daily" | "study" | "work" | "fast" | "character";
+export type Priority = "balanced" | "speed" | "quality";
+export type AnswerStyle = "short" | "moderate" | "detailed";
+export type LanguageUse = "korean" | "english" | "both";
+export type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
+export type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
+export type MemorySyncMode = "profileOnly" | "summaryMemory";
+export type AppMode = "setup" | "studio" | "runtime" | "auth";
+export type SettingsSection = "general" | "aiModels" | "security" | "logs";
+export type StudioSection = "myAssistants" | "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
+export type ProviderId = "ollama" | "openai" | "gemini";
+export type CloudProviderId = Exclude<ProviderId, "ollama">;
+export type ProviderMode = "local" | "cloud";
+export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
+export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+export type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
+export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
+export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
+export type AuthRole = "user" | "admin";
+export type PromptEditorMode = "simple" | "developer";
+export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error";
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: AuthRole;
+  locale: string;
+};
+
+export type AuthSession = {
+  token: string;
+  user: AuthUser;
+};
+
+export type DeviceAuthStart = {
+  deviceCode: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresAt: string;
+  intervalMs: number;
+};
+
+export type DeviceAuthStatus = {
+  status: "pending" | "authorized" | "expired";
+  session: AuthSession | null;
+  expiresAt: string;
+};
+
+export type CloudDeviceRecord = {
+  id: string;
+  name: string;
+  os?: string | null;
+  appVersion?: string | null;
+  status?: string;
+  lastSeenAt?: string | null;
+};
+
+export type PromptSettings = {
+  simple: {
+    assistantPurpose: string;
+    desiredTasks: string;
+    preferredTone: string;
+    avoidances: string;
+  };
+  toolConnections: {
+    googleWorkspaceCli: boolean;
+    daisoCli: boolean;
+  };
+  persona: string;
+  roleGoal: string;
+  responseRules: string[];
+  scheduleRules: {
+    mode: CalendarActionMode;
+    timezone: string;
+    reminderPreference: string;
+  };
+  workspaceRules: {
+    googleWorkspace: WorkspaceToolPolicy;
+    calendar: WorkspaceToolPolicy;
+    gmail: WorkspaceToolPolicy;
+    drive: WorkspaceToolPolicy;
+  };
+  coding: {
+    capability: CodingCapability;
+    providerPolicy: CodingProviderPolicy;
+    localExperimental: boolean;
+    accessMode: CodingAccessMode;
+    workspaceAllowlistRequired: boolean;
+  };
+  safetyRules: string[];
+};
+
+export type OllamaStatus = {
+  installed: boolean;
+  running: boolean;
+  command?: string | null;
+  version?: string | null;
+  installedModelCount: number;
+  installedModels: string[];
+  baseUrl: string;
+  error?: string | null;
+};
+
+export type ModelDownloadProgress = {
+  model: string;
+  status: string;
+  completed?: number | null;
+  total?: number | null;
+  percent?: number | null;
+  done: boolean;
+  error?: string | null;
+};
+
+export type HardwareInfo = {
+  cpuBrand?: string | null;
+  logicalCoreCount: number;
+  physicalCoreCount?: number | null;
+  totalMemoryGb: number;
+  availableMemoryGb: number;
+  primaryDiskTotalGb: number;
+  primaryDiskAvailableGb: number;
+  gpuName?: string | null;
+  osName?: string | null;
+  osVersion?: string | null;
+  arch: string;
+};
+
+export type ModelInfo = {
+  id: string;
+  name: string;
+  label: string;
+  category: string;
+  summary: Record<Locale, string>;
+  bestFor: Record<Locale, string>;
+  recommendedRamGb: number;
+  downloadSizeLabel?: string;
+};
+
+export type CloudModelInfo = {
+  id: string;
+  provider: CloudProviderId;
+  label: string;
+  category: string;
+  summary: Record<Locale, string>;
+  bestFor: Record<Locale, string>;
+  status: Record<Locale, string>;
+};
+
+export type SurveyState = {
+  useCase: UseCase | null;
+  answerStyle: AnswerStyle | null;
+  priority: Priority | null;
+  languageUse: LanguageUse | null;
+  localMode: LocalMode | null;
+  futureFeatures: FutureFeature[];
+  memorySyncMode: MemorySyncMode;
+};
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  createdAt?: string;
+  provider?: ProviderId;
+  model?: string;
+  latencyMs?: number;
+};
+
+export type ChatMetrics = {
+  provider: ProviderId;
+  model: string;
+  latencyMs: number;
+  measuredAt: string;
+};
+
+export type ProviderKeyState = {
+  openai: string;
+  gemini: string;
+};
+
+export type RuntimeRequirement = {
+  id: string;
+  label: string;
+  requiredFor: string;
+  installed: boolean;
+  meetsMinimum: boolean;
+  command?: string | null;
+  version?: string | null;
+  note: string;
+};
+
+export type RuntimeRequirements = {
+  python: RuntimeRequirement;
+};
+
+export type ProfileDetailsDraft = {
+  name: string;
+  description: string;
+};
+
+export type AssistantProfileSyncState = "idle" | "syncing" | "synced" | "error";
+export type LocalAssistantProfileStatus = "draft" | "finalized";
+export type LocalAssistantProfileSource = "desktop-setup" | "runtime" | "web-sync";
+
+export type LocalAssistantProfile = {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  description: string;
+  status: LocalAssistantProfileStatus;
+  source: LocalAssistantProfileSource;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  locale: Locale;
+  useCase: UseCase | null;
+  answerStyle: AnswerStyle | null;
+  priority: Priority | null;
+  languageUse: LanguageUse | null;
+  localMode: LocalMode | null;
+  futureFeatures: FutureFeature[];
+  provider: ProviderId;
+  providerMode: ProviderMode;
+  model: string;
+  modelLabel: string;
+  survey: SurveyState;
+  recommendation: {
+    localModel: string;
+    cloudModel: string;
+    selectedProvider: ProviderId;
+    selectedModel: string;
+    selectedCloudModel: string;
+    hardwareMemoryGb: number | null;
+  };
+  prompt: {
+    profileId: string;
+    systemPrompt: string;
+    settings: PromptSettings;
+    variables: Record<string, unknown>;
+    overrides: {
+      persona: string | null;
+      instructions: string[];
+      guardrails: string[];
+    };
+  };
+  capabilities: {
+    voice: { enabled: boolean; sttProvider: string | null; ttsProvider: string | null };
+    character: { enabled: boolean; renderer: string | null; characterId: string | null };
+    googleWorkspace: { enabled: boolean; accountId: string | null; scopes: string[] };
+    files: { enabled: boolean; allowedRoots: string[] };
+    tools: { enabled: boolean; enabledToolIds: string[] };
+    coding: {
+      capability: CodingCapability;
+      providerPolicy: CodingProviderPolicy;
+      localExperimental: boolean;
+      accessMode: CodingAccessMode;
+      workspaceAllowlistRequired: boolean;
+    };
+    mcp: { enabled: boolean; serverIds: string[] };
+    skills: { enabled: boolean; skillIds: string[] };
+    externalApis: { enabled: boolean; providerIds: string[] };
+    memory: {
+      syncMode: MemorySyncMode;
+      snapshotPolicy: {
+        firstConversations: number;
+        recentConversations: number;
+        highEffortConversations: number;
+      };
+    };
+  };
+  sync: {
+    cloudEnabled: boolean;
+    cloudProfileId: string | null;
+    lastSyncedAt: string | null;
+  };
+  metadata: {
+    setupStep: StepId;
+    appMode: AppMode;
+    appVersion: string;
+    hardwareSnapshot: HardwareInfo | null;
+  };
+};
+
+export type LocalAssistantProfileStore = {
+  schemaVersion: 1;
+  activeProfileId: string | null;
+  profiles: LocalAssistantProfile[];
+  updatedAt: string | null;
+};

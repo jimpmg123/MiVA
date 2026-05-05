@@ -1,0 +1,265 @@
+﻿import type {
+  CalendarActionMode,
+  CodingAccessMode,
+  CodingCapability,
+  CodingProviderPolicy,
+  LocalAssistantProfile,
+  MemorySyncMode,
+  ProfileDetailsDraft,
+  PromptSettings,
+  WorkspaceToolPolicy,
+} from "../../types";
+export const defaultProfileDetails: ProfileDetailsDraft = {
+  name: "MiVA Assistant",
+  description: "Local MiVA assistant profile created from setup choices.",
+};
+const legacySimpleAvoidance = "Do not make tool actions sound completed unless a connected tool confirms them.";
+const defaultSimpleAvoidance = "Only say an action is done when MiVA actually completed it. If not, explain what still needs to be done.";
+export const defaultPromptSettings: PromptSettings = {
+  simple: {
+    assistantPurpose: "Help me organize daily tasks, answer questions, and plan practical next actions.",
+    desiredTasks: "Write what you want this assistant to help with. Example: plan my study schedule, summarize notes, prepare calendar reminders.",
+    preferredTone: "Clear, practical, and friendly.",
+    avoidances: defaultSimpleAvoidance,
+  },
+  toolConnections: {
+    googleWorkspaceCli: false,
+    daisoCli: false,
+  },
+  persona: "A practical personal assistant named MiVA.",
+  roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
+  responseRules: [
+    "Start with the direct answer, then add context only when it helps.",
+    "Ask a short clarifying question when the request is ambiguous.",
+    "Keep local/private data assumptions explicit.",
+  ],
+  scheduleRules: {
+    mode: "draftOnly",
+    timezone: "Asia/Seoul",
+    reminderPreference: "Suggest reminders, but do not create calendar events until Google Workspace is connected.",
+  },
+  workspaceRules: {
+    googleWorkspace: "disabled",
+    calendar: "disabled",
+    gmail: "disabled",
+    drive: "disabled",
+  },
+  coding: {
+    capability: "chatOnly",
+    providerPolicy: "localAllowed",
+    localExperimental: false,
+    accessMode: "readOnly",
+    workspaceAllowlistRequired: false,
+  },
+  safetyRules: [
+    "Do not claim that an external tool action was completed unless a connected tool confirms it.",
+    "Before changing calendars, files, or email, explain the planned action and wait for user confirmation.",
+  ],
+};
+
+export const scheduleModeCopy: Record<CalendarActionMode, string> = {
+  draftOnly: "Draft schedules only. The assistant may plan, but cannot create or edit calendar events.",
+  confirmBeforeAction: "Prepare calendar actions and ask for confirmation before any connected tool runs.",
+  connectedActions: "Allow confirmed calendar actions after Google Workspace is connected.",
+};
+
+export const workspacePolicyCopy: Record<WorkspaceToolPolicy, string> = {
+  disabled: "Disabled",
+  askFirst: "Ask first",
+  connectedOnly: "Connected only",
+};
+
+export const codingCapabilityCopy: Record<CodingCapability, string> = {
+  chatOnly: "Chat only",
+  codeExplain: "Code explanation",
+  codeEdit: "Code editing",
+  clawCode: "Claw Code",
+};
+
+export const codingProviderPolicyCopy: Record<CodingProviderPolicy, string> = {
+  localAllowed: "Local allowed",
+  cloudRecommended: "Cloud recommended",
+  cloudRequired: "Cloud API required",
+};
+
+export const codingAccessModeCopy: Record<CodingAccessMode, string> = {
+  readOnly: "Read-only",
+  fileEdits: "File edits",
+  shellCommands: "Shell commands",
+};
+
+function normalizeStringList(value: unknown, fallback: string[]) {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+
+  const normalized = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return normalized.length ? normalized : [...fallback];
+}
+
+export function normalizePromptSettings(value: unknown): PromptSettings {
+  const source = value && typeof value === "object" ? value as Partial<PromptSettings> : {};
+  const simple = source.simple && typeof source.simple === "object"
+    ? source.simple as Partial<PromptSettings["simple"]>
+    : {};
+  const toolConnections = source.toolConnections && typeof source.toolConnections === "object"
+    ? source.toolConnections as Partial<PromptSettings["toolConnections"]>
+    : {};
+  const scheduleRules = source.scheduleRules && typeof source.scheduleRules === "object"
+    ? source.scheduleRules as Partial<PromptSettings["scheduleRules"]>
+    : {};
+  const workspaceRules = source.workspaceRules && typeof source.workspaceRules === "object"
+    ? source.workspaceRules as Partial<PromptSettings["workspaceRules"]>
+    : {};
+  const coding = source.coding && typeof source.coding === "object"
+    ? source.coding as Partial<PromptSettings["coding"]>
+    : {};
+
+  const scheduleMode: CalendarActionMode =
+    scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
+      ? scheduleRules.mode
+      : defaultPromptSettings.scheduleRules.mode;
+
+  const normalizeWorkspacePolicy = (value: unknown): WorkspaceToolPolicy => (
+    value === "askFirst" || value === "connectedOnly" || value === "disabled"
+      ? value
+      : "disabled"
+  );
+  const normalizeCodingCapability = (value: unknown): CodingCapability => (
+    value === "codeExplain" || value === "codeEdit" || value === "clawCode" || value === "chatOnly"
+      ? value
+      : defaultPromptSettings.coding.capability
+  );
+  const normalizeCodingProviderPolicy = (value: unknown): CodingProviderPolicy => (
+    value === "cloudRecommended" || value === "cloudRequired" || value === "localAllowed"
+      ? value
+      : defaultPromptSettings.coding.providerPolicy
+  );
+  const normalizeCodingAccessMode = (value: unknown): CodingAccessMode => (
+    value === "fileEdits" || value === "shellCommands" || value === "readOnly"
+      ? value
+      : defaultPromptSettings.coding.accessMode
+  );
+
+  return {
+    simple: {
+      assistantPurpose: typeof simple.assistantPurpose === "string" && simple.assistantPurpose.trim()
+        ? simple.assistantPurpose.trim()
+        : defaultPromptSettings.simple.assistantPurpose,
+      desiredTasks: typeof simple.desiredTasks === "string" && simple.desiredTasks.trim()
+        ? simple.desiredTasks.trim()
+        : defaultPromptSettings.simple.desiredTasks,
+      preferredTone: typeof simple.preferredTone === "string" && simple.preferredTone.trim()
+        ? simple.preferredTone.trim()
+        : defaultPromptSettings.simple.preferredTone,
+      avoidances: typeof simple.avoidances === "string" && simple.avoidances.trim()
+        ? simple.avoidances.trim() === legacySimpleAvoidance
+          ? defaultSimpleAvoidance
+          : simple.avoidances.trim()
+        : defaultPromptSettings.simple.avoidances,
+    },
+    toolConnections: {
+      googleWorkspaceCli: typeof toolConnections.googleWorkspaceCli === "boolean"
+        ? toolConnections.googleWorkspaceCli
+        : defaultPromptSettings.toolConnections.googleWorkspaceCli,
+      daisoCli: typeof toolConnections.daisoCli === "boolean"
+        ? toolConnections.daisoCli
+        : defaultPromptSettings.toolConnections.daisoCli,
+    },
+    persona: typeof source.persona === "string" && source.persona.trim()
+      ? source.persona.trim()
+      : defaultPromptSettings.persona,
+    roleGoal: typeof source.roleGoal === "string" && source.roleGoal.trim()
+      ? source.roleGoal.trim()
+      : defaultPromptSettings.roleGoal,
+    responseRules: normalizeStringList(source.responseRules, defaultPromptSettings.responseRules),
+    scheduleRules: {
+      mode: scheduleMode,
+      timezone: typeof scheduleRules.timezone === "string" && scheduleRules.timezone.trim()
+        ? scheduleRules.timezone.trim()
+        : defaultPromptSettings.scheduleRules.timezone,
+      reminderPreference: typeof scheduleRules.reminderPreference === "string" && scheduleRules.reminderPreference.trim()
+        ? scheduleRules.reminderPreference.trim()
+        : defaultPromptSettings.scheduleRules.reminderPreference,
+    },
+    workspaceRules: {
+      googleWorkspace: normalizeWorkspacePolicy(workspaceRules.googleWorkspace),
+      calendar: normalizeWorkspacePolicy(workspaceRules.calendar),
+      gmail: normalizeWorkspacePolicy(workspaceRules.gmail),
+      drive: normalizeWorkspacePolicy(workspaceRules.drive),
+    },
+    coding: {
+      capability: normalizeCodingCapability(coding.capability),
+      providerPolicy: normalizeCodingProviderPolicy(coding.providerPolicy),
+      localExperimental: typeof coding.localExperimental === "boolean"
+        ? coding.localExperimental
+        : defaultPromptSettings.coding.localExperimental,
+      accessMode: normalizeCodingAccessMode(coding.accessMode),
+      workspaceAllowlistRequired: typeof coding.workspaceAllowlistRequired === "boolean"
+        ? coding.workspaceAllowlistRequired
+        : defaultPromptSettings.coding.workspaceAllowlistRequired,
+    },
+    safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
+  };
+}
+
+export function codingSettingsToCapability(settings: PromptSettings): LocalAssistantProfile["capabilities"]["coding"] {
+  return {
+    capability: settings.coding.capability,
+    providerPolicy: settings.coding.providerPolicy,
+    localExperimental: settings.coding.localExperimental,
+    accessMode: settings.coding.accessMode,
+    workspaceAllowlistRequired: settings.coding.workspaceAllowlistRequired,
+  };
+}
+
+export function normalizeMemoryCapability(
+  value: Partial<LocalAssistantProfile["capabilities"]["memory"]> | undefined,
+  syncMode: MemorySyncMode,
+): LocalAssistantProfile["capabilities"]["memory"] {
+  return {
+    syncMode: value?.syncMode === "summaryMemory" ? "summaryMemory" : syncMode,
+    snapshotPolicy: {
+      firstConversations: Number.isFinite(Number(value?.snapshotPolicy?.firstConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.firstConversations)))
+        : 3,
+      recentConversations: Number.isFinite(Number(value?.snapshotPolicy?.recentConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.recentConversations)))
+        : 3,
+      highEffortConversations: Number.isFinite(Number(value?.snapshotPolicy?.highEffortConversations))
+        ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.highEffortConversations)))
+        : 1,
+    },
+  };
+}
+
+export function normalizeProfileCapabilities(
+  value: Partial<LocalAssistantProfile["capabilities"]> | undefined,
+  settings: PromptSettings,
+  memorySyncMode: MemorySyncMode = "profileOnly",
+): LocalAssistantProfile["capabilities"] {
+  const coding = value?.coding && typeof value.coding === "object"
+    ? value.coding
+    : codingSettingsToCapability(settings);
+
+  return {
+    voice: value?.voice ?? { enabled: false, sttProvider: null, ttsProvider: null },
+    character: value?.character ?? { enabled: false, renderer: null, characterId: null },
+    googleWorkspace: value?.googleWorkspace ?? { enabled: false, accountId: null, scopes: [] },
+    files: value?.files ?? { enabled: false, allowedRoots: [] },
+    tools: value?.tools ?? { enabled: false, enabledToolIds: [] },
+    coding: {
+      ...codingSettingsToCapability(settings),
+      ...coding,
+    },
+    mcp: value?.mcp ?? { enabled: false, serverIds: [] },
+    skills: value?.skills ?? { enabled: false, skillIds: [] },
+    externalApis: value?.externalApis ?? { enabled: false, providerIds: [] },
+    memory: normalizeMemoryCapability(value?.memory, memorySyncMode),
+  };
+}
+

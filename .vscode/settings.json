@@ -1,0 +1,20 @@
+{
+  "files.exclude": {
+    "**/*.err.log": true,
+    "**/*.out.log": true,
+    "**/*.dev.log": true,
+    "**/*.run.log": true,
+    "**/.tmp-*.log": true,
+    "**/.logs": true,
+    "**/dist": true
+  },
+  "search.exclude": {
+    "**/*.err.log": true,
+    "**/*.out.log": true,
+    "**/*.dev.log": true,
+    "**/*.run.log": true,
+    "**/.tmp-*.log": true,
+    "**/.logs": true,
+    "**/dist": true
+  }
+}
