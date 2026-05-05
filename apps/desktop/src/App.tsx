@@ -1,7 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import type { Locale } from "./i18n";
 import { AppShell } from "./app/AppShell";
@@ -27,18 +24,11 @@ import { formatLogTime, recommendCloudModel, recommendModel } from "./utils";
 import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, providerMeta } from "./features/models/catalog";
 import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
 import {
-  getDefaultPythonInstallDir,
-  getHardwareInfo,
-  getOllamaStatus,
-  getRuntimeRequirements,
-  installOllamaRuntime,
-  installPythonRuntime,
-  pullOllamaModel,
   runChatOnce,
-  startOllamaRuntime,
 } from "./features/models/ollamaRuntime";
+import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
 import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, saveLocalAssistantProfileStore } from "./features/assistants/storage";
-import { clearAuthSessionStorage, clearProviderKeysStorage, emptyProviderKeys, loadAuthSession, loadProviderKeys, saveAuthSessionToStorage, saveProviderKeysToStorage } from "./features/auth/storage";
+import { clearProviderKeysStorage, emptyProviderKeys, loadProviderKeys, saveProviderKeysToStorage } from "./features/auth/storage";
 import { loadRuntimeChatMessages, saveRuntimeChatMessages } from "./features/chat/storage";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
 import { buildLocalAssistantProfile } from "./features/assistants/profileFactory";
@@ -49,12 +39,11 @@ import {
   upsertAssistantProfileStore,
 } from "./features/assistants/storeOperations";
 import {
-  getDeviceAuthStatus,
   recordLocalUsageEvent,
   registerDesktopDevice,
-  startDeviceAuth,
   upsertCloudAssistantProfile,
 } from "./features/cloud/client";
+import { useAuthFlow } from "./features/auth/useAuthFlow";
 import {
   createLocalProfileId,
   getAssistantProfileFingerprint,
@@ -66,24 +55,17 @@ import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQu
 import type {
   AppMode,
   AssistantProfileSyncState,
-  AuthFlowState,
-  AuthSession,
   ChatMessage,
   ChatMetrics,
   CloudDeviceRecord,
-  DeviceAuthStart,
-  HardwareInfo,
   LocalAssistantProfile,
   LocalAssistantProfileStatus,
   LocalAssistantProfileStore,
-  ModelDownloadProgress,
-  OllamaStatus,
   ProfileDetailsDraft,
   PromptEditorMode,
   PromptSettings,
   ProviderId,
   ProviderKeyState,
-  RuntimeRequirements,
   SettingsSection,
   StepId,
   StudioSection,
@@ -119,23 +101,12 @@ function App() {
   const [surveyQuestionIndex, setSurveyQuestionIndex] = useState(0);
   const [surveyTipExpanded, setSurveyTipExpanded] = useState(false);
   const [surveyTipContentVisible, setSurveyTipContentVisible] = useState(false);
-  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
-  const [hardwareError, setHardwareError] = useState<string | null>(null);
-  const [runtimeRequirements, setRuntimeRequirements] = useState<RuntimeRequirements | null>(null);
-  const [runtimeRequirementsError, setRuntimeRequirementsError] = useState<string | null>(null);
-  const [pythonInstallPath, setPythonInstallPath] = useState("");
-  const [status, setStatus] = useState<OllamaStatus | null>(null);
   const [selectedModel, setSelectedModel] = useState("qwen3:4b");
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>("ollama");
   const [selectedCloudModel, setSelectedCloudModel] = useState("gemini-2.5-flash");
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
-  const [authFlowState, setAuthFlowState] = useState<AuthFlowState>("idle");
-  const [authFlowError, setAuthFlowError] = useState<string | null>(null);
-  const [deviceAuthRequest, setDeviceAuthRequest] = useState<DeviceAuthStart | null>(null);
   const [cloudDevice, setCloudDevice] = useState<CloudDeviceRecord | null>(null);
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
   const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages());
@@ -162,11 +133,43 @@ function App() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const assistantProfileHydratedRef = useRef(false);
-  const autoStartOllamaAttemptedRef = useRef(false);
   const newAssistantDraftBaselineRef = useRef<string | null>(null);
+
+  const log = useCallback((message: string) => {
+    setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
+  }, []);
 
   const t = copy.en;
   const providerText = providerUiCopy.en;
+  const {
+    hardware,
+    hardwareError,
+    runtimeRequirements,
+    runtimeRequirementsError,
+    pythonInstallPath,
+    status,
+    downloadProgress,
+    refreshStatus,
+    refreshHardware,
+    refreshRuntimeRequirements,
+    choosePythonInstallPath,
+    installPython,
+    installOllama,
+    startOllama,
+    ensureOllamaReadyForChat,
+    downloadModel,
+    setDownloadProgress,
+  } = useOllamaRuntime({
+    tauriRuntime,
+    selectedProvider,
+    preparingDownloadLabel: t.preparingDownload,
+    downloadFailedLabel: t.downloadFailed,
+    onLog: log,
+    setBusyAction,
+    onModelDownloaded: (model) => {
+      setDismissedChatIntroKeys((current) => current.filter((key) => key !== `ollama:${model}:${promptProfileId}`));
+    },
+  });
   const recommendedModel = useMemo(() => recommendModel(survey, hardware), [survey, hardware]);
   const recommendedCloudModel = useMemo(() => recommendCloudModel(survey), [survey]);
   const recommendedModelInfo = getModelByName(recommendedModel);
@@ -185,6 +188,20 @@ function App() {
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
   const serviceLabel = !status ? t.checking : status.running ? t.running : status.installed ? t.stopped : t.missing;
+  const {
+    authSession,
+    authFlowState,
+    authFlowError,
+    deviceAuthRequest,
+    clearAuthSession,
+    continueLocalOnly,
+    startBrowserSignIn,
+  } = useAuthFlow({
+    tauriRuntime,
+    onLog: log,
+    onClearCloudDevice: () => setCloudDevice(null),
+    onContinueLocalOnly: closeAuth,
+  });
   const signedIn = Boolean(authSession);
   const visibleAssistantProfiles = assistantProfileStore.profiles.filter((profile) => signedIn || profile.provider === "ollama");
   const visibleAssistantProfileStore = {
@@ -232,10 +249,6 @@ function App() {
     assistantName: profile.name,
     conversations: profile.id === promptProfileId ? currentAssistantConversations : [],
   }));
-
-  function log(message: string) {
-    setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
-  }
 
   function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
     if (mode === "runtime") {
@@ -293,27 +306,6 @@ function App() {
     setProviderKeysSaved(false);
   }
 
-  function saveAuthSession(session: AuthSession) {
-    saveAuthSessionToStorage(session);
-    setAuthSession(session);
-  }
-
-  function clearAuthSession() {
-    clearAuthSessionStorage();
-    setAuthSession(null);
-    setCloudDevice(null);
-    setDeviceAuthRequest(null);
-    setAuthFlowState("idle");
-    setAuthFlowError(null);
-  }
-
-  function continueLocalOnly() {
-    setAuthFlowState("idle");
-    setAuthFlowError(null);
-    setDeviceAuthRequest(null);
-    closeAuth();
-  }
-
   async function registerDeviceWithCloud() {
     const device = await registerDesktopDevice({
       authSession,
@@ -341,36 +333,6 @@ function App() {
       cloudDeviceId: cloudDevice?.id ?? null,
       ...event,
     });
-  }
-
-  async function startBrowserSignIn() {
-    setAuthFlowState("opening");
-    setAuthFlowError(null);
-
-    try {
-      const request = await startDeviceAuth();
-
-      setDeviceAuthRequest(request);
-      setAuthFlowState("waiting");
-
-      try {
-        if (tauriRuntime) {
-          await openUrl(request.verificationUrl);
-        } else {
-          window.open(request.verificationUrl, "_blank", "noopener,noreferrer");
-        }
-      } catch (openError) {
-        setAuthFlowError(`Browser did not open automatically. Open this URL manually: ${request.verificationUrl}`);
-        log(`Browser open failed: ${String(openError)}`);
-      }
-
-      log("Opened MiVA web sign-in in the system browser.");
-    } catch (error) {
-      const message = `Could not start browser sign-in: ${String(error)}`;
-      setAuthFlowState("error");
-      setAuthFlowError(message);
-      log(message);
-    }
   }
 
   function buildCurrentLocalAssistantProfile(
@@ -776,184 +738,6 @@ function App() {
     setActiveStep(previous.id);
   }
 
-  async function refreshStatus() {
-    setBusyAction("refreshStatus");
-    try {
-      const nextStatus = await getOllamaStatus();
-      setStatus(nextStatus);
-    } catch (error) {
-      log(`Status failed: ${String(error)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function refreshHardware() {
-    setBusyAction("hardware");
-    setHardwareError(null);
-    try {
-      const nextHardware = await getHardwareInfo();
-      setHardware(nextHardware);
-    } catch (error) {
-      setHardwareError(String(error));
-      log(`Hardware check failed: ${String(error)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function refreshRuntimeRequirements() {
-    setRuntimeRequirementsError(null);
-    try {
-      const nextRequirements = await getRuntimeRequirements();
-      setRuntimeRequirements(nextRequirements);
-    } catch (error) {
-      setRuntimeRequirementsError(String(error));
-      log(`Runtime requirement check failed: ${String(error)}`);
-    }
-  }
-
-  async function refreshDefaultPythonInstallPath() {
-    try {
-      const nextPath = await getDefaultPythonInstallDir();
-      setPythonInstallPath((current) => current || nextPath);
-    } catch (error) {
-      log(`Python install path check failed: ${String(error)}`);
-    }
-  }
-
-  async function choosePythonInstallPath() {
-    if (!tauriRuntime) {
-      return;
-    }
-
-    try {
-      const selected = await openDialog({
-        title: "Choose Python install location",
-        directory: true,
-        multiple: false,
-        defaultPath: pythonInstallPath || undefined,
-      });
-
-      if (typeof selected === "string") {
-        setPythonInstallPath(selected);
-      }
-    } catch (error) {
-      setRuntimeRequirementsError(String(error));
-      log(`Python install location selection failed: ${String(error)}`);
-    }
-  }
-
-  async function installPython() {
-    setBusyAction("install-python");
-    setRuntimeRequirementsError(null);
-    try {
-      const installPath = pythonInstallPath.trim();
-      log(`Starting Python install through winget at ${installPath || "default location"}.`);
-      const output = await installPythonRuntime(installPath || null);
-      log(output);
-      await refreshRuntimeRequirements();
-    } catch (error) {
-      setRuntimeRequirementsError(String(error));
-      log(`Python install failed: ${String(error)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function installOllama() {
-    setBusyAction("install");
-    try {
-      log("Starting Ollama install through winget.");
-      const output = await installOllamaRuntime();
-      log(output);
-      await refreshStatus();
-    } catch (error) {
-      log(`Install failed: ${String(error)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function startOllama() {
-    setBusyAction("start");
-    try {
-      const output = await startOllamaRuntime();
-      log(output);
-      await refreshStatus();
-    } catch (error) {
-      log(`Start failed: ${String(error)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function ensureOllamaReadyForChat(model: string) {
-    if (selectedProvider !== "ollama") {
-      return true;
-    }
-
-    if (!status?.installed) {
-      log("Ollama is not installed. Install Ollama before using a local model.");
-      return false;
-    }
-
-    let nextStatus = status;
-    if (!nextStatus.running) {
-      log("Ollama is not running. Starting Ollama automatically before local chat.");
-      const output = await startOllamaRuntime();
-      log(output);
-      nextStatus = await getOllamaStatus();
-      setStatus(nextStatus);
-    }
-
-    if (!nextStatus.running) {
-      log("Ollama start was attempted, but the local runtime is still offline.");
-      return false;
-    }
-
-    if (!nextStatus.installedModels.includes(model)) {
-      log(`${model} is not installed. Download the model before starting local chat.`);
-      return false;
-    }
-
-    return true;
-  }
-
-  async function downloadModel(model: string) {
-    setBusyAction(`download:${model}`);
-    setDownloadProgress({
-      model,
-      status: t.preparingDownload,
-      completed: null,
-      total: null,
-      percent: 0,
-      done: false,
-      error: null,
-    });
-    try {
-      log(`Downloading ${model}.`);
-      const output = await pullOllamaModel(model);
-      log(output);
-      setDismissedChatIntroKeys((current) => current.filter((key) => key !== `ollama:${model}:${promptProfileId}`));
-      await refreshStatus();
-    } catch (error) {
-      const message = String(error);
-      setDownloadProgress((current) => ({
-        model,
-        status: t.downloadFailed,
-        completed: current?.completed ?? null,
-        total: current?.total ?? null,
-        percent: current?.percent ?? null,
-        done: true,
-        error: message,
-      }));
-      log(`Download failed: ${message}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
     chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
     shouldAutoScrollChatRef.current = true;
@@ -1099,40 +883,6 @@ function App() {
   }
 
   useEffect(() => {
-    if (tauriRuntime) {
-      void (async () => {
-        await refreshStatus();
-        await refreshHardware();
-        await refreshRuntimeRequirements();
-        await refreshDefaultPythonInstallPath();
-      })();
-    }
-  }, [tauriRuntime]);
-
-  useEffect(() => {
-    if (!tauriRuntime || !status || autoStartOllamaAttemptedRef.current) {
-      return;
-    }
-
-    if (!status.installed || status.running) {
-      return;
-    }
-
-    autoStartOllamaAttemptedRef.current = true;
-    void (async () => {
-      try {
-        log("Ollama is installed but offline. Starting automatically on app launch.");
-        const output = await startOllamaRuntime();
-        log(output);
-        const nextStatus = await getOllamaStatus();
-        setStatus(nextStatus);
-      } catch (error) {
-        log(`Automatic Ollama start failed: ${String(error)}`);
-      }
-    })();
-  }, [tauriRuntime, status]);
-
-  useEffect(() => {
     if (!authSession) {
       return;
     }
@@ -1141,53 +891,6 @@ function App() {
       log(`Device registration failed: ${String(error)}`);
     });
   }, [authSession, hardware?.osName, selectedProvider, selectedModel, selectedCloudModel, status?.running]);
-
-  useEffect(() => {
-    if (!deviceAuthRequest || authFlowState !== "waiting") {
-      return;
-    }
-
-    let cancelled = false;
-    const pollInterval = Math.max(1000, deviceAuthRequest.intervalMs || 1500);
-
-    const pollDeviceAuth = async () => {
-      try {
-        const statusResponse = await getDeviceAuthStatus(deviceAuthRequest.deviceCode);
-
-        if (cancelled) {
-          return;
-        }
-
-        if (statusResponse.status === "authorized" && statusResponse.session) {
-          saveAuthSession(statusResponse.session);
-          setAuthFlowState("connected");
-          setAuthFlowError(null);
-          setDeviceAuthRequest(null);
-          log(`Desktop session connected for ${statusResponse.session.user.email}.`);
-          return;
-        }
-
-        if (statusResponse.status === "expired") {
-          setAuthFlowState("error");
-          setAuthFlowError("This desktop login request expired. Start sign-in again.");
-          setDeviceAuthRequest(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setAuthFlowState("error");
-          setAuthFlowError(`Could not check sign-in status: ${String(error)}`);
-        }
-      }
-    };
-
-    void pollDeviceAuth();
-    const intervalId = window.setInterval(() => void pollDeviceAuth(), pollInterval);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [authFlowState, deviceAuthRequest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1251,23 +954,6 @@ function App() {
     setProfileDetailsDraft(defaultProfileDetails);
     setPromptSettingsDraft(defaultPromptSettings);
   }, [authSession, assistantProfileLoaded, assistantProfileStore.profiles, activeLocalProfileId]);
-
-  useEffect(() => {
-    if (!tauriRuntime) {
-      return;
-    }
-
-    let unlisten: (() => void) | undefined;
-    void listen<ModelDownloadProgress>("model-download-progress", (event) => {
-      setDownloadProgress(event.payload);
-    }).then((nextUnlisten) => {
-      unlisten = nextUnlisten;
-    });
-
-    return () => {
-      unlisten?.();
-    };
-  }, [tauriRuntime]);
 
   useEffect(() => {
     saveRuntimeChatMessages(runtimeChatMessages);
