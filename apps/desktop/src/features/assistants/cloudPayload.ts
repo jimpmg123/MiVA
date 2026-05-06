@@ -14,9 +14,7 @@ export function buildCloudAssistantProfilePayload(profile: LocalAssistantProfile
     model: profile.model || "qwen3:4b",
     futureFeatures: Array.isArray(profile.futureFeatures) ? profile.futureFeatures : [],
     isDefault: true,
-    status: profile.status,
     source: "desktop-setup",
-    completedAt: profile.completedAt,
     prompt: profile.prompt,
     capabilities: profile.capabilities,
   };

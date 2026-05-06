@@ -6,6 +6,7 @@ import { getCloudModelById, getModelByName } from "./catalog";
 
 type UseModelRecommendationOptions = {
   hardware: HardwareInfo | null;
+  signedIn: boolean;
   survey: SurveyState;
   setSelectedCloudModel: Dispatch<SetStateAction<string>>;
   setSelectedModel: Dispatch<SetStateAction<string>>;
@@ -14,6 +15,7 @@ type UseModelRecommendationOptions = {
 
 export function useModelRecommendation({
   hardware,
+  signedIn,
   survey,
   setSelectedCloudModel,
   setSelectedModel,
@@ -32,7 +34,7 @@ export function useModelRecommendation({
   }, [recommendedModel, setSelectedModel]);
 
   useEffect(() => {
-    if (cloudRecommended) {
+    if (cloudRecommended && signedIn) {
       const cloudModel = getCloudModelById(recommendedCloudModel);
       setSelectedCloudModel(cloudModel.id);
       setSelectedProvider(cloudModel.provider);
@@ -40,7 +42,7 @@ export function useModelRecommendation({
     }
 
     setSelectedProvider("ollama");
-  }, [cloudRecommended, recommendedCloudModel, setSelectedCloudModel, setSelectedProvider]);
+  }, [cloudRecommended, recommendedCloudModel, setSelectedCloudModel, setSelectedProvider, signedIn]);
 
   return {
     cloudRecommended,

@@ -23,7 +23,7 @@ type RuntimePageProps = {
   showJumpToLatest: boolean;
   status: OllamaStatus | null;
   t: Record<string, string>;
-  finalizeCurrentLocalAssistantProfile: () => Promise<void> | void;
+  saveSetupAssistantProfile: () => Promise<boolean> | boolean;
   handleChatScroll: () => void;
   scrollChatToLatest: (behavior?: ScrollBehavior) => void;
   sendMessage: () => Promise<void> | void;
@@ -53,7 +53,7 @@ export function RuntimePage({
   showJumpToLatest,
   status,
   t,
-  finalizeCurrentLocalAssistantProfile,
+  saveSetupAssistantProfile,
   handleChatScroll,
   scrollChatToLatest,
   sendMessage,
@@ -125,8 +125,11 @@ const runtimeChat = appMode === "runtime";
                 </div>
                 <PrimaryButton
                   className="shrink-0 rounded-xl px-4 py-2.5 text-sm"
-                  onClick={() => {
-                    void finalizeCurrentLocalAssistantProfile();
+                  onClick={async () => {
+                    const saved = await saveSetupAssistantProfile();
+                    if (!saved) {
+                      return;
+                    }
                     setAppMode("runtime");
                   }}
                 >

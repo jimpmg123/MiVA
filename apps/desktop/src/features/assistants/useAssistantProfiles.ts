@@ -24,7 +24,6 @@ import type {
   AuthSession,
   HardwareInfo,
   LocalAssistantProfile,
-  LocalAssistantProfileStatus,
   LocalAssistantProfileStore,
   ProfileDetailsDraft,
   PromptSettings,
@@ -37,6 +36,7 @@ import type {
 
 export const DEFAULT_LOCAL_PROFILE_ID = "local_default";
 export const NEW_LOCAL_PROFILE_DRAFT_ID = "local_new_draft";
+const SIGN_IN_BEFORE_SYNC_MESSAGE = "Sign in before syncing assistant profiles.";
 
 type UseAssistantProfilesOptions = {
   appMode: AppMode;
@@ -114,12 +114,8 @@ export function useAssistantProfiles({
       : visibleAssistantProfiles[0] ?? null;
   const promptProfileId = activeLocalProfile?.id ?? (signedIn ? activeLocalProfileId : DEFAULT_LOCAL_PROFILE_ID);
 
-  function buildCurrentLocalAssistantProfile(
-    status: LocalAssistantProfileStatus,
-    options?: { forceNew?: boolean; profileId?: string },
-  ): LocalAssistantProfile {
+  function buildCurrentLocalAssistantProfile(options?: { forceNew?: boolean; profileId?: string }): LocalAssistantProfile {
     return buildLocalAssistantProfile({
-      status,
       forceNew: options?.forceNew,
       profileId: options?.profileId,
       activeLocalProfileId,
@@ -186,7 +182,7 @@ export function useAssistantProfiles({
     }
 
     if (activeLocalProfile) {
-      const currentProfile = buildCurrentLocalAssistantProfile(activeLocalProfile.status);
+      const currentProfile = buildCurrentLocalAssistantProfile();
       return getAssistantProfileFingerprint(activeLocalProfile) !== getAssistantProfileFingerprint(currentProfile);
     }
 
@@ -197,12 +193,49 @@ export function useAssistantProfiles({
     return false;
   }
 
+  function discardUnsavedStudioChanges() {
+    newAssistantDraftBaselineRef.current = null;
+    setAssistantProfileError(null);
+    setAssistantProfileSaveState("idle");
+
+    if (activeLocalProfile) {
+      applyLocalAssistantProfile(activeLocalProfile);
+      return;
+    }
+
+    setActiveLocalProfileId(assistantProfileStore.activeProfileId ?? assistantProfileStore.profiles[0]?.id ?? DEFAULT_LOCAL_PROFILE_ID);
+    const fallbackProfile = assistantProfileStore.profiles.find((profile) => profile.id === assistantProfileStore.activeProfileId) ?? assistantProfileStore.profiles[0] ?? null;
+    if (fallbackProfile) {
+      applyLocalAssistantProfile(fallbackProfile);
+      return;
+    }
+
+    setProfileDetailsDraft(defaultProfileDetails);
+    setPromptSettingsDraft(defaultPromptSettings);
+    setSurvey({
+      useCase: null,
+      answerStyle: null,
+      priority: null,
+      languageUse: null,
+      localMode: null,
+      futureFeatures: [],
+      memorySyncMode: "profileOnly",
+    });
+    setSelectedProvider("ollama");
+    setSelectedModel("qwen3:4b");
+    setSelectedCloudModel("gemini-2.5-flash");
+  }
+
   function confirmDiscardStudioChanges() {
     if (!hasUnsavedStudioDraftChanges()) {
       return true;
     }
 
-    return window.confirm("You have unsaved changes. Leave without saving?");
+    const confirmed = window.confirm("You have unsaved changes. Leave without saving?");
+    if (confirmed) {
+      discardUnsavedStudioChanges();
+    }
+    return confirmed;
   }
 
   function clearAssistantProfileSyncStatus() {
@@ -222,9 +255,22 @@ export function useAssistantProfiles({
     throw new Error(message);
   }
 
-  async function saveCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus) {
+  function validateProfileAuth(profile: LocalAssistantProfile, action: "save" | "add") {
+    if (authSession || profile.provider === "ollama") {
+      return;
+    }
+
+    const message = "Sign in is required to save cloud assistants.";
+    setAssistantProfileError(message);
+    setAssistantProfileSaveState("error");
+    onLog(`Assistant profile ${action} blocked: ${message}`);
+    throw new Error(message);
+  }
+
+  async function saveCurrentLocalAssistantProfile() {
     clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile(status);
+    const profile = buildCurrentLocalAssistantProfile();
+    validateProfileAuth(profile, "save");
     validateUniqueProfileName(profile, "save");
     const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
 
@@ -249,12 +295,13 @@ export function useAssistantProfiles({
     }
   }
 
-  async function addCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus) {
+  async function addCurrentLocalAssistantProfile() {
     clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile(status, {
+    const profile = buildCurrentLocalAssistantProfile({
       forceNew: true,
       profileId: createLocalProfileId(),
     });
+    validateProfileAuth(profile, "add");
     validateUniqueProfileName(profile, "add");
     const nextStore = addAssistantProfileStore(assistantProfileStore, profile);
 
@@ -357,19 +404,15 @@ export function useAssistantProfiles({
   async function syncAllAssistantProfilesToCloud() {
     if (!authSession) {
       setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage("Sign in before syncing assistant profiles.");
+      setAssistantProfileSyncMessage(SIGN_IN_BEFORE_SYNC_MESSAGE);
       return;
     }
 
     setAssistantProfileSyncState("syncing");
-    setAssistantProfileSyncMessage("Saving current assistant before syncing all profiles...");
+    setAssistantProfileSyncMessage("Preparing saved assistant profiles for sync...");
 
     try {
-      const currentProfile = await saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
-      const profileMap = new Map<string, LocalAssistantProfile>();
-      assistantProfileStore.profiles.forEach((profile) => profileMap.set(profile.id, profile));
-      profileMap.set(currentProfile.id, currentProfile);
-      const profiles = [...profileMap.values()];
+      const profiles = assistantProfileStore.profiles;
 
       setAssistantProfileSyncMessage(`Syncing ${profiles.length} assistant profile${profiles.length === 1 ? "" : "s"}...`);
       const syncedProfiles: LocalAssistantProfile[] = [];
@@ -416,7 +459,7 @@ export function useAssistantProfiles({
   async function syncAssistantProfileToCloud(profile: LocalAssistantProfile) {
     if (!authSession) {
       setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage("Sign in before syncing assistant profiles.");
+      setAssistantProfileSyncMessage(SIGN_IN_BEFORE_SYNC_MESSAGE);
       return;
     }
 
@@ -424,10 +467,7 @@ export function useAssistantProfiles({
     setAssistantProfileSyncMessage(`Syncing ${profile.name || "assistant profile"}...`);
 
     try {
-      const profileToSync = profile.id === activeLocalProfileId
-        ? await saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? profile.status)
-        : profile;
-      const syncedProfile = await syncLocalAssistantProfileToCloud(profileToSync);
+      const syncedProfile = await syncLocalAssistantProfileToCloud(profile);
       await persistLocalAssistantProfile(syncedProfile);
       setAssistantProfileSyncState("synced");
       setAssistantProfileSyncMessage(`Synced ${syncedProfile.name || "assistant profile"} to the web console.`);
@@ -447,20 +487,24 @@ export function useAssistantProfiles({
     }
   }
 
-  async function finalizeCurrentLocalAssistantProfile() {
+  async function saveSetupAssistantProfile() {
     try {
-      const finalizedProfile = await saveCurrentLocalAssistantProfile("finalized");
-      onLog("Assistant profile finalized locally.");
-      if (authSession && !finalizedProfile.sync.cloudEnabled) {
+      const savedProfile = activeLocalProfile
+        ? await saveCurrentLocalAssistantProfile()
+        : await addCurrentLocalAssistantProfile();
+      onLog("Assistant profile saved locally.");
+      if (authSession && !savedProfile.sync.cloudEnabled) {
         setAssistantProfileSyncState("syncing");
-        setAssistantProfileSyncMessage("Uploading finalized assistant profile...");
-        const syncedProfile = await syncLocalAssistantProfileToCloud(finalizedProfile);
+        setAssistantProfileSyncMessage("Uploading assistant profile...");
+        const syncedProfile = await syncLocalAssistantProfileToCloud(savedProfile);
         await persistLocalAssistantProfile(syncedProfile);
         setAssistantProfileSyncState("synced");
         setAssistantProfileSyncMessage("Initial assistant profile uploaded to the web console.");
       }
+      return true;
     } catch {
       // The save function already records the visible error state.
+      return false;
     }
   }
 
@@ -479,7 +523,7 @@ export function useAssistantProfiles({
   }
 
   function saveStudioDraft() {
-    void saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft").catch(() => undefined);
+    void (activeLocalProfile ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile()).catch(() => undefined);
   }
 
   useEffect(() => {
@@ -517,6 +561,15 @@ export function useAssistantProfiles({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authSession || assistantProfileSyncMessage !== SIGN_IN_BEFORE_SYNC_MESSAGE) {
+      return;
+    }
+
+    setAssistantProfileSyncState("idle");
+    setAssistantProfileSyncMessage(null);
+  }, [authSession, assistantProfileSyncMessage]);
 
   useEffect(() => {
     if (authSession || !assistantProfileLoaded) {
@@ -562,7 +615,7 @@ export function useAssistantProfiles({
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,
-    finalizeCurrentLocalAssistantProfile,
+    saveSetupAssistantProfile,
     confirmDiscardStudioChanges,
     startNewAssistantDraft,
     saveStudioDraft,

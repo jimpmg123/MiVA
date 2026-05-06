@@ -32,7 +32,7 @@ export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudR
 export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
 export type AuthRole = "user" | "admin";
 export type PromptEditorMode = "simple" | "developer";
-export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error";
+export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error" | "admin-web-only";
 
 export type AuthUser = {
   id: string;
@@ -213,7 +213,6 @@ export type ProfileDetailsDraft = {
 };
 
 export type AssistantProfileSyncState = "idle" | "syncing" | "synced" | "error";
-export type LocalAssistantProfileStatus = "draft" | "finalized";
 export type LocalAssistantProfileSource = "desktop-setup" | "runtime" | "web-sync";
 
 export type LocalAssistantProfile = {
@@ -221,11 +220,9 @@ export type LocalAssistantProfile = {
   id: string;
   name: string;
   description: string;
-  status: LocalAssistantProfileStatus;
   source: LocalAssistantProfileSource;
   createdAt: string;
   updatedAt: string;
-  completedAt: string | null;
   locale: Locale;
   useCase: UseCase | null;
   answerStyle: AnswerStyle | null;

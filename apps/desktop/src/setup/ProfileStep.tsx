@@ -21,7 +21,6 @@ export function ProfileStep({
   finalizeProfile,
 }: ProfileStepProps) {
   const profileRows = [
-    ["Status", profile.status],
     ["Provider", `${activeProviderLabel} / ${activeProviderMode}`],
     ["Model", activeModelLabel],
     ["Use case", profile.useCase ?? "-"],
@@ -74,7 +73,7 @@ export function ProfileStep({
               type="button"
               onClick={finalizeProfile}
             >
-              Finalize
+              Save assistant
             </button>
           </div>
 

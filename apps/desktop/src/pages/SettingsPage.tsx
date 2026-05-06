@@ -106,7 +106,7 @@ export function SettingsPage({
           <div>
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Assistant Profile</span>
             <p className="mt-2 text-sm font-semibold text-[#191c1d]">
-              {activeLocalProfile?.name ?? "MiVA Assistant"} / {activeLocalProfile?.status ?? "draft"}
+              {activeLocalProfile?.name ?? "MiVA Assistant"}
             </p>
             <p className="mt-1 text-xs leading-5 text-[#72787e]">
               Saved locally first. Cloud sync can attach to this profile later.

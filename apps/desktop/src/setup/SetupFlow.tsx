@@ -64,6 +64,7 @@ type SetupFlowProps = {
   selectedModelInfo: ModelInfo;
   selectedModelInstalled: boolean;
   selectedProvider: ProviderId;
+  signedIn: boolean;
   serviceLabel: string;
   startOllama: () => Promise<void> | void;
   setActiveStep: (step: ComponentProps<typeof SetupPage>["activeStep"]) => void;
@@ -125,6 +126,7 @@ export function SetupFlow({
   selectedModelInfo,
   selectedModelInstalled,
   selectedProvider,
+  signedIn,
   serviceLabel,
   startOllama,
   setActiveStep,
@@ -249,6 +251,7 @@ export function SetupFlow({
           selectedCloudModel={selectedCloudModel}
           selectedModel={selectedModel}
           selectedProvider={selectedProvider}
+          signedIn={signedIn}
           setSelectedCloudModel={setSelectedCloudModel}
           setSelectedModel={setSelectedModel}
           setSelectedProvider={setSelectedProvider}

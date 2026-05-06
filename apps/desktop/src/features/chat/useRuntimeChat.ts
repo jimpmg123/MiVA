@@ -44,7 +44,7 @@ type UseRuntimeChatOptions = {
   justNowLabel: string;
   showChatIntroCard: boolean;
   onDismissedChatIntroKeysChange: Dispatch<SetStateAction<string[]>>;
-  buildCurrentLocalAssistantProfile: (status: LocalAssistantProfile["status"]) => LocalAssistantProfile;
+  buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
   applyLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
   setActiveLocalProfileId: (id: string) => void;
   setAppMode: Dispatch<SetStateAction<AppMode>>;
@@ -113,7 +113,7 @@ export function useRuntimeChat({
     const profiles = new Map<string, LocalAssistantProfile>();
     visibleAssistantProfiles.forEach((profile) => profiles.set(profile.id, profile));
     if (!profiles.has(promptProfileId)) {
-      const currentDraft = activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft");
+      const currentDraft = activeLocalProfile ?? buildCurrentLocalAssistantProfile();
       if (authSession || currentDraft.provider === "ollama") {
         profiles.set(promptProfileId, currentDraft);
       }
@@ -192,7 +192,7 @@ export function useRuntimeChat({
     const prompt = chatInput.trim();
     const chatMode = appMode;
     const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const assistantProfile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+    const assistantProfile = buildCurrentLocalAssistantProfile();
     const apiKey = selectedProvider === "openai"
       ? providerKeys.openai.trim()
       : selectedProvider === "gemini"

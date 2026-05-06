@@ -116,6 +116,22 @@ function App() {
     },
   });
   const {
+    authSession,
+    authFlowState,
+    authFlowError,
+    deviceAuthRequest,
+    clearAuthSession,
+    continueLocalOnly,
+    openWebConsole,
+    startBrowserSignIn,
+  } = useAuthFlow({
+    tauriRuntime,
+    onLog: log,
+    onClearCloudDevice: () => setCloudDevice(null),
+    onContinueLocalOnly: closeAuth,
+  });
+  const signedIn = Boolean(authSession);
+  const {
     cloudRecommended,
     recommendedCloudModel,
     recommendedCloudModelInfo,
@@ -123,6 +139,7 @@ function App() {
     recommendedModelInfo,
   } = useModelRecommendation({
     hardware,
+    signedIn,
     survey,
     setSelectedCloudModel,
     setSelectedModel,
@@ -138,20 +155,6 @@ function App() {
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
   const serviceLabel = !status ? t.checking : status.running ? t.running : status.installed ? t.stopped : t.missing;
-  const {
-    authSession,
-    authFlowState,
-    authFlowError,
-    deviceAuthRequest,
-    clearAuthSession,
-    continueLocalOnly,
-    startBrowserSignIn,
-  } = useAuthFlow({
-    tauriRuntime,
-    onLog: log,
-    onClearCloudDevice: () => setCloudDevice(null),
-    onContinueLocalOnly: closeAuth,
-  });
   const {
     visibleAssistantProfileStore,
     activeLocalProfileId,
@@ -170,7 +173,7 @@ function App() {
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,
-    finalizeCurrentLocalAssistantProfile,
+    saveSetupAssistantProfile,
     confirmDiscardStudioChanges,
     startNewAssistantDraft,
     saveStudioDraft,
@@ -276,9 +279,7 @@ function App() {
     activeStep,
     steps,
     onStepChange: setActiveStep,
-    onEnteringChatStep: () => {
-      void finalizeCurrentLocalAssistantProfile();
-    },
+    onEnteringChatStep: () => undefined,
   });
 
   const renderNavigation = () => (
@@ -387,8 +388,8 @@ function App() {
       showJumpToLatest={showJumpToLatest}
       status={status}
       t={t}
-      finalizeCurrentLocalAssistantProfile={finalizeCurrentLocalAssistantProfile}
       handleChatScroll={handleChatScroll}
+      saveSetupAssistantProfile={saveSetupAssistantProfile}
       scrollChatToLatest={scrollChatToLatest}
       sendMessage={sendMessage}
       setAppMode={setAppMode}
@@ -406,6 +407,7 @@ function App() {
       onClearAuthSession={clearAuthSession}
       onCloseAuth={closeAuth}
       onContinueLocalOnly={continueLocalOnly}
+      onOpenWebConsole={() => void openWebConsole()}
       onStartBrowserSignIn={() => void startBrowserSignIn()}
     />
   );
@@ -436,6 +438,7 @@ function App() {
       selectedCloudModel={selectedCloudModel}
       selectedModel={selectedModel}
       selectedProvider={selectedProvider}
+      signedIn={signedIn}
       setActiveLocalProfileId={setActiveLocalProfileId}
       setAppMode={setAppMode}
       setProfileDetailsDraft={setProfileDetailsDraft}
@@ -512,7 +515,7 @@ function App() {
       downloadProgress={downloadProgress}
       enterGeneralSettings={() => enterSettings("general")}
       enterLogs={() => enterSettings("logs")}
-      finalizeProfile={() => void finalizeCurrentLocalAssistantProfile()}
+      finalizeProfile={() => void saveSetupAssistantProfile()}
       goToNextStep={goToNextStep}
       goToPreviousStep={goToPreviousStep}
       hardware={hardware}
@@ -521,7 +524,7 @@ function App() {
       installPython={installPython}
       installedModels={installedModels}
       logs={logs}
-      profile={activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft")}
+      profile={activeLocalProfile ?? buildCurrentLocalAssistantProfile()}
       providerText={providerText}
       pythonInstallPath={pythonInstallPath}
       recommendedCloudModelInfo={recommendedCloudModelInfo}
@@ -538,6 +541,7 @@ function App() {
       selectedModelInfo={selectedModelInfo}
       selectedModelInstalled={selectedModelInstalled}
       selectedProvider={selectedProvider}
+      signedIn={signedIn}
       serviceLabel={serviceLabel}
       setActiveStep={setActiveStep}
       setSelectedCloudModel={setSelectedCloudModel}

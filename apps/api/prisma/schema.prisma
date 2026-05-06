@@ -12,11 +12,6 @@ enum UserRole {
   ADMIN
 }
 
-enum AssistantProfileStatus {
-  DRAFT
-  FINALIZED
-}
-
 enum AssistantProfileSource {
   DESKTOP_SETUP
   WEB_CONSOLE
@@ -120,11 +115,9 @@ model AssistantProfile {
   model            String
   futureFeatures   Json                   @default("[]")
   isDefault        Boolean                @default(false)
-  status           AssistantProfileStatus @default(DRAFT)
   source           AssistantProfileSource @default(WEB_CONSOLE)
   prompt           Json?
   capabilities     Json?
-  completedAt      DateTime?
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
   user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)

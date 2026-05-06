@@ -1,5 +1,5 @@
 ﻿import type { DeviceAuthStart, AuthFlowState, AuthSession } from "../types";
-import { Badge, PrimaryButton, SecondaryButton } from "../components/ui";
+import { PrimaryButton, SecondaryButton } from "../components/ui";
 
 type AuthPageProps = {
   authFlowError: string | null;
@@ -9,6 +9,7 @@ type AuthPageProps = {
   onClearAuthSession: () => void;
   onCloseAuth: () => void;
   onContinueLocalOnly: () => void;
+  onOpenWebConsole: () => void;
   onStartBrowserSignIn: () => void;
 };
 
@@ -20,6 +21,7 @@ export function AuthPage({
   onClearAuthSession,
   onCloseAuth,
   onContinueLocalOnly,
+  onOpenWebConsole,
   onStartBrowserSignIn,
 }: AuthPageProps) {
   return (
@@ -43,13 +45,25 @@ export function AuthPage({
           </button>
         </div>
 
-        {authSession ? (
+        {authFlowState === "admin-web-only" ? (
+          <div className="grid gap-5">
+            <div className="rounded-2xl border border-[#cae6ff] bg-[#eff8ff] p-5">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#35607f]">Web analytics only</p>
+              <p className="mt-3 text-lg font-bold text-[#191c1d]">Continue in the web console</p>
+              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+                Admin accounts are used only for MiVA web analytics. Desktop assistant creation and runtime stay unavailable for this account.
+              </p>
+            </div>
+            <PrimaryButton className="w-full justify-center" onClick={onOpenWebConsole}>
+              Continue in web console
+            </PrimaryButton>
+          </div>
+        ) : authSession ? (
           <div className="grid gap-5">
             <div className="rounded-2xl bg-[#f3f4f5] p-5">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Connected Account</p>
               <p className="mt-3 text-lg font-bold text-[#191c1d]">{authSession.user.displayName}</p>
               <p className="mt-1 text-sm text-[#42474d]">{authSession.user.email}</p>
-              <Badge tone="success">{authSession.user.role}</Badge>
             </div>
             <PrimaryButton className="w-full justify-center" onClick={onCloseAuth}>
               Continue to MiVA

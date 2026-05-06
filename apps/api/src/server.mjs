@@ -42,11 +42,9 @@ const assistantProfiles = [
     model: "gemini-2.5-flash",
     futureFeatures: ["voice", "googleWorkspace"],
     isDefault: true,
-    status: "finalized",
     source: "desktop-setup",
     createdAt: seedTimestamp,
-    updatedAt: seedTimestamp,
-    completedAt: seedTimestamp
+    updatedAt: seedTimestamp
   },
   {
     id: "profile_work",
@@ -62,11 +60,9 @@ const assistantProfiles = [
     model: "gpt-4o-mini",
     futureFeatures: ["googleWorkspace", "tools"],
     isDefault: false,
-    status: "draft",
     source: "web-console",
     createdAt: seedTimestamp,
-    updatedAt: seedTimestamp,
-    completedAt: null
+    updatedAt: seedTimestamp
   },
   {
     id: "profile_character",
@@ -82,11 +78,9 @@ const assistantProfiles = [
     model: "qwen3:4b",
     futureFeatures: ["voice", "character"],
     isDefault: false,
-    status: "draft",
     source: "desktop-setup",
     createdAt: seedTimestamp,
-    updatedAt: seedTimestamp,
-    completedAt: null
+    updatedAt: seedTimestamp
   }
 ];
 
@@ -153,8 +147,7 @@ const usageEvents = [
   { id: "event_2", type: "model_selected", value: "gemini-2.5-flash", createdAt: seedTimestamp },
   { id: "event_3", type: "assistant_use_case_selected", value: "daily", createdAt: seedTimestamp },
   { id: "event_4", type: "assistant_use_case_selected", value: "work", createdAt: seedTimestamp },
-  { id: "event_5", type: "local_mode_selected", value: "hybrid", createdAt: seedTimestamp },
-  { id: "event_6", type: "assistant_profile_status", value: "finalized", createdAt: seedTimestamp }
+  { id: "event_5", type: "local_mode_selected", value: "hybrid", createdAt: seedTimestamp }
 ];
 
 const localUsageEvents = [
@@ -254,14 +247,6 @@ function fromDbProvider(provider) {
   return String(provider || "CUSTOM").toLowerCase();
 }
 
-function toDbProfileStatus(status) {
-  return status === "finalized" ? "FINALIZED" : "DRAFT";
-}
-
-function fromDbProfileStatus(status) {
-  return status === "FINALIZED" ? "finalized" : "draft";
-}
-
 function toDbProfileSource(source) {
   const normalized = String(source || "").replaceAll("-", "_").toUpperCase();
   return ["DESKTOP_SETUP", "WEB_CONSOLE", "API"].includes(normalized) ? normalized : "WEB_CONSOLE";
@@ -320,11 +305,9 @@ function serializeAssistantProfile(profile) {
     model: profile.model,
     futureFeatures: Array.isArray(profile.futureFeatures) ? profile.futureFeatures : [],
     isDefault: profile.isDefault,
-    status: fromDbProfileStatus(profile.status),
     source: fromDbProfileSource(profile.source),
     createdAt: profile.createdAt.toISOString(),
     updatedAt: profile.updatedAt.toISOString(),
-    completedAt: profile.completedAt ? profile.completedAt.toISOString() : null,
     prompt: profile.prompt || undefined,
     capabilities: profile.capabilities || undefined
   };
@@ -432,9 +415,7 @@ async function ensureDevData() {
         model: profile.model,
         futureFeatures: profile.futureFeatures,
         isDefault: profile.isDefault,
-        status: toDbProfileStatus(profile.status),
-        source: toDbProfileSource(profile.source),
-        completedAt: profile.completedAt ? new Date(profile.completedAt) : null
+        source: toDbProfileSource(profile.source)
       }))
     });
   }
@@ -486,12 +467,6 @@ async function getAdminStats() {
     })
   ]);
 
-  const statusCounts = profiles.reduce((acc, profile) => {
-    const status = fromDbProfileStatus(profile.status);
-    acc[status] = (acc[status] || 0) + 1;
-    return acc;
-  }, {});
-
   return {
     users: {
       total: userCount,
@@ -503,11 +478,9 @@ async function getAdminStats() {
     },
     assistantProfiles: {
       total: profiles.length,
-      finalized: profiles.filter((profile) => profile.status === "FINALIZED").length,
       useCases: toTopList(countMetric(metricEvents, "assistant_use_case_selected")),
       localModes: toTopList(countMetric(metricEvents, "local_mode_selected")),
-      codingCapabilities: toTopList(countMetric(metricEvents, "coding_capability_selected")),
-      statuses: toTopList(statusCounts)
+      codingCapabilities: toTopList(countMetric(metricEvents, "coding_capability_selected"))
     },
     providers: toTopList(countMetric(metricEvents, "provider_selected")),
     models: toTopList(countMetric(metricEvents, "model_selected")),
@@ -522,7 +495,6 @@ async function getAdminStats() {
 
 function normalizeAssistantProfile(payload, userId = DEV_USER_ID) {
   const now = new Date().toISOString();
-  const status = payload.status === "finalized" ? "finalized" : "draft";
   const prompt = normalizePromptPayload(payload.prompt);
   const capabilities = normalizeCapabilitiesPayload(payload.capabilities, prompt.settings);
   return {
@@ -539,11 +511,9 @@ function normalizeAssistantProfile(payload, userId = DEV_USER_ID) {
     model: payload.model || "gemini-2.5-flash",
     futureFeatures: Array.isArray(payload.futureFeatures) ? payload.futureFeatures : [],
     isDefault: Boolean(payload.isDefault),
-    status,
     source: payload.source || "web-console",
     createdAt: payload.createdAt || now,
     updatedAt: now,
-    completedAt: status === "finalized" ? (payload.completedAt || now) : null,
     prompt,
     capabilities
   };
@@ -957,11 +927,9 @@ function toAssistantProfileDbData(profile, userId = profile.userId || DEV_USER_I
     model: profile.model,
     futureFeatures: profile.futureFeatures,
     isDefault: profile.isDefault,
-    status: toDbProfileStatus(profile.status),
     source: toDbProfileSource(profile.source),
     prompt: profile.prompt,
-    capabilities: profile.capabilities,
-    completedAt: profile.completedAt ? new Date(profile.completedAt) : null
+    capabilities: profile.capabilities
   };
 }
 
@@ -1292,41 +1260,6 @@ const server = http.createServer(async (req, res) => {
 
       await recordAssistantProfileSyncEvents(normalizedProfile);
       sendJson(res, existingProfile ? 200 : 201, {
-        profile: serializeAssistantProfile(profile)
-      }, origin);
-      return;
-    }
-
-    const finalizeMatch = url.pathname.match(/^\/assistant-profiles\/([^/]+)\/finalize$/);
-    if (req.method === "POST" && finalizeMatch) {
-      const requestUser = await getRequestUser(req);
-      const existingProfile = await prisma.assistantProfile.findFirst({
-        where: { id: finalizeMatch[1], userId: requestUser.id }
-      });
-      if (!existingProfile) {
-        sendJson(res, 404, { error: "PROFILE_NOT_FOUND" }, origin);
-        return;
-      }
-
-      await prisma.assistantProfile.updateMany({
-        where: { userId: requestUser.id },
-        data: { isDefault: false }
-      });
-      const profile = await prisma.assistantProfile.update({
-        where: { id: existingProfile.id },
-        data: {
-          isDefault: true,
-          status: "FINALIZED",
-          completedAt: new Date()
-        }
-      });
-      await Promise.all([
-        recordUsageEvent("assistant_profile_status", "finalized", requestUser.id),
-        recordUsageEvent("assistant_profile_finalized", profile.id, requestUser.id),
-        recordUsageEvent("provider_selected", fromDbProvider(profile.provider), requestUser.id),
-        recordUsageEvent("model_selected", profile.model, requestUser.id)
-      ]);
-      sendJson(res, 200, {
         profile: serializeAssistantProfile(profile)
       }, origin);
       return;

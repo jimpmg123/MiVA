@@ -3,7 +3,6 @@ const WEB_AUTH_STORAGE_KEY = "miva.web.auth.v1";
 
 export type ProviderId = "ollama" | "openai" | "gemini";
 export type ServiceStatus = "checking" | "connected" | "offline";
-export type AssistantProfileStatus = "draft" | "finalized";
 export type AssistantProfileSource = "desktop-setup" | "web-console" | "api";
 export type AuthRole = "guest" | "user" | "admin";
 export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
@@ -79,11 +78,9 @@ export interface AssistantProfile {
   model: string;
   futureFeatures: string[];
   isDefault: boolean;
-  status: AssistantProfileStatus;
   source: AssistantProfileSource;
   createdAt: string;
   updatedAt: string;
-  completedAt?: string | null;
   prompt?: AssistantPromptConfig;
   capabilities?: {
     coding?: {
@@ -99,12 +96,10 @@ export interface AssistantProfile {
 
 export type AssistantProfileDraft = Omit<
   AssistantProfile,
-  "id" | "status" | "source" | "createdAt" | "updatedAt" | "completedAt"
+  "id" | "source" | "createdAt" | "updatedAt"
 > & {
   id?: string;
-  status?: AssistantProfileStatus;
   source?: AssistantProfileSource;
-  completedAt?: string | null;
 };
 
 export interface AdminTopItem {
@@ -130,11 +125,9 @@ export interface AdminStats {
   };
   assistantProfiles: {
     total: number;
-    finalized: number;
     useCases: AdminTopItem[];
     localModes: AdminTopItem[];
     codingCapabilities?: AdminTopItem[];
-    statuses: AdminTopItem[];
   };
   providers: AdminTopItem[];
   models: AdminTopItem[];
@@ -316,15 +309,6 @@ export async function createAssistantProfile(profile: AssistantProfileDraft) {
 export async function deleteAssistantProfile(profileId: string) {
   return fetchJson<{ ok: boolean; profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(profileId)}`, {
     method: "DELETE",
-  });
-}
-
-export async function finalizeAssistantProfile(profileId: string) {
-  return fetchJson<{ profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles/${profileId}/finalize`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
   });
 }
 

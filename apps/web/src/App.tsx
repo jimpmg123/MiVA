@@ -31,7 +31,6 @@ import {
   createAssistantProfile,
   deleteAssistantProfile,
   fetchJson,
-  finalizeAssistantProfile,
   getAdminStats,
   getApiKeys,
   getAssistantProfiles,
@@ -756,19 +755,15 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
 const MyAssistantsPage = ({
   cloud,
   creatingProfile,
-  finalizingProfileId,
   deletingProfileId,
   onCreateProfile,
-  onFinalizeProfile,
   onDeleteProfile,
   onRefreshCloud,
 }: {
   cloud: CloudState;
   creatingProfile: boolean;
-  finalizingProfileId: string | null;
   deletingProfileId: string | null;
   onCreateProfile: (profile: AssistantProfileDraft) => Promise<void>;
-  onFinalizeProfile: (profileId: string) => Promise<void>;
   onDeleteProfile: (profileId: string) => Promise<void>;
   onRefreshCloud: () => Promise<void>;
 }) => {
@@ -846,7 +841,6 @@ const MyAssistantsPage = ({
     model: 'gemini-2.5-flash',
     futureFeatures: ['voice', 'googleWorkspace'],
     isDefault: profiles.length === 0,
-    status: 'draft',
     source: 'web-console',
   });
 
@@ -901,7 +895,7 @@ const MyAssistantsPage = ({
                                 </div>
                                 <div>
                                     <h4 className="font-bold text-slate-900">{profile.name}</h4>
-                                    <p className="text-xs text-slate-400">{profile.useCase} / {profile.localMode} / {profile.status || 'draft'}</p>
+                                    <p className="text-xs text-slate-400">{profile.useCase} / {profile.localMode}</p>
                                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
                                       {sourceLabel(profile.source)} / {codingCapabilityLabel(profileCoding.capability)}
                                     </p>
@@ -927,7 +921,6 @@ const MyAssistantsPage = ({
                             <div className="flex items-center gap-3 mb-2">
                                 <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Assistant Selected'}</h3>
                                 <Badge>{activeProfile?.isDefault ? 'Default' : 'Saved'}</Badge>
-                                <Badge variant={activeProfile?.status === 'finalized' ? 'success' : 'warning'}>{activeProfile?.status || 'draft'}</Badge>
                                 <Badge variant={activeProfile?.source === 'desktop-setup' ? 'success' : 'info'}>
                                   {sourceLabel(activeProfile?.source)}
                                 </Badge>
@@ -939,14 +932,6 @@ const MyAssistantsPage = ({
                         </div>
                         <div className="flex gap-2">
                               <button className="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl font-bold text-sm">Duplicate</button>
-                              <button
-                                disabled={!activeProfile || activeProfile.status === 'finalized' || finalizingProfileId === activeProfile.id}
-                                onClick={() => activeProfile && void onFinalizeProfile(activeProfile.id)}
-                                className="bg-primary-container text-white px-8 py-2.5 rounded-xl font-bold text-sm shadow-xl shadow-primary-container/20 disabled:opacity-50 disabled:shadow-none"
-                                type="button"
-                              >
-                                {finalizingProfileId === activeProfile?.id ? 'Finalizing...' : activeProfile?.status === 'finalized' ? 'Finalized' : 'Finalize Assistant'}
-                              </button>
                         </div>
                     </div>
                 </div>
@@ -1052,7 +1037,6 @@ const MyAssistantsPage = ({
                 <div className="p-8 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
                     <span>
                       Last modified {activeProfile ? formatRelativeTime(new Date(activeProfile.updatedAt)) : 'Not saved yet'}
-                      {activeProfile?.completedAt ? ` / finalized ${formatRelativeTime(new Date(activeProfile.completedAt))}` : ''}
                     </span>
                     <button
                       className="inline-flex items-center gap-2 font-bold text-red-500 transition hover:text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
@@ -1968,7 +1952,7 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
   const metricCards = [
     { label: 'Users', value: stats?.users.total ?? 0, detail: `${stats?.users.active ?? 0} active` },
     { label: 'Devices', value: stats?.devices.total ?? 0, detail: `${stats?.devices.connected ?? 0} connected` },
-    { label: 'My Assistants', value: stats?.assistantProfiles.total ?? cloud.profiles.length, detail: `${stats?.assistantProfiles.finalized ?? 0} finalized` },
+    { label: 'My Assistants', value: stats?.assistantProfiles.total ?? cloud.profiles.length, detail: 'Synced profiles' },
     { label: 'Cloud API', value: cloud.status === 'connected' ? 'Online' : 'Offline', detail: formatRelativeTime(cloud.lastChecked) },
   ];
 
@@ -1978,7 +1962,6 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
     { title: 'Assistant Roles', items: stats?.assistantProfiles.useCases || [] },
     { title: 'Local Modes', items: stats?.assistantProfiles.localModes || [] },
     { title: 'Coding Capabilities', items: stats?.assistantProfiles.codingCapabilities || [] },
-    { title: 'Profile Status', items: stats?.assistantProfiles.statuses || [] },
   ];
 
   return (
@@ -2084,16 +2067,17 @@ export default function App() {
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [creatingProfile, setCreatingProfile] = useState(false);
-  const [finalizingProfileId, setFinalizingProfileId] = useState<string | null>(null);
   const [deletingProfileId, setDeletingProfileId] = useState<string | null>(null);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
   const visibleNavItems = useMemo(
-    () => NAV_ITEMS.filter((item) => item.id !== 'admin' || auth.role === 'admin'),
+    () => auth.role === 'admin'
+      ? NAV_ITEMS.filter((item) => item.id === 'admin')
+      : NAV_ITEMS.filter((item) => item.id !== 'admin'),
     [auth.role]
   );
 
-  const refreshCloud = async () => {
+  const refreshCloud = async (roleOverride: AuthRole = auth.role) => {
     const next: CloudState = {
       ...initialCloudState,
       lastChecked: new Date(),
@@ -2102,6 +2086,12 @@ export default function App() {
     try {
       await checkCloudApi();
       next.status = 'connected';
+
+      if (roleOverride === 'admin') {
+        next.adminStats = await getAdminStats();
+        setCloud(next);
+        return;
+      }
 
       const [profilesResponse, adminStats, apiKeysResponse, usageSummary] = await Promise.all([
         getAssistantProfiles(),
@@ -2142,8 +2132,8 @@ export default function App() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      setActivePage('dashboard');
-      await refreshCloud();
+      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Sign in failed.');
     } finally {
@@ -2171,8 +2161,8 @@ export default function App() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      setActivePage('dashboard');
-      await refreshCloud();
+      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Google sign-in failed.');
     } finally {
@@ -2200,10 +2190,8 @@ export default function App() {
       };
       window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
       setAuth(nextAuth);
-      if (response.user.role !== 'admin' && activePage === 'admin') {
-        setActivePage('dashboard');
-      }
-      await refreshCloud();
+      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Could not switch development account.');
     }
@@ -2217,17 +2205,6 @@ export default function App() {
       setActivePage('profiles');
     } finally {
       setCreatingProfile(false);
-    }
-  };
-
-  const finalizeCloudProfile = async (profileId: string) => {
-    setFinalizingProfileId(profileId);
-    try {
-      await finalizeAssistantProfile(profileId);
-      await refreshCloud();
-      setActivePage('profiles');
-    } finally {
-      setFinalizingProfileId(null);
     }
   };
 
@@ -2413,6 +2390,11 @@ export default function App() {
   }, [auth.token, desktopLoginCompleted, desktopLoginRequest]);
 
   useEffect(() => {
+    if (auth.role === 'admin' && activePage !== 'admin') {
+      setActivePage('admin');
+      return;
+    }
+
     if (auth.role !== 'admin' && activePage === 'admin') {
       setActivePage('dashboard');
     }
@@ -2452,6 +2434,10 @@ export default function App() {
   }, [connection.desktop, connection.helper, cloud.status]);
 
   const renderPage = () => {
+    if (auth.role === 'admin') {
+      return <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} />;
+    }
+
     switch (activePage) {
       case 'dashboard': return <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'devices': return <DevicesPage connection={connection} actions={actions} />;
@@ -2460,10 +2446,8 @@ export default function App() {
         <MyAssistantsPage
           cloud={cloud}
           creatingProfile={creatingProfile}
-          finalizingProfileId={finalizingProfileId}
           deletingProfileId={deletingProfileId}
           onCreateProfile={createCloudProfile}
-          onFinalizeProfile={finalizeCloudProfile}
           onDeleteProfile={deleteCloudProfile}
           onRefreshCloud={refreshCloud}
         />

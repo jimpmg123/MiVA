@@ -74,7 +74,6 @@ export function StudioOverviewPanel({
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            ["Status", profile.status],
             ["Provider", providerLabel],
             ["Model", profile.modelLabel || profile.model],
             ["Coding", codingLabel],

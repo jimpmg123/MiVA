@@ -20,6 +20,7 @@ type RecommendationStepProps = {
   selectedCloudModel: string;
   selectedModel: string;
   selectedProvider: ProviderId;
+  signedIn: boolean;
   survey: SurveyState;
   t: Record<string, string>;
   goToPreviousStep: () => void;
@@ -45,6 +46,7 @@ export function RecommendationStep({
   selectedCloudModel,
   selectedModel,
   selectedProvider,
+  signedIn,
   survey,
   t,
   goToPreviousStep,
@@ -86,6 +88,9 @@ export function RecommendationStep({
 
   function selectRecommendedModel() {
     if (topIsCloud) {
+      if (!signedIn) {
+        return;
+      }
       setSelectedProvider(recommendedCloudModelInfo.provider);
       setSelectedCloudModel(recommendedCloudModelInfo.id);
       return;
@@ -122,6 +127,11 @@ export function RecommendationStep({
             </div>
             <h3 className="mt-4 font-heading text-3xl font-bold text-[#191c1d]">{topLabel}</h3>
             <p className="mt-3 max-w-[640px] text-sm leading-6 text-[#42474d]">{topSummary}</p>
+            {topIsCloud && !signedIn && (
+              <p className="mt-3 text-sm font-semibold text-[#ba1a1a]">
+                Sign in is required to use cloud models.
+              </p>
+            )}
             <div className="mt-5 flex flex-wrap gap-2">
               <Badge>{topBestFor}</Badge>
               <Badge>{t.totalRam}: {formatGb(hardware?.totalMemoryGb)}</Badge>
@@ -130,7 +140,7 @@ export function RecommendationStep({
               </Badge>
             </div>
           </div>
-          <PrimaryButton onClick={selectRecommendedModel}>{t.selectThis}</PrimaryButton>
+          <PrimaryButton disabled={topIsCloud && !signedIn} onClick={selectRecommendedModel}>{t.selectThis}</PrimaryButton>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -213,6 +223,11 @@ export function RecommendationStep({
           <div>
             <h3 className="font-heading text-lg font-bold text-[#191c1d]">{providerText.cloudModels}</h3>
             <p className="mt-1 text-sm text-[#72787e]">{providerText.cloudDataNotice}</p>
+            {!signedIn && (
+              <p className="mt-2 text-sm font-semibold text-[#ba1a1a]">
+                Sign in is required to use cloud models.
+              </p>
+            )}
           </div>
           <Badge tone="action">OpenAI / Gemini</Badge>
         </div>
@@ -221,7 +236,7 @@ export function RecommendationStep({
           <div className="grid min-w-max auto-cols-[260px] grid-flow-col gap-4 pr-1">
             {cloudModelCatalog.map((model) => {
               const active = selectedProvider === model.provider && selectedCloudModel === model.id;
-              const selectable = model.id !== "custom-cloud";
+              const selectable = model.id !== "custom-cloud" && signedIn;
 
               return (
                 <button
@@ -230,11 +245,16 @@ export function RecommendationStep({
                       ? "border-[#35607f] ring-4 ring-[#cae6ff]"
                       : selectable
                         ? "border-[#c2c7ce]/70 hover:border-[#35607f] hover:shadow-md"
-                        : "cursor-not-allowed border-[#e1e3e4] opacity-70"
+                        : signedIn
+                          ? "cursor-not-allowed border-[#e1e3e4] opacity-70"
+                          : "cursor-not-allowed border-[#ffb4ab] opacity-70"
                   }`}
                   disabled={!selectable}
                   key={model.id}
                   onClick={() => {
+                    if (!selectable) {
+                      return;
+                    }
                     setSelectedProvider(model.provider);
                     setSelectedCloudModel(model.id);
                   }}
@@ -245,13 +265,14 @@ export function RecommendationStep({
                       <span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>
                     </span>
                     {active && <Badge tone="action">{providerText.selected}</Badge>}
-                    {!selectable && <Badge>{providerText.comingSoon}</Badge>}
+                    {!selectable && <Badge>{signedIn ? providerText.comingSoon : "Sign in required"}</Badge>}
                   </div>
                   <p className="mt-4 font-heading text-lg font-bold text-[#191c1d]">{model.label}</p>
                   <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">
                     {providerMeta[model.provider].label} / {model.category}
                   </p>
                   <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#42474d]">{model.bestFor[activeLocale]}</p>
+                  {!signedIn && <p className="mt-3 text-xs font-semibold text-[#ba1a1a]">Sign in required</p>}
                 </button>
               );
             })}

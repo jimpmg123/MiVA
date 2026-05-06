@@ -70,6 +70,7 @@ type StudioPageProps = {
   selectedCloudModel: string;
   selectedModel: string;
   selectedProvider: ProviderId;
+  signedIn: boolean;
   status: any;
   studioSection: StudioSection;
   studioSections: Array<{ id: StudioSection; label: string; detail: string; icon: string }>;
@@ -77,11 +78,11 @@ type StudioPageProps = {
   syncAssistantProfileToCloud: (profile: LocalAssistantProfile) => Promise<void>;
   deleteLocalAssistantProfile: (profileId: string) => Promise<void>;
   applyLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
-  addCurrentLocalAssistantProfile: (status: LocalAssistantProfile["status"]) => Promise<unknown>;
-  buildCurrentLocalAssistantProfile: (status: LocalAssistantProfile["status"]) => LocalAssistantProfile;
+  addCurrentLocalAssistantProfile: () => Promise<unknown>;
+  buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
   downloadModel: (modelName: string) => Promise<void>;
   enterAiModelSettings: () => void;
-  saveCurrentLocalAssistantProfile: (status: LocalAssistantProfile["status"]) => Promise<unknown>;
+  saveCurrentLocalAssistantProfile: () => Promise<unknown>;
   setActiveLocalProfileId: (id: string) => void;
   setAppMode: (mode: AppMode) => void;
   setPromptEditorMode: (mode: PromptEditorMode) => void;
@@ -118,6 +119,7 @@ export function StudioPage({
   selectedCloudModel,
   selectedModel,
   selectedProvider,
+  signedIn,
   status,
   studioSection,
   studioSections,
@@ -148,7 +150,7 @@ export function StudioPage({
 }: StudioPageProps) {
     const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
     const isAssistantEditorSection = studioSection !== "myAssistants";
-    const currentEditorProfile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+    const currentEditorProfile = buildCurrentLocalAssistantProfile();
     const saveActionLabel = activeLocalProfile ? "Save changes" : "Add assistant";
     const normalizedEditorName = currentEditorProfile.name.trim().toLocaleLowerCase();
     const duplicateNameMessage = normalizedEditorName && assistantProfileStore.profiles.some((profile) => (
@@ -162,15 +164,14 @@ export function StudioPage({
       }
 
       if (activeLocalProfile) {
-        void saveCurrentLocalAssistantProfile(currentEditorProfile.status).catch(() => undefined);
+        void saveCurrentLocalAssistantProfile().catch(() => undefined);
       } else {
-        void addCurrentLocalAssistantProfile(currentEditorProfile.status).catch(() => undefined);
+        void addCurrentLocalAssistantProfile().catch(() => undefined);
       }
     };
 
     const renderMyAssistants = () => {
-      const currentDraft = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
-      const profiles = assistantProfileStore.profiles.length ? assistantProfileStore.profiles : [currentDraft];
+      const profiles = assistantProfileStore.profiles;
 
       return (
         <MyAssistantsPanel
@@ -216,7 +217,7 @@ export function StudioPage({
     };
 
     const renderStudioOverview = () => {
-      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const profile = buildCurrentLocalAssistantProfile();
       const localChangesPending = Boolean(
         activeLocalProfile &&
         (
@@ -272,7 +273,7 @@ export function StudioPage({
     };
 
     const renderPromptStudio = () => {
-      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const profile = buildCurrentLocalAssistantProfile();
 
       return (
         <PromptStudioPanel
@@ -285,13 +286,13 @@ export function StudioPage({
           onPromptEditorModeChange={setPromptEditorMode}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
           onResetDefaults={() => setPromptSettingsDraft(defaultPromptSettings)}
-          onSaveLocal={() => void saveCurrentLocalAssistantProfile(profile.status)}
+          onSaveLocal={() => void (activeLocalProfile ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile())}
           onToolsForAiOpenChange={setToolsForAiOpen}
         />
       );
     };
     const renderStudioTools = () => {
-      const profile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
+      const profile = buildCurrentLocalAssistantProfile();
 
       return (
         <StudioToolsPanel
@@ -304,7 +305,7 @@ export function StudioPage({
           selectedProvider={selectedProvider}
           onEnterAiModelSettings={enterAiModelSettings}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
-          onSaveLocal={() => void saveCurrentLocalAssistantProfile(profile.status)}
+          onSaveLocal={() => void (activeLocalProfile ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile())}
           onSelectGeminiFlash={() => {
             setSelectedProvider("gemini");
             setSelectedCloudModel("gemini-2.5-flash");
@@ -326,11 +327,15 @@ export function StudioPage({
         selectedCloudModel={selectedCloudModel}
         selectedModel={selectedModel}
         selectedProvider={selectedProvider}
+        signedIn={signedIn}
         status={status}
         t={t}
         tauriRuntime={tauriRuntime}
         onDownloadModel={(modelName) => void downloadModel(modelName)}
         onSelectCloudModel={(provider, modelId) => {
+          if (!signedIn) {
+            return;
+          }
           setSelectedProvider(provider);
           setSelectedCloudModel(modelId);
         }}

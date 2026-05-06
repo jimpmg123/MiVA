@@ -16,6 +16,7 @@ type ModelsPanelProps = {
   selectedCloudModel: string;
   selectedModel: string;
   selectedProvider: ProviderId;
+  signedIn: boolean;
   status: OllamaStatus | null;
   t: Record<string, string>;
   tauriRuntime: boolean;
@@ -35,6 +36,7 @@ export function ModelsPanel({
   selectedCloudModel,
   selectedModel,
   selectedProvider,
+  signedIn,
   status,
   t,
   tauriRuntime,
@@ -146,17 +148,25 @@ export function ModelsPanel({
             <p className="mt-2 text-sm leading-6 text-[#42474d]">
               Cloud models do not need downloads. API key management remains in Settings &gt; AI models.
             </p>
+            {!signedIn && (
+              <p className="mt-2 text-sm font-semibold text-[#ba1a1a]">
+                Sign in is required to use cloud models.
+              </p>
+            )}
           </div>
           <Badge tone="action">OpenAI / Gemini</Badge>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           {visibleCloudModels.map((model) => (
             <button
-              className={`rounded-2xl border bg-white p-4 text-left transition ${
+              className={`rounded-2xl border bg-white p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 selectedProvider === model.provider && selectedCloudModel === model.id
                   ? "border-[#35607f] ring-4 ring-[#cae6ff]"
-                  : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                  : signedIn
+                    ? "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                    : "border-[#ffb4ab]"
               }`}
+              disabled={!signedIn}
               key={model.id}
               onClick={() => onSelectCloudModel(model.provider, model.id)}
               type="button"
@@ -168,6 +178,7 @@ export function ModelsPanel({
               <p className="mt-2 text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">
                 {providerMeta[model.provider].label}
               </p>
+              {!signedIn && <p className="mt-3 text-xs font-semibold text-[#ba1a1a]">Sign in required</p>}
             </button>
           ))}
         </div>

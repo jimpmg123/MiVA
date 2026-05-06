@@ -4,6 +4,8 @@ import { getDeviceAuthStatus, startDeviceAuth } from "../cloud/client";
 import { clearAuthSessionStorage, loadAuthSession, saveAuthSessionToStorage } from "./storage";
 import type { AuthFlowState, AuthSession, DeviceAuthStart } from "../../types";
 
+const WEB_CONSOLE_URL = import.meta.env.VITE_WEB_CONSOLE_URL ?? "http://127.0.0.1:5173";
+
 type UseAuthFlowOptions = {
   tauriRuntime: boolean;
   onLog: (message: string) => void;
@@ -11,18 +13,37 @@ type UseAuthFlowOptions = {
   onContinueLocalOnly: () => void;
 };
 
+function loadDesktopAuthSession() {
+  const session = loadAuthSession();
+  if (session?.user.role === "admin") {
+    clearAuthSessionStorage();
+    return null;
+  }
+  return session;
+}
+
 export function useAuthFlow({
   tauriRuntime,
   onLog,
   onClearCloudDevice,
   onContinueLocalOnly,
 }: UseAuthFlowOptions) {
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadDesktopAuthSession());
   const [authFlowState, setAuthFlowState] = useState<AuthFlowState>("idle");
   const [authFlowError, setAuthFlowError] = useState<string | null>(null);
   const [deviceAuthRequest, setDeviceAuthRequest] = useState<DeviceAuthStart | null>(null);
 
   function saveAuthSession(session: AuthSession) {
+    if (session.user.role === "admin") {
+      clearAuthSessionStorage();
+      setAuthSession(null);
+      setDeviceAuthRequest(null);
+      setAuthFlowState("admin-web-only");
+      setAuthFlowError(null);
+      onLog(`Desktop admin session rejected for ${session.user.email}.`);
+      return;
+    }
+
     saveAuthSessionToStorage(session);
     setAuthSession(session);
   }
@@ -70,6 +91,19 @@ export function useAuthFlow({
       setAuthFlowState("error");
       setAuthFlowError(message);
       onLog(message);
+    }
+  }
+
+  async function openWebConsole() {
+    try {
+      if (tauriRuntime) {
+        await openUrl(WEB_CONSOLE_URL);
+      } else {
+        window.open(WEB_CONSOLE_URL, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      setAuthFlowError(`Could not open web console. Open this URL manually: ${WEB_CONSOLE_URL}`);
+      onLog(`Web console open failed: ${String(error)}`);
     }
   }
 
@@ -127,6 +161,7 @@ export function useAuthFlow({
     deviceAuthRequest,
     clearAuthSession,
     continueLocalOnly,
+    openWebConsole,
     startBrowserSignIn,
   };
 }

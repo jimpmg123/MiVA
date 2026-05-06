@@ -6,7 +6,6 @@ import type {
   AppMode,
   HardwareInfo,
   LocalAssistantProfile,
-  LocalAssistantProfileStatus,
   ProfileDetailsDraft,
   PromptSettings,
   ProviderId,
@@ -16,7 +15,6 @@ import type {
 } from "../../types";
 
 export function buildLocalAssistantProfile(input: {
-  status: LocalAssistantProfileStatus;
   forceNew?: boolean;
   profileId?: string;
   activeLocalProfileId: string;
@@ -68,11 +66,9 @@ export function buildLocalAssistantProfile(input: {
     id: profileId,
     name: input.profileDetailsDraft.name.trim() || existing?.name || defaultProfileDetails.name,
     description: input.profileDetailsDraft.description.trim() || existing?.description || defaultProfileDetails.description,
-    status: input.status,
     source: input.appMode === "runtime" ? "runtime" : "desktop-setup",
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    completedAt: input.status === "finalized" ? existing?.completedAt ?? now : null,
     locale: input.locale,
     ...profileBase,
     providerMode: input.activeProviderMode,
