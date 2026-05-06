@@ -27,40 +27,22 @@ import {
   runChatOnce,
 } from "./features/models/ollamaRuntime";
 import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
-import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, saveLocalAssistantProfileStore } from "./features/assistants/storage";
 import { clearProviderKeysStorage, emptyProviderKeys, loadProviderKeys, saveProviderKeysToStorage } from "./features/auth/storage";
 import { loadRuntimeChatMessages, saveRuntimeChatMessages } from "./features/chat/storage";
-import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
-import { buildLocalAssistantProfile } from "./features/assistants/profileFactory";
-import {
-  addAssistantProfileStore,
-  removeAssistantProfileStore,
-  replaceSyncedAssistantProfileStore,
-  upsertAssistantProfileStore,
-} from "./features/assistants/storeOperations";
+import { defaultProfileDetails, defaultPromptSettings } from "./features/assistants/profile";
 import {
   recordLocalUsageEvent,
   registerDesktopDevice,
-  upsertCloudAssistantProfile,
 } from "./features/cloud/client";
 import { useAuthFlow } from "./features/auth/useAuthFlow";
-import {
-  createLocalProfileId,
-  getAssistantProfileFingerprint,
-  getCurrentNewAssistantDraftFingerprint as getNewAssistantDraftFingerprint,
-  getNewAssistantDraftBaseline as getDefaultNewAssistantDraftFingerprint,
-  hasDuplicateAssistantProfileName,
-} from "./features/assistants/profileIdentity";
+import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
-  AssistantProfileSyncState,
   ChatMessage,
   ChatMetrics,
   CloudDeviceRecord,
   LocalAssistantProfile,
-  LocalAssistantProfileStatus,
-  LocalAssistantProfileStore,
   ProfileDetailsDraft,
   PromptEditorMode,
   PromptSettings,
@@ -73,8 +55,6 @@ import type {
 } from "./types";
 
 
-const DEFAULT_LOCAL_PROFILE_ID = "local_default";
-const NEW_LOCAL_PROFILE_DRAFT_ID = "local_new_draft";
 const ACTIVE_LOCALE: Locale = "en";
 function App() {
   const [appMode, setAppMode] = useState<AppMode>("setup");
@@ -120,20 +100,11 @@ function App() {
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
   const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
-  const [assistantProfileStore, setAssistantProfileStore] = useState<LocalAssistantProfileStore>(emptyAssistantProfileStore);
-  const [activeLocalProfileId, setActiveLocalProfileId] = useState(DEFAULT_LOCAL_PROFILE_ID);
-  const [assistantProfileLoaded, setAssistantProfileLoaded] = useState(false);
-  const [assistantProfileSaveState, setAssistantProfileSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [assistantProfileError, setAssistantProfileError] = useState<string | null>(null);
-  const [assistantProfileSyncState, setAssistantProfileSyncState] = useState<AssistantProfileSyncState>("idle");
-  const [assistantProfileSyncMessage, setAssistantProfileSyncMessage] = useState<string | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [tauriRuntime] = useState(isTauriRuntime);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
-  const assistantProfileHydratedRef = useRef(false);
-  const newAssistantDraftBaselineRef = useRef<string | null>(null);
 
   const log = useCallback((message: string) => {
     setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
@@ -203,18 +174,55 @@ function App() {
     onContinueLocalOnly: closeAuth,
   });
   const signedIn = Boolean(authSession);
-  const visibleAssistantProfiles = assistantProfileStore.profiles.filter((profile) => signedIn || profile.provider === "ollama");
-  const visibleAssistantProfileStore = {
-    ...assistantProfileStore,
-    profiles: visibleAssistantProfiles,
-  };
-  const savedActiveLocalProfile = assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId) ?? null;
-  const activeLocalProfile = activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID
-    ? null
-    : savedActiveLocalProfile && visibleAssistantProfiles.some((profile) => profile.id === savedActiveLocalProfile.id)
-      ? savedActiveLocalProfile
-      : visibleAssistantProfiles[0] ?? null;
-  const promptProfileId = activeLocalProfile?.id ?? (signedIn ? activeLocalProfileId : DEFAULT_LOCAL_PROFILE_ID);
+  const {
+    assistantProfileStore,
+    visibleAssistantProfileStore,
+    activeLocalProfileId,
+    activeLocalProfile,
+    promptProfileId,
+    assistantProfileLoaded,
+    assistantProfileSaveState,
+    assistantProfileError,
+    assistantProfileSyncState,
+    assistantProfileSyncMessage,
+    setActiveLocalProfileId,
+    buildCurrentLocalAssistantProfile,
+    applyLocalAssistantProfile,
+    saveCurrentLocalAssistantProfile,
+    addCurrentLocalAssistantProfile,
+    deleteLocalAssistantProfile,
+    syncAllAssistantProfilesToCloud,
+    syncAssistantProfileToCloud,
+    finalizeCurrentLocalAssistantProfile,
+    confirmDiscardStudioChanges,
+    startNewAssistantDraft,
+    saveStudioDraft,
+  } = useAssistantProfiles({
+    appMode,
+    activeStep,
+    studioSection,
+    activeLocale: ACTIVE_LOCALE,
+    authSession,
+    activeProviderMode,
+    activeModelLabel,
+    profileDetailsDraft,
+    promptSettingsDraft,
+    selectedProvider,
+    selectedModel,
+    selectedCloudModel,
+    recommendedModel,
+    recommendedCloudModel,
+    survey,
+    hardware,
+    setProfileDetailsDraft,
+    setPromptSettingsDraft,
+    setSurvey,
+    setSelectedProvider,
+    setSelectedModel,
+    setSelectedCloudModel,
+    setStudioSection,
+    onLog: log,
+  });
   const chatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
   const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(chatIntroKey);
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
@@ -235,7 +243,7 @@ function App() {
   const currentAssistantConversations = [currentRuntimeConversation];
   const runtimeAssistantProfiles = (() => {
     const profiles = new Map<string, LocalAssistantProfile>();
-    visibleAssistantProfiles.forEach((profile) => profiles.set(profile.id, profile));
+    visibleAssistantProfileStore.profiles.forEach((profile) => profiles.set(profile.id, profile));
     if (!profiles.has(promptProfileId)) {
       const currentDraft = activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft");
       if (signedIn || currentDraft.provider === "ollama") {
@@ -333,368 +341,6 @@ function App() {
       cloudDeviceId: cloudDevice?.id ?? null,
       ...event,
     });
-  }
-
-  function buildCurrentLocalAssistantProfile(
-    status: LocalAssistantProfileStatus,
-    options?: { forceNew?: boolean; profileId?: string },
-  ): LocalAssistantProfile {
-    return buildLocalAssistantProfile({
-      status,
-      forceNew: options?.forceNew,
-      profileId: options?.profileId,
-      activeLocalProfileId,
-      appMode,
-      activeStep,
-      locale: ACTIVE_LOCALE,
-      activeProviderMode,
-      activeModelLabel,
-      assistantProfiles: assistantProfileStore.profiles,
-      profileDetailsDraft,
-      promptSettingsDraft,
-      selectedProvider,
-      selectedModel,
-      selectedCloudModel,
-      recommendedModel,
-      recommendedCloudModel,
-      survey,
-      hardware,
-    });
-  }
-
-  function findDuplicateAssistantProfileName(profile: LocalAssistantProfile) {
-    return hasDuplicateAssistantProfileName(profile, assistantProfileStore.profiles);
-  }
-
-  function getNewAssistantDraftBaseline() {
-    return getDefaultNewAssistantDraftFingerprint({
-      selectedProvider,
-      selectedModel,
-      selectedCloudModel,
-    });
-  }
-
-  function getCurrentNewAssistantDraftFingerprint() {
-    return getNewAssistantDraftFingerprint({
-      profileDetailsDraft,
-      promptSettingsDraft,
-      selectedProvider,
-      selectedModel,
-      selectedCloudModel,
-    });
-  }
-
-  function hasUnsavedStudioDraftChanges() {
-    if (appMode !== "studio" || studioSection === "myAssistants") {
-      return false;
-    }
-
-    if (activeLocalProfile) {
-      const currentProfile = buildCurrentLocalAssistantProfile(activeLocalProfile.status);
-      return getAssistantProfileFingerprint(activeLocalProfile) !== getAssistantProfileFingerprint(currentProfile);
-    }
-
-    if (activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID) {
-      return (newAssistantDraftBaselineRef.current ?? getNewAssistantDraftBaseline()) !== getCurrentNewAssistantDraftFingerprint();
-    }
-
-    return false;
-  }
-
-  function confirmDiscardStudioChanges() {
-    if (!hasUnsavedStudioDraftChanges()) {
-      return true;
-    }
-
-    return window.confirm("You have unsaved changes. Leave without saving?");
-  }
-
-  function clearAssistantProfileSyncStatus() {
-    setAssistantProfileSyncState("idle");
-    setAssistantProfileSyncMessage(null);
-  }
-
-  async function saveCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus) {
-    clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile(status);
-    if (findDuplicateAssistantProfileName(profile)) {
-      const message = "An assistant with this name already exists.";
-      setAssistantProfileError(message);
-      setAssistantProfileSaveState("error");
-      log(`Assistant profile save blocked: ${message}`);
-      throw new Error(message);
-    }
-
-    const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
-
-    setAssistantProfileSaveState("saving");
-    setAssistantProfileError(null);
-    setAssistantProfileStore(nextStore);
-    setActiveLocalProfileId(profile.id);
-
-    try {
-      const savedStore = await saveLocalAssistantProfileStore(nextStore);
-      setAssistantProfileStore(savedStore);
-      setAssistantProfileSaveState("saved");
-      newAssistantDraftBaselineRef.current = null;
-      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
-      return profile;
-    } catch (error) {
-      const message = String(error);
-      setAssistantProfileError(message);
-      setAssistantProfileSaveState("error");
-      log(`Assistant profile save failed: ${message}`);
-      throw error;
-    }
-  }
-
-  async function addCurrentLocalAssistantProfile(status: LocalAssistantProfileStatus) {
-    clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile(status, {
-      forceNew: true,
-      profileId: createLocalProfileId(),
-    });
-    if (findDuplicateAssistantProfileName(profile)) {
-      const message = "An assistant with this name already exists.";
-      setAssistantProfileError(message);
-      setAssistantProfileSaveState("error");
-      log(`Assistant profile add blocked: ${message}`);
-      throw new Error(message);
-    }
-
-    const nextStore = addAssistantProfileStore(assistantProfileStore, profile);
-
-    setAssistantProfileSaveState("saving");
-    setAssistantProfileError(null);
-    setAssistantProfileStore(nextStore);
-    setActiveLocalProfileId(profile.id);
-
-    try {
-      const savedStore = await saveLocalAssistantProfileStore(nextStore);
-      setAssistantProfileStore(savedStore);
-      setAssistantProfileSaveState("saved");
-      newAssistantDraftBaselineRef.current = null;
-      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
-      log(`Added assistant profile: ${profile.name}.`);
-      return profile;
-    } catch (error) {
-      const message = String(error);
-      setAssistantProfileError(message);
-      setAssistantProfileSaveState("error");
-      log(`Assistant profile add failed: ${message}`);
-      throw error;
-    }
-  }
-
-  async function persistLocalAssistantProfile(profile: LocalAssistantProfile) {
-    const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
-
-    setAssistantProfileStore(nextStore);
-    setActiveLocalProfileId(profile.id);
-    const savedStore = await saveLocalAssistantProfileStore(nextStore);
-    setAssistantProfileStore(savedStore);
-    return savedStore;
-  }
-
-  async function deleteLocalAssistantProfile(profileId: string) {
-    const profile = assistantProfileStore.profiles.find((item) => item.id === profileId);
-    if (!profile) {
-      return;
-    }
-
-    if (!window.confirm(`Delete "${profile.name}" from this computer?`)) {
-      return;
-    }
-
-    const { nextStore, nextActiveProfile } = removeAssistantProfileStore(assistantProfileStore, profileId);
-
-    setAssistantProfileSaveState("saving");
-    setAssistantProfileError(null);
-    setAssistantProfileStore(nextStore);
-
-    if (nextActiveProfile) {
-      setActiveLocalProfileId(nextActiveProfile.id);
-      applyLocalAssistantProfile(nextActiveProfile);
-    } else {
-      setActiveLocalProfileId(DEFAULT_LOCAL_PROFILE_ID);
-      setProfileDetailsDraft(defaultProfileDetails);
-      setPromptSettingsDraft(defaultPromptSettings);
-      setSurvey({
-        useCase: null,
-        answerStyle: null,
-        priority: null,
-        languageUse: null,
-        localMode: null,
-        futureFeatures: [],
-        memorySyncMode: "profileOnly",
-      });
-      setSelectedProvider("ollama");
-      setSelectedModel("qwen3:4b");
-      setSelectedCloudModel("gemini-2.5-flash");
-    }
-
-    try {
-      const savedStore = await saveLocalAssistantProfileStore(nextStore);
-      setAssistantProfileStore(savedStore);
-      setAssistantProfileSaveState("saved");
-      log(`Deleted assistant profile: ${profile.name}.`);
-      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
-    } catch (error) {
-      const message = String(error);
-      setAssistantProfileError(message);
-      setAssistantProfileSaveState("error");
-      log(`Assistant profile delete failed: ${message}`);
-    }
-  }
-
-  async function sendProfileToCloud(profile: LocalAssistantProfile) {
-    return upsertCloudAssistantProfile({ authSession, profile });
-  }
-
-  async function syncLocalAssistantProfileToCloud(profile: LocalAssistantProfile) {
-    const response = await sendProfileToCloud(profile);
-    const cloudProfileId = response.profile?.id ?? profile.sync.cloudProfileId ?? profile.id;
-    const syncedAt = new Date().toISOString();
-    return {
-      ...profile,
-      updatedAt: syncedAt,
-      sync: {
-        cloudEnabled: true,
-        cloudProfileId,
-        lastSyncedAt: syncedAt,
-      },
-    } satisfies LocalAssistantProfile;
-  }
-
-  async function syncAllAssistantProfilesToCloud() {
-    if (!authSession) {
-      setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage("Sign in before syncing assistant profiles.");
-      return;
-    }
-
-    setAssistantProfileSyncState("syncing");
-    setAssistantProfileSyncMessage("Saving current assistant before syncing all profiles...");
-
-    try {
-      const currentProfile = await saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
-      const profileMap = new Map<string, LocalAssistantProfile>();
-      assistantProfileStore.profiles.forEach((profile) => profileMap.set(profile.id, profile));
-      profileMap.set(currentProfile.id, currentProfile);
-      const profiles = [...profileMap.values()];
-
-      setAssistantProfileSyncMessage(`Syncing ${profiles.length} assistant profile${profiles.length === 1 ? "" : "s"}...`);
-      const syncedProfiles: LocalAssistantProfile[] = [];
-      for (const profile of profiles) {
-        syncedProfiles.push(await syncLocalAssistantProfileToCloud(profile));
-      }
-
-      const activeProfileId = syncedProfiles.some((profile) => profile.id === activeLocalProfileId)
-        ? activeLocalProfileId
-        : syncedProfiles[0]?.id ?? null;
-      const syncedAt = new Date().toISOString();
-      const nextStore = replaceSyncedAssistantProfileStore({
-        activeProfileId,
-        profiles: syncedProfiles,
-        syncedAt,
-      });
-      const savedStore = await saveLocalAssistantProfileStore(nextStore);
-      setAssistantProfileStore(savedStore);
-      if (activeProfileId) {
-        setActiveLocalProfileId(activeProfileId);
-        const activeProfile = savedStore.profiles.find((profile) => profile.id === activeProfileId);
-        if (activeProfile) {
-          applyLocalAssistantProfile(activeProfile);
-        }
-      }
-      setAssistantProfileSyncState("synced");
-      setAssistantProfileSyncMessage(`Synced ${syncedProfiles.length} assistant profile${syncedProfiles.length === 1 ? "" : "s"} to the web console.`);
-    } catch (error) {
-      const rawMessage = String(error);
-      if (rawMessage.includes("An assistant with this name already exists.")) {
-        setAssistantProfileSyncState("idle");
-        setAssistantProfileSyncMessage(null);
-        log(`Sync all blocked by local save validation: ${rawMessage}`);
-        return;
-      }
-
-      const message = `Cloud API offline or sync failed: ${rawMessage}`;
-      setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage(message);
-      log(message);
-    }
-  }
-
-  async function syncAssistantProfileToCloud(profile: LocalAssistantProfile) {
-    if (!authSession) {
-      setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage("Sign in before syncing assistant profiles.");
-      return;
-    }
-
-    setAssistantProfileSyncState("syncing");
-    setAssistantProfileSyncMessage(`Syncing ${profile.name || "assistant profile"}...`);
-
-    try {
-      const profileToSync = profile.id === activeLocalProfileId
-        ? await saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? profile.status)
-        : profile;
-      const syncedProfile = await syncLocalAssistantProfileToCloud(profileToSync);
-      await persistLocalAssistantProfile(syncedProfile);
-      setAssistantProfileSyncState("synced");
-      setAssistantProfileSyncMessage(`Synced ${syncedProfile.name || "assistant profile"} to the web console.`);
-    } catch (error) {
-      const rawMessage = String(error);
-      if (rawMessage.includes("An assistant with this name already exists.")) {
-        setAssistantProfileSyncState("idle");
-        setAssistantProfileSyncMessage(null);
-        log(`Sync blocked by local save validation: ${rawMessage}`);
-        return;
-      }
-
-      const message = `Cloud API offline or sync failed: ${rawMessage}`;
-      setAssistantProfileSyncState("error");
-      setAssistantProfileSyncMessage(message);
-      log(message);
-    }
-  }
-
-  function applyLocalAssistantProfile(profile: LocalAssistantProfile) {
-    newAssistantDraftBaselineRef.current = null;
-    setProfileDetailsDraft({
-      name: profile.name || defaultProfileDetails.name,
-      description: profile.description || defaultProfileDetails.description,
-    });
-    setSurvey({
-      useCase: profile.survey?.useCase ?? profile.useCase ?? null,
-      answerStyle: profile.survey?.answerStyle ?? profile.answerStyle ?? null,
-      priority: profile.survey?.priority ?? profile.priority ?? null,
-      languageUse: profile.survey?.languageUse ?? profile.languageUse ?? null,
-      localMode: profile.survey?.localMode ?? profile.localMode ?? null,
-      futureFeatures: Array.isArray(profile.survey?.futureFeatures) ? profile.survey.futureFeatures : profile.futureFeatures ?? [],
-      memorySyncMode: profile.survey?.memorySyncMode ?? profile.capabilities?.memory?.syncMode ?? "profileOnly",
-    });
-    setSelectedProvider(profile.provider ?? "ollama");
-    setSelectedModel(profile.recommendation?.selectedModel ?? (profile.provider === "ollama" ? profile.model : selectedModel));
-    setSelectedCloudModel(profile.recommendation?.selectedCloudModel ?? (profile.provider !== "ollama" ? profile.model : selectedCloudModel));
-    setPromptSettingsDraft(normalizePromptSettings(profile.prompt?.settings));
-  }
-
-  async function finalizeCurrentLocalAssistantProfile() {
-    try {
-      const finalizedProfile = await saveCurrentLocalAssistantProfile("finalized");
-      log("Assistant profile finalized locally.");
-      if (authSession && !finalizedProfile.sync.cloudEnabled) {
-        setAssistantProfileSyncState("syncing");
-        setAssistantProfileSyncMessage("Uploading finalized assistant profile...");
-        const syncedProfile = await syncLocalAssistantProfileToCloud(finalizedProfile);
-        await persistLocalAssistantProfile(syncedProfile);
-        setAssistantProfileSyncState("synced");
-        setAssistantProfileSyncMessage("Initial assistant profile uploaded to the web console.");
-      }
-    } catch {
-      // The save function already records the visible error state.
-    }
   }
 
   function enterSettings(section: SettingsSection = "general") {
@@ -893,69 +539,6 @@ function App() {
   }, [authSession, hardware?.osName, selectedProvider, selectedModel, selectedCloudModel, status?.running]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const store = await loadLocalAssistantProfileStore();
-        if (cancelled) {
-          return;
-        }
-
-        setAssistantProfileStore(store);
-        const activeProfile = store.profiles.find((profile) => profile.id === store.activeProfileId) ?? store.profiles[0] ?? null;
-        if (activeProfile) {
-          setActiveLocalProfileId(activeProfile.id);
-          applyLocalAssistantProfile(activeProfile);
-        }
-
-        assistantProfileHydratedRef.current = true;
-        setAssistantProfileLoaded(true);
-        log(activeProfile ? "Assistant profile loaded from local storage." : "No local assistant profile found yet.");
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        assistantProfileHydratedRef.current = true;
-        setAssistantProfileLoaded(true);
-        setAssistantProfileError(String(error));
-        setAssistantProfileSaveState("error");
-        log(`Assistant profile load failed: ${String(error)}`);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (authSession || !assistantProfileLoaded) {
-      return;
-    }
-
-    const activeProfile = assistantProfileStore.profiles.find((profile) => profile.id === activeLocalProfileId);
-    if (!activeProfile || activeProfile.provider === "ollama") {
-      return;
-    }
-
-    const nextLocalProfile = assistantProfileStore.profiles.find((profile) => profile.provider === "ollama") ?? null;
-    if (nextLocalProfile) {
-      setActiveLocalProfileId(nextLocalProfile.id);
-      applyLocalAssistantProfile(nextLocalProfile);
-      return;
-    }
-
-    setActiveLocalProfileId(DEFAULT_LOCAL_PROFILE_ID);
-    setSelectedProvider("ollama");
-    setSelectedModel("qwen3:4b");
-    setSelectedCloudModel("gemini-2.5-flash");
-    setProfileDetailsDraft(defaultProfileDetails);
-    setPromptSettingsDraft(defaultPromptSettings);
-  }, [authSession, assistantProfileLoaded, assistantProfileStore.profiles, activeLocalProfileId]);
-
-  useEffect(() => {
     saveRuntimeChatMessages(runtimeChatMessages);
   }, [runtimeChatMessages]);
 
@@ -1054,24 +637,6 @@ function App() {
       t={t}
     />
   );
-
-  const saveStudioDraft = () => {
-    void saveCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft").catch(() => undefined);
-  };
-
-  const startNewAssistantDraft = () => {
-    if (!confirmDiscardStudioChanges()) {
-      return;
-    }
-
-    newAssistantDraftBaselineRef.current = getNewAssistantDraftBaseline();
-    setActiveLocalProfileId(NEW_LOCAL_PROFILE_DRAFT_ID);
-    setProfileDetailsDraft(defaultProfileDetails);
-    setPromptSettingsDraft(defaultPromptSettings);
-    setAssistantProfileError(null);
-    setAssistantProfileSaveState("idle");
-    setStudioSection("overview");
-  };
 
   const changeAppMode = (mode: AppMode) => {
     if (mode !== appMode && !confirmDiscardStudioChanges()) {
