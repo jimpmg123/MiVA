@@ -28,8 +28,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   checkCloudApi,
   completeDesktopDeviceLogin,
-  createAssistantProfile,
-  deleteAssistantProfile,
   fetchJson,
   getAdminStats,
   getApiKeys,
@@ -47,7 +45,6 @@ import type {
   ApiKeyProviderId,
   AuthRole,
   AuthUser,
-  AssistantProfileDraft,
   CloudState,
 } from './services/mivaApi';
 
@@ -385,7 +382,6 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
       <Card className="col-span-12 md:col-span-7">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold font-display">Active Assistant</h3>
-          <button className="text-primary-container font-semibold text-sm hover:underline">Change Profile</button>
         </div>
         <div className="flex items-start gap-6 p-6 bg-primary-container/5 rounded-2xl border border-primary-container/10">
           <div className="w-20 h-20 rounded-2xl bg-primary-container flex items-center justify-center text-white shrink-0 overflow-hidden">
@@ -596,6 +592,11 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
       <div>
         <span className="text-primary-container font-bold text-xs uppercase tracking-widest block mb-1">Recommended Choice</span>
         <h2 className="text-4xl font-extrabold font-display tracking-tight">Prime Assistant</h2>
+        {(connection.desktop !== 'connected' || connection.helper !== 'connected') && (
+          <p className="mt-2 text-sm font-semibold text-amber-700">
+            MiVA Desktop must be running to download local models from the web console.
+          </p>
+        )}
       </div>
       <button
         onClick={actions.refreshConnection}
@@ -754,17 +755,9 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
 
 const MyAssistantsPage = ({
   cloud,
-  creatingProfile,
-  deletingProfileId,
-  onCreateProfile,
-  onDeleteProfile,
   onRefreshCloud,
 }: {
   cloud: CloudState;
-  creatingProfile: boolean;
-  deletingProfileId: string | null;
-  onCreateProfile: (profile: AssistantProfileDraft) => Promise<void>;
-  onDeleteProfile: (profileId: string) => Promise<void>;
   onRefreshCloud: () => Promise<void>;
 }) => {
   const profiles = cloud.profiles;
@@ -829,20 +822,23 @@ const MyAssistantsPage = ({
     if (source === 'web-console') return 'Web Console';
     return source || 'Unknown';
   };
-  const createDefaultProfile = () => onCreateProfile({
-    name: `MiVA Assistant ${profiles.length + 1}`,
-    description: 'A web-created MiVA assistant profile. Replace this with survey results or a custom profile editor later.',
-    useCase: 'daily',
-    answerStyle: 'moderate',
-    priority: 'balanced',
-    languageUse: 'korean',
-    localMode: 'hybrid',
-    provider: 'gemini',
-    model: 'gemini-2.5-flash',
-    futureFeatures: ['voice', 'googleWorkspace'],
-    isDefault: profiles.length === 0,
-    source: 'web-console',
-  });
+  const enabledFeatures = activeProfile
+    ? [
+      { label: 'Use case', value: activeProfile.useCase || 'daily' },
+      { label: 'Answer style', value: activeProfile.answerStyle || 'moderate' },
+      { label: 'Priority', value: activeProfile.priority || 'balanced' },
+      { label: 'Language', value: activeProfile.languageUse || 'korean' },
+      { label: 'Runtime mode', value: activeProfile.localMode || 'local' },
+      { label: 'Provider', value: activeProfile.provider || 'ollama' },
+      { label: 'Model', value: activeProfile.model || 'qwen3:4b' },
+      { label: 'Coding', value: codingCapabilityLabel(codingSettings.capability) },
+      { label: 'Tool policy', value: codingProviderPolicyLabel(codingSettings.providerPolicy) },
+      { label: 'Tool access', value: codingAccessModeLabel(codingSettings.accessMode) },
+      { label: 'Schedule', value: scheduleModeLabel },
+      { label: 'Workspace', value: workspacePolicyLabel },
+      ...((activeProfile.futureFeatures || []).map((feature) => ({ label: 'Future feature', value: feature }))),
+    ]
+    : [];
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
@@ -851,7 +847,7 @@ const MyAssistantsPage = ({
             <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
                 My Assistants
             </h2>
-            <p className="text-slate-500 mt-1">Review assistants synced from the desktop app and manage web-created assistants.</p>
+            <p className="text-slate-500 mt-1">Review synced assistant prompts and enabled features. Editing happens in MiVA Desktop.</p>
           </div>
           <button
             className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-200 active:scale-[0.98]"
@@ -867,14 +863,6 @@ const MyAssistantsPage = ({
             <div className="col-span-12 lg:col-span-4 space-y-6">
                 <div className="flex items-center justify-between">
                     <h3 className="text-xl font-bold font-display">Saved Assistants</h3>
-                    <button
-                      className="text-xs font-bold text-primary-container flex items-center gap-1 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={cloud.status !== 'connected' || creatingProfile}
-                      onClick={() => void createDefaultProfile()}
-                      type="button"
-                    >
-                        <Plus className="w-4 h-4" /> {creatingProfile ? 'CREATING...' : 'NEW ASSISTANT'}
-                    </button>
                 </div>
                 <div className="space-y-4">
                     {profiles.map((profile) => {
@@ -908,81 +896,46 @@ const MyAssistantsPage = ({
 
                     {profiles.length === 0 && (
                       <div className="p-6 rounded-[20px] bg-white border border-dashed border-slate-200 text-sm text-slate-400">
-                        No assistants loaded yet. Start the API, sync from MiVA Desktop, or create a web assistant.
+                        No assistants loaded yet. Sync an assistant from MiVA Desktop to review it here.
                       </div>
                     )}
                 </div>
             </div>
 
+            {activeProfile ? (
             <Card className="col-span-12 lg:col-span-8 p-0 overflow-hidden">
                 <div className="p-10 bg-slate-50 border-b border-slate-100">
                     <div className="flex justify-between items-start">
                         <div>
                             <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-2xl font-bold font-display">{activeProfile?.name || 'No Assistant Selected'}</h3>
-                                <Badge>{activeProfile?.isDefault ? 'Default' : 'Saved'}</Badge>
-                                <Badge variant={activeProfile?.source === 'desktop-setup' ? 'success' : 'info'}>
-                                  {sourceLabel(activeProfile?.source)}
+                                <h3 className="text-2xl font-bold font-display">{activeProfile.name}</h3>
+                                <Badge>{activeProfile.isDefault ? 'Default' : 'Saved'}</Badge>
+                                <Badge variant={activeProfile.source === 'desktop-setup' ? 'success' : 'info'}>
+                                  {sourceLabel(activeProfile.source)}
                                 </Badge>
                                 <Badge variant={codingSettings.providerPolicy === 'cloudRequired' ? 'warning' : 'info'}>
                                   {codingProviderPolicyLabel(codingSettings.providerPolicy)}
                                 </Badge>
                             </div>
-                            <p className="text-slate-600 max-w-lg">{activeProfile?.description || 'Create an assistant from the desktop setup survey or the web console.'}</p>
-                        </div>
-                        <div className="flex gap-2">
-                              <button className="bg-slate-200 text-slate-700 px-6 py-2.5 rounded-xl font-bold text-sm">Duplicate</button>
+                            <p className="text-slate-600 max-w-lg">{activeProfile.description || 'Synced assistant profile from MiVA Desktop.'}</p>
                         </div>
                     </div>
                 </div>
                 <div className="p-10 grid grid-cols-2 gap-12">
                     <div className="space-y-8">
                         <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Personality Style</label>
-                            <div className="flex bg-slate-100 p-1 rounded-2xl">
-                                {[activeProfile?.useCase || 'daily', activeProfile?.answerStyle || 'moderate', activeProfile?.priority || 'balanced'].map((s, i) => (
-                                    <button key={i} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${i === 0 ? 'bg-white shadow-sm text-primary-container' : 'text-slate-400'}`}>
-                                        {s}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Model Core</label>
-                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-                                <div className="flex items-center gap-3">
-                                    <Database className="w-5 h-5 text-slate-400" />
-                                    <div>
-                                        <p className="text-sm font-bold text-slate-900">{activeProfile?.model || 'gemini-2.5-flash'}</p>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{activeProfile?.provider || 'gemini'} • {activeProfile?.localMode || 'hybrid'}</p>
-                                    </div>
-                                </div>
-                                <button className="text-primary-container text-sm font-bold hover:underline">Change</button>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Coding Capability</label>
+                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Enabled Features</label>
                             <div className="grid grid-cols-2 gap-3">
-                              <div className="p-4 bg-slate-50 rounded-2xl">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Mode</p>
-                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingCapabilityLabel(codingSettings.capability)}</p>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-2xl">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Provider</p>
-                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingProviderPolicyLabel(codingSettings.providerPolicy)}</p>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-2xl">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Access</p>
-                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingAccessModeLabel(codingSettings.accessMode)}</p>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-2xl">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Safety</p>
-                                <p className="mt-2 text-sm font-semibold text-slate-800">{codingSettings.workspaceAllowlistRequired ? 'Workspace allowlist' : 'No repo actions'}</p>
-                              </div>
+                              {enabledFeatures.map((feature, index) => (
+                                <div className="p-4 bg-slate-50 rounded-2xl" key={`${feature.label}-${feature.value}-${index}`}>
+                                  <p className="text-xs font-black uppercase tracking-wider text-slate-400">{feature.label}</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-800">{feature.value}</p>
+                                </div>
+                              ))}
                             </div>
                         </div>
                         <div>
-                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Prompt Settings</label>
+                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 block">Prompt Summary</label>
                             <div className="space-y-3">
                               <div className="p-4 bg-slate-50 rounded-2xl">
                                 <p className="text-xs font-black uppercase tracking-wider text-slate-400">Persona</p>
@@ -1007,9 +960,9 @@ const MyAssistantsPage = ({
                         <div className="bg-slate-900 rounded-3xl p-6 text-xs text-slate-400 font-mono leading-relaxed h-[220px] relative overflow-hidden group">
                            <p className="text-slate-600 mb-4">// Core Instructions</p>
                            <p>
-                             <span className="text-white">You are MiVA</span>, a {activeProfile?.localMode || 'hybrid'} AI assistant. 
-                             Use case: {activeProfile?.useCase || 'daily'}. Answer style: {activeProfile?.answerStyle || 'moderate'}.
-                             Language mode: {activeProfile?.languageUse || 'korean'}. Future tools: {(activeProfile?.futureFeatures || []).join(', ') || 'none'}.
+                             <span className="text-white">You are MiVA</span>, a {activeProfile.localMode || 'hybrid'} AI assistant. 
+                             Use case: {activeProfile.useCase || 'daily'}. Answer style: {activeProfile.answerStyle || 'moderate'}.
+                             Language mode: {activeProfile.languageUse || 'korean'}. Future tools: {(activeProfile.futureFeatures || []).join(', ') || 'none'}.
                              Coding: {codingCapabilityLabel(codingSettings.capability)} / {codingProviderPolicyLabel(codingSettings.providerPolicy)}.
                             </p>
                            {promptSettings && (
@@ -1036,25 +989,18 @@ const MyAssistantsPage = ({
                 </div>
                 <div className="p-8 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
                     <span>
-                      Last modified {activeProfile ? formatRelativeTime(new Date(activeProfile.updatedAt)) : 'Not saved yet'}
+                      Last modified {formatRelativeTime(new Date(activeProfile.updatedAt))}
                     </span>
-                    <button
-                      className="inline-flex items-center gap-2 font-bold text-red-500 transition hover:text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={!activeProfile || deletingProfileId === activeProfile.id}
-                      onClick={() => {
-                        if (!activeProfile) return;
-                        const confirmed = window.confirm(`Delete "${activeProfile.name}" from the web API? Desktop local copies are not deleted.`);
-                        if (confirmed) {
-                          void onDeleteProfile(activeProfile.id);
-                        }
-                      }}
-                      type="button"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {deletingProfileId === activeProfile?.id ? 'DELETING...' : 'DELETE ASSISTANT'}
-                    </button>
                 </div>
             </Card>
+            ) : (
+              <div className="col-span-12 lg:col-span-8 rounded-[32px] border border-dashed border-slate-200 bg-white p-10 text-slate-500">
+                <h3 className="text-2xl font-bold font-display text-slate-900">No assistant to display</h3>
+                <p className="mt-3 max-w-xl">
+                  No assistant profiles are available for this account. Sync an assistant from MiVA Desktop, then refresh this page.
+                </p>
+              </div>
+            )}
         </div>
     </motion.div>
   );
@@ -2066,8 +2012,6 @@ export default function App() {
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
-  const [creatingProfile, setCreatingProfile] = useState(false);
-  const [deletingProfileId, setDeletingProfileId] = useState<string | null>(null);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
   const visibleNavItems = useMemo(
@@ -2194,28 +2138,6 @@ export default function App() {
       await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Could not switch development account.');
-    }
-  };
-
-  const createCloudProfile = async (profile: AssistantProfileDraft) => {
-    setCreatingProfile(true);
-    try {
-      await createAssistantProfile(profile);
-      await refreshCloud();
-      setActivePage('profiles');
-    } finally {
-      setCreatingProfile(false);
-    }
-  };
-
-  const deleteCloudProfile = async (profileId: string) => {
-    setDeletingProfileId(profileId);
-    try {
-      await deleteAssistantProfile(profileId);
-      await refreshCloud();
-      setActivePage('profiles');
-    } finally {
-      setDeletingProfileId(null);
     }
   };
 
@@ -2445,10 +2367,6 @@ export default function App() {
       case 'profiles': return (
         <MyAssistantsPage
           cloud={cloud}
-          creatingProfile={creatingProfile}
-          deletingProfileId={deletingProfileId}
-          onCreateProfile={createCloudProfile}
-          onDeleteProfile={deleteCloudProfile}
           onRefreshCloud={refreshCloud}
         />
       );
