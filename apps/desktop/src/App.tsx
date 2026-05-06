@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import "./App.css";
 import type { Locale } from "./i18n";
 import { AppShell } from "./app/AppShell";
@@ -6,43 +6,30 @@ import { RuntimeNavigation, SetupNavigation, StudioNavigation } from "./app/AppN
 import { AppTopBar } from "./app/AppTopBar";
 import { isTauriRuntime } from "./app/tauri";
 import { useAppNavigation } from "./app/useAppNavigation";
-import { PrimaryButton, SecondaryButton } from "./components/ui";
-import { AuthPage } from "./pages/AuthPage";
-import { RuntimePage } from "./pages/RuntimePage";
-import { SetupPage } from "./pages/SetupPage";
-import { ClawCodeStep } from "./setup/ClawCodeStep";
-import { DownloadStep } from "./setup/DownloadStep";
-import { HardwareStep } from "./setup/HardwareStep";
-import { OllamaStep } from "./setup/OllamaStep";
-import { ProfileStep } from "./setup/ProfileStep";
-import { RecommendationStep } from "./setup/RecommendationStep";
-import { SurveyStep } from "./setup/SurveyStep";
-import { WelcomeStep } from "./setup/WelcomeStep";
+import { SetupFlow } from "./setup/SetupFlow";
 import { useSetupWizard } from "./setup/useSetupWizard";
-import { SettingsPage } from "./pages/SettingsPage";
-import { StudioPage } from "./pages/StudioPage";
-import { formatLogTime, recommendCloudModel, recommendModel } from "./utils";
+import { formatLogTime } from "./utils";
 import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, providerMeta } from "./features/models/catalog";
 import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
 import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
-import { clearProviderKeysStorage, emptyProviderKeys, loadProviderKeys, saveProviderKeysToStorage } from "./features/auth/storage";
+import { useModelRecommendation } from "./features/models/useModelRecommendation";
 import { defaultProfileDetails, defaultPromptSettings } from "./features/assistants/profile";
-import {
-  recordLocalUsageEvent,
-  registerDesktopDevice,
-} from "./features/cloud/client";
 import { useAuthFlow } from "./features/auth/useAuthFlow";
+import { useProviderKeys } from "./features/auth/useProviderKeys";
+import { AuthHost } from "./hosts/AuthHost";
 import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles";
 import { useRuntimeChat } from "./features/chat/useRuntimeChat";
+import { useCloudDevice } from "./features/cloud/useCloudDevice";
+import { RuntimeHost } from "./hosts/RuntimeHost";
+import { SettingsHost } from "./hosts/SettingsHost";
+import { StudioHost } from "./hosts/StudioHost";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
-  CloudDeviceRecord,
   ProfileDetailsDraft,
   PromptEditorMode,
   PromptSettings,
   ProviderId,
-  ProviderKeyState,
   StudioSection,
   SurveyState,
 } from "./types";
@@ -78,11 +65,8 @@ function App() {
   const [selectedCloudModel, setSelectedCloudModel] = useState("gemini-2.5-flash");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [cloudDevice, setCloudDevice] = useState<CloudDeviceRecord | null>(null);
   const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
-  const [providerKeys, setProviderKeys] = useState<ProviderKeyState>(() => loadProviderKeys());
-  const [providerKeysSaved, setProviderKeysSaved] = useState(false);
   const [profileDetailsDraft, setProfileDetailsDraft] = useState<ProfileDetailsDraft>(() => defaultProfileDetails);
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
@@ -95,6 +79,13 @@ function App() {
 
   const t = copy.en;
   const providerText = providerUiCopy.en;
+  const {
+    clearProviderKeys,
+    providerKeys,
+    providerKeysSaved,
+    saveProviderKeys,
+    setProviderKeys,
+  } = useProviderKeys();
   const {
     hardware,
     hardwareError,
@@ -124,19 +115,25 @@ function App() {
       setDismissedChatIntroKeys((current) => current.filter((key) => key !== `ollama:${model}:${promptProfileId}`));
     },
   });
-  const recommendedModel = useMemo(() => recommendModel(survey, hardware), [survey, hardware]);
-  const recommendedCloudModel = useMemo(() => recommendCloudModel(survey), [survey]);
-  const recommendedModelInfo = getModelByName(recommendedModel);
-  const recommendedCloudModelInfo = getCloudModelById(recommendedCloudModel);
+  const {
+    cloudRecommended,
+    recommendedCloudModel,
+    recommendedCloudModelInfo,
+    recommendedModel,
+    recommendedModelInfo,
+  } = useModelRecommendation({
+    hardware,
+    survey,
+    setSelectedCloudModel,
+    setSelectedModel,
+    setSelectedProvider,
+  });
   const selectedModelInfo = getModelByName(selectedModel);
   const selectedCloudModelInfo = getCloudModelById(selectedCloudModel);
   const activeProviderMeta = providerMeta[selectedProvider];
   const activeProviderMode = activeProviderMeta.mode;
   const activeModelLabel = selectedProvider === "ollama" ? selectedModelInfo.label : selectedCloudModelInfo.label;
   const activeProviderLabel = activeProviderMeta.label;
-  const cloudRecommended =
-    survey.localMode === "cloudOnly" ||
-    (survey.localMode === "hybrid" && (survey.priority === "quality" || survey.useCase === "work"));
   const installedModels = status?.installedModels ?? [];
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
@@ -201,6 +198,18 @@ function App() {
     setSelectedModel,
     setSelectedCloudModel,
     setStudioSection,
+    onLog: log,
+  });
+  const {
+    recordRuntimeUsageEvent,
+    setCloudDevice,
+  } = useCloudDevice({
+    authSession,
+    hardware,
+    selectedProvider,
+    selectedModel,
+    selectedCloudModel,
+    status,
     onLog: log,
   });
   const runtimeChatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
@@ -271,72 +280,6 @@ function App() {
       void finalizeCurrentLocalAssistantProfile();
     },
   });
-
-  function saveProviderKeys() {
-    saveProviderKeysToStorage(providerKeys);
-    setProviderKeysSaved(true);
-    window.setTimeout(() => setProviderKeysSaved(false), 2000);
-  }
-
-  function clearProviderKeys() {
-    setProviderKeys(emptyProviderKeys);
-    clearProviderKeysStorage();
-    setProviderKeysSaved(false);
-  }
-
-  async function registerDeviceWithCloud() {
-    const device = await registerDesktopDevice({
-      authSession,
-      hardware,
-      selectedProvider,
-      selectedModel,
-      selectedCloudModel,
-      status,
-    });
-    setCloudDevice(device);
-    return device;
-  }
-
-  async function recordRuntimeUsageEvent(event: {
-    assistantProfileId: string | null;
-    provider: ProviderId;
-    model: string;
-    inputChars: number;
-    outputChars: number;
-    durationMs: number;
-    success: boolean;
-  }) {
-    await recordLocalUsageEvent({
-      authSession,
-      cloudDeviceId: cloudDevice?.id ?? null,
-      ...event,
-    });
-  }
-
-  useEffect(() => {
-    if (!authSession) {
-      return;
-    }
-
-    void registerDeviceWithCloud().catch((error) => {
-      log(`Device registration failed: ${String(error)}`);
-    });
-  }, [authSession, hardware?.osName, selectedProvider, selectedModel, selectedCloudModel, status?.running]);
-
-  useEffect(() => {
-    setSelectedModel(recommendedModel);
-  }, [recommendedModel]);
-
-  useEffect(() => {
-    if (cloudRecommended) {
-      const cloudModel = getCloudModelById(recommendedCloudModel);
-      setSelectedCloudModel(cloudModel.id);
-      setSelectedProvider(cloudModel.provider);
-      return;
-    }
-
-    setSelectedProvider("ollama");
-  }, [cloudRecommended, recommendedCloudModel]);
 
   const renderNavigation = () => (
     <SetupNavigation
@@ -423,126 +366,8 @@ function App() {
       t={t}
     />
   );
-  const renderFooter = (primaryLabel = t.continue, primaryAction = goToNextStep, primaryDisabled = false) => (
-    <div className="mt-8 flex items-center justify-between">
-      <SecondaryButton disabled={activeStep === "welcome"} onClick={goToPreviousStep}>
-        {t.back}
-      </SecondaryButton>
-      <PrimaryButton disabled={primaryDisabled} onClick={primaryAction}>
-        {primaryLabel}
-      </PrimaryButton>
-    </div>
-  );
-
-  const renderWelcome = () => <WelcomeStep t={t} onStart={goToNextStep} />;
-
-  const renderSurvey = () => (
-    <SurveyStep
-      activeLocale={ACTIVE_LOCALE}
-      enterSettings={enterSettings}
-      goToNextStep={goToNextStep}
-      goToPreviousStep={goToPreviousStep}
-      setSurvey={setSurvey}
-      setSurveyQuestionIndex={setSurveyQuestionIndex}
-      setSurveyTipExpanded={setSurveyTipExpanded}
-      survey={survey}
-      surveyQuestionIndex={surveyQuestionIndex}
-      surveyQuestions={surveyQuestions}
-      surveyTipContentVisible={surveyTipContentVisible}
-      surveyTipExpanded={surveyTipExpanded}
-      t={t}
-    />
-  );
-
-  const renderHardware = () => (
-    <HardwareStep
-      busyAction={busyAction}
-      hardware={hardware}
-      hardwareError={hardwareError}
-      goToNextStep={goToNextStep}
-      refreshHardware={refreshHardware}
-      tauriRuntime={tauriRuntime}
-      t={t}
-    />
-  );
-  const renderRecommendation = () => (
-    <RecommendationStep
-      activeLocale={ACTIVE_LOCALE}
-      cloudModelCatalog={cloudModelCatalog}
-      cloudRecommended={cloudRecommended}
-      goToPreviousStep={goToPreviousStep}
-      hardware={hardware}
-      installedModels={installedModels}
-      modelCatalog={modelCatalog}
-      onContinue={() => setActiveStep("ollama")}
-      providerMeta={providerMeta}
-      providerText={providerText}
-      recommendedCloudModelInfo={recommendedCloudModelInfo}
-      recommendedModel={recommendedModel}
-      recommendedModelInfo={recommendedModelInfo}
-      recommendedModelInstalled={recommendedModelInstalled}
-      selectedCloudModel={selectedCloudModel}
-      selectedModel={selectedModel}
-      selectedProvider={selectedProvider}
-      setSelectedCloudModel={setSelectedCloudModel}
-      setSelectedModel={setSelectedModel}
-      setSelectedProvider={setSelectedProvider}
-      survey={survey}
-      t={t}
-    />
-  );
-  const renderOllamaSetup = () => (
-    <OllamaStep
-      busyAction={busyAction}
-      enterLogs={() => enterSettings("logs")}
-      goToNextStep={goToNextStep}
-      installOllama={installOllama}
-      logs={logs}
-      refreshStatus={refreshStatus}
-      renderFooter={renderFooter}
-      serviceLabel={serviceLabel}
-      startOllama={startOllama}
-      status={status}
-      tauriRuntime={tauriRuntime}
-      t={t}
-    />
-  );
-  const renderClawCodeSetup = () => (
-    <ClawCodeStep
-      busyAction={busyAction}
-      choosePythonInstallPath={choosePythonInstallPath}
-      goToNextStep={goToNextStep}
-      installPython={installPython}
-      pythonInstallPath={pythonInstallPath}
-      refreshRuntimeRequirements={refreshRuntimeRequirements}
-      renderFooter={renderFooter}
-      runtimeRequirements={runtimeRequirements}
-      runtimeRequirementsError={runtimeRequirementsError}
-      tauriRuntime={tauriRuntime}
-    />
-  );
-  const renderDownload = () => (
-    <DownloadStep
-      activeLocale={ACTIVE_LOCALE}
-      busyAction={busyAction}
-      downloadModel={downloadModel}
-      downloadProgress={downloadProgress}
-      goToNextStep={goToNextStep}
-      installedModels={installedModels}
-      modelCatalog={modelCatalog}
-      renderFooter={renderFooter}
-      selectedModel={selectedModel}
-      selectedModelInfo={selectedModelInfo}
-      selectedModelInstalled={selectedModelInstalled}
-      setSelectedModel={setSelectedModel}
-      status={status}
-      tauriRuntime={tauriRuntime}
-      t={t}
-    />
-  );
-
   const renderChat = () => (
-    <RuntimePage
+    <RuntimeHost
       activeChatMessages={activeChatMessages}
       activeModelLabel={activeModelLabel}
       activeProviderLabel={activeProviderLabel}
@@ -572,19 +397,8 @@ function App() {
       setDismissedChatIntroKeys={setDismissedChatIntroKeys}
     />
   );
-  const renderProfile = () => (
-    <ProfileStep
-      activeModelLabel={activeModelLabel}
-      activeProviderLabel={activeProviderLabel}
-      activeProviderMode={activeProviderMode}
-      assistantProfileError={assistantProfileError}
-      enterGeneralSettings={() => enterSettings("general")}
-      finalizeProfile={() => void finalizeCurrentLocalAssistantProfile()}
-      profile={activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft")}
-    />
-  );
   const renderAuth = () => (
-    <AuthPage
+    <AuthHost
       authFlowError={authFlowError}
       authFlowState={authFlowState}
       authSession={authSession}
@@ -596,7 +410,7 @@ function App() {
     />
   );
   const renderStudio = () => (
-    <StudioPage
+    <StudioHost
       activeLocale={ACTIVE_LOCALE}
       activeLocalProfile={activeLocalProfile}
       activeLocalProfileId={activeLocalProfileId}
@@ -645,7 +459,7 @@ function App() {
     />
   );
   const renderSettings = () => (
-    <SettingsPage
+    <SettingsHost
       activeLocalProfile={activeLocalProfile}
       activeModelLabel={activeModelLabel}
       activeProviderLabel={activeProviderLabel}
@@ -682,29 +496,74 @@ function App() {
       t={t}
     />
   );
-  const renderCurrentStep = () => {
-    return (
-      <SetupPage
-        activeStep={activeStep}
-        chatStep={renderChat()}
-        clawCodeStep={renderClawCodeSetup()}
-        downloadStep={renderDownload()}
-        hardwareStep={renderHardware()}
-        ollamaStep={renderOllamaSetup()}
-        profileStep={renderProfile()}
-        recommendationStep={renderRecommendation()}
-        settingsStep={renderSettings()}
-        surveyStep={renderSurvey()}
-        welcomeStep={renderWelcome()}
-      />
-    );
-  };
+  const renderSetup = () => (
+    <SetupFlow
+      activeLocale={ACTIVE_LOCALE}
+      activeModelLabel={activeModelLabel}
+      activeProviderLabel={activeProviderLabel}
+      activeProviderMode={activeProviderMode}
+      activeStep={activeStep}
+      assistantProfileError={assistantProfileError}
+      busyAction={busyAction}
+      chatStep={renderChat()}
+      choosePythonInstallPath={choosePythonInstallPath}
+      cloudRecommended={cloudRecommended}
+      downloadModel={downloadModel}
+      downloadProgress={downloadProgress}
+      enterGeneralSettings={() => enterSettings("general")}
+      enterLogs={() => enterSettings("logs")}
+      finalizeProfile={() => void finalizeCurrentLocalAssistantProfile()}
+      goToNextStep={goToNextStep}
+      goToPreviousStep={goToPreviousStep}
+      hardware={hardware}
+      hardwareError={hardwareError}
+      installOllama={installOllama}
+      installPython={installPython}
+      installedModels={installedModels}
+      logs={logs}
+      profile={activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft")}
+      providerText={providerText}
+      pythonInstallPath={pythonInstallPath}
+      recommendedCloudModelInfo={recommendedCloudModelInfo}
+      recommendedModel={recommendedModel}
+      recommendedModelInfo={recommendedModelInfo}
+      recommendedModelInstalled={recommendedModelInstalled}
+      refreshHardware={refreshHardware}
+      refreshRuntimeRequirements={refreshRuntimeRequirements}
+      refreshStatus={refreshStatus}
+      runtimeRequirements={runtimeRequirements}
+      runtimeRequirementsError={runtimeRequirementsError}
+      selectedCloudModel={selectedCloudModel}
+      selectedModel={selectedModel}
+      selectedModelInfo={selectedModelInfo}
+      selectedModelInstalled={selectedModelInstalled}
+      selectedProvider={selectedProvider}
+      serviceLabel={serviceLabel}
+      setActiveStep={setActiveStep}
+      setSelectedCloudModel={setSelectedCloudModel}
+      setSelectedModel={setSelectedModel}
+      setSelectedProvider={setSelectedProvider}
+      setSurvey={setSurvey}
+      setSurveyQuestionIndex={setSurveyQuestionIndex}
+      setSurveyTipExpanded={setSurveyTipExpanded}
+      settingsStep={renderSettings()}
+      startOllama={startOllama}
+      status={status}
+      survey={survey}
+      surveyQuestionIndex={surveyQuestionIndex}
+      surveyQuestions={surveyQuestions}
+      surveyTipContentVisible={surveyTipContentVisible}
+      surveyTipExpanded={surveyTipExpanded}
+      tauriRuntime={tauriRuntime}
+      t={t}
+    />
+  );
 
   return (
     <AppShell
       appMode={appMode}
       authView={renderAuth()}
-      content={appMode === "setup" ? renderCurrentStep() : appMode === "studio" ? renderStudio() : renderChat()}
+      content={appMode === "setup" ? renderSetup() : appMode === "studio" ? renderStudio() : renderChat()}
       downloadModal={renderDownloadProgressModal()}
       navigation={appMode === "setup" ? renderNavigation() : appMode === "studio" ? renderStudioNavigation() : renderRuntimeNavigation()}
       topBar={renderTopBar()}
