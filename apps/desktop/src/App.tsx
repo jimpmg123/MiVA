@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import type { Locale } from "./i18n";
 import { AppShell } from "./app/AppShell";
 import { RuntimeNavigation, SetupNavigation, StudioNavigation } from "./app/AppNavigation";
-import type { RuntimeConversationNavItem } from "./app/AppNavigation";
 import { AppTopBar } from "./app/AppTopBar";
 import { isTauriRuntime } from "./app/tauri";
+import { useAppNavigation } from "./app/useAppNavigation";
 import { PrimaryButton, SecondaryButton } from "./components/ui";
 import { AuthPage } from "./pages/AuthPage";
 import { RuntimePage } from "./pages/RuntimePage";
@@ -18,17 +18,14 @@ import { ProfileStep } from "./setup/ProfileStep";
 import { RecommendationStep } from "./setup/RecommendationStep";
 import { SurveyStep } from "./setup/SurveyStep";
 import { WelcomeStep } from "./setup/WelcomeStep";
+import { useSetupWizard } from "./setup/useSetupWizard";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StudioPage } from "./pages/StudioPage";
 import { formatLogTime, recommendCloudModel, recommendModel } from "./utils";
 import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, providerMeta } from "./features/models/catalog";
 import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
-import {
-  runChatOnce,
-} from "./features/models/ollamaRuntime";
 import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
 import { clearProviderKeysStorage, emptyProviderKeys, loadProviderKeys, saveProviderKeysToStorage } from "./features/auth/storage";
-import { loadRuntimeChatMessages, saveRuntimeChatMessages } from "./features/chat/storage";
 import { defaultProfileDetails, defaultPromptSettings } from "./features/assistants/profile";
 import {
   recordLocalUsageEvent,
@@ -36,20 +33,16 @@ import {
 } from "./features/cloud/client";
 import { useAuthFlow } from "./features/auth/useAuthFlow";
 import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles";
+import { useRuntimeChat } from "./features/chat/useRuntimeChat";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
-  ChatMessage,
-  ChatMetrics,
   CloudDeviceRecord,
-  LocalAssistantProfile,
   ProfileDetailsDraft,
   PromptEditorMode,
   PromptSettings,
   ProviderId,
   ProviderKeyState,
-  SettingsSection,
-  StepId,
   StudioSection,
   SurveyState,
 } from "./types";
@@ -57,18 +50,20 @@ import type {
 
 const ACTIVE_LOCALE: Locale = "en";
 function App() {
-  const [appMode, setAppMode] = useState<AppMode>("setup");
-  const [activeStep, setActiveStep] = useState<StepId>("welcome");
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const {
+    activeStep,
+    appMode,
+    closeAuth,
+    enterSettings,
+    exitSettings,
+    openAuth,
+    openInitialSetup,
+    setActiveStep,
+    setAppMode,
+    setSettingsSection,
+    settingsSection,
+  } = useAppNavigation();
   const [studioSection, setStudioSection] = useState<StudioSection>("myAssistants");
-  const [settingsReturnTarget, setSettingsReturnTarget] = useState<{ appMode: AppMode; activeStep: StepId }>({
-    appMode: "studio",
-    activeStep: "welcome",
-  });
-  const [authReturnTarget, setAuthReturnTarget] = useState<{ appMode: AppMode; activeStep: StepId }>({
-    appMode: "studio",
-    activeStep: "welcome",
-  });
   const [survey, setSurvey] = useState<SurveyState>({
     useCase: null,
     answerStyle: null,
@@ -78,20 +73,12 @@ function App() {
     futureFeatures: [],
     memorySyncMode: "profileOnly",
   });
-  const [surveyQuestionIndex, setSurveyQuestionIndex] = useState(0);
-  const [surveyTipExpanded, setSurveyTipExpanded] = useState(false);
-  const [surveyTipContentVisible, setSurveyTipContentVisible] = useState(false);
   const [selectedModel, setSelectedModel] = useState("qwen3:4b");
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>("ollama");
   const [selectedCloudModel, setSelectedCloudModel] = useState("gemini-2.5-flash");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [chatInput, setChatInput] = useState("");
   const [cloudDevice, setCloudDevice] = useState<CloudDeviceRecord | null>(null);
-  const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
-  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages());
-  const [activeRuntimeConversationId, setActiveRuntimeConversationId] = useState<string | null>(null);
-  const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [providerKeys, setProviderKeys] = useState<ProviderKeyState>(() => loadProviderKeys());
@@ -100,11 +87,7 @@ function App() {
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
   const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [tauriRuntime] = useState(isTauriRuntime);
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const shouldAutoScrollChatRef = useRef(true);
 
   const log = useCallback((message: string) => {
     setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
@@ -154,7 +137,6 @@ function App() {
   const cloudRecommended =
     survey.localMode === "cloudOnly" ||
     (survey.localMode === "hybrid" && (survey.priority === "quality" || survey.useCase === "work"));
-  const activeIndex = steps.findIndex((step) => step.id === activeStep);
   const installedModels = status?.installedModels ?? [];
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
@@ -173,9 +155,7 @@ function App() {
     onClearCloudDevice: () => setCloudDevice(null),
     onContinueLocalOnly: closeAuth,
   });
-  const signedIn = Boolean(authSession);
   const {
-    assistantProfileStore,
     visibleAssistantProfileStore,
     activeLocalProfileId,
     activeLocalProfile,
@@ -223,84 +203,74 @@ function App() {
     setStudioSection,
     onLog: log,
   });
-  const chatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
-  const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(chatIntroKey);
-  const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
+  const runtimeChatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
+  const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(runtimeChatIntroKey);
   const activeAssistantName = activeLocalProfile?.name || profileDetailsDraft.name || "MiVA Assistant";
-  const currentConversationId = activeRuntimeConversationId ?? `runtime_${promptProfileId}_current`;
-  const firstUserMessage = runtimeChatMessages.find((message) => message.role === "user")?.content.trim();
-  const lastRuntimeMessage = runtimeChatMessages[runtimeChatMessages.length - 1];
-  const currentRuntimeConversation: RuntimeConversationNavItem = {
-    id: currentConversationId,
-    assistantId: promptProfileId,
-    assistantName: activeAssistantName,
-    title: firstUserMessage ? firstUserMessage.slice(0, 48) : t.chatTitle,
-    preview: lastRuntimeMessage?.content,
-    modelLabel: activeModelLabel,
-    messageCount: runtimeChatMessages.length,
-    updatedAtLabel: lastRuntimeMessage?.createdAt ? t.justNow : "Ready",
-  };
-  const currentAssistantConversations = [currentRuntimeConversation];
-  const runtimeAssistantProfiles = (() => {
-    const profiles = new Map<string, LocalAssistantProfile>();
-    visibleAssistantProfileStore.profiles.forEach((profile) => profiles.set(profile.id, profile));
-    if (!profiles.has(promptProfileId)) {
-      const currentDraft = activeLocalProfile ?? buildCurrentLocalAssistantProfile("draft");
-      if (signedIn || currentDraft.provider === "ollama") {
-        profiles.set(promptProfileId, currentDraft);
-      }
-    }
-    return Array.from(profiles.values());
-  })();
-  const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => ({
-    assistantId: profile.id,
-    assistantName: profile.name,
-    conversations: profile.id === promptProfileId ? currentAssistantConversations : [],
-  }));
-
-  function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
-    if (mode === "runtime") {
-      setRuntimeChatMessages(updater);
-      return;
-    }
-
-    setTestChatMessages(updater);
-  }
-
-  function clearCurrentChat() {
-    updateChatMessages(appMode, () => []);
-    setChatInput("");
-    if (appMode === "runtime") {
-      setActiveRuntimeConversationId(`runtime_${promptProfileId}_${Date.now()}`);
-    }
-    shouldAutoScrollChatRef.current = true;
-    setShowJumpToLatest(false);
-  }
-
-  function startRuntimeChatForAssistant(assistantId: string) {
-    const profile = assistantProfileStore.profiles.find((item) => item.id === assistantId);
-    if (profile) {
-      setActiveLocalProfileId(profile.id);
-      applyLocalAssistantProfile(profile);
-    }
-
-    setRuntimeChatMessages([]);
-    setChatInput("");
-    setActiveRuntimeConversationId(`runtime_${assistantId}_${Date.now()}`);
-    setAppMode("runtime");
-    shouldAutoScrollChatRef.current = true;
-    setShowJumpToLatest(false);
-  }
-
-  function selectRuntimeConversation(conversation: RuntimeConversationNavItem) {
-    const profile = assistantProfileStore.profiles.find((item) => item.id === conversation.assistantId);
-    if (profile) {
-      setActiveLocalProfileId(profile.id);
-      applyLocalAssistantProfile(profile);
-    }
-    setActiveRuntimeConversationId(conversation.id);
-    setAppMode("runtime");
-  }
+  const {
+    activeChatMessages,
+    activeConversationId,
+    assistantConversationGroups,
+    chatEndRef,
+    chatInput,
+    chatIntroKey,
+    chatMetrics,
+    chatScrollRef,
+    currentAssistantConversations,
+    handleChatScroll,
+    scrollChatToLatest,
+    sendMessage,
+    setChatInput,
+    showJumpToLatest,
+    startRuntimeChatForAssistant,
+    selectRuntimeConversation,
+    clearCurrentChat,
+  } = useRuntimeChat({
+    activeLocale: ACTIVE_LOCALE,
+    appMode,
+    activeStep,
+    authSession,
+    activeLocalProfile,
+    promptProfileId,
+    activeModelLabel,
+    activeAssistantName,
+    selectedProvider,
+    selectedModel,
+    selectedCloudModel,
+    providerKeys,
+    statusInstalled: Boolean(status?.installed),
+    busyAction,
+    visibleAssistantProfiles: visibleAssistantProfileStore.profiles,
+    chatIntroKey: runtimeChatIntroKey,
+    chatTitle: t.chatTitle,
+    justNowLabel: t.justNow,
+    showChatIntroCard,
+    onDismissedChatIntroKeysChange: setDismissedChatIntroKeys,
+    buildCurrentLocalAssistantProfile,
+    applyLocalAssistantProfile,
+    setActiveLocalProfileId,
+    setAppMode,
+    setBusyAction,
+    ensureOllamaReadyForChat,
+    recordRuntimeUsageEvent,
+    onLog: log,
+  });
+  const {
+    activeIndex,
+    goToNextStep,
+    goToPreviousStep,
+    setSurveyQuestionIndex,
+    setSurveyTipExpanded,
+    surveyQuestionIndex,
+    surveyTipContentVisible,
+    surveyTipExpanded,
+  } = useSetupWizard({
+    activeStep,
+    steps,
+    onStepChange: setActiveStep,
+    onEnteringChatStep: () => {
+      void finalizeCurrentLocalAssistantProfile();
+    },
+  });
 
   function saveProviderKeys() {
     saveProviderKeysToStorage(providerKeys);
@@ -343,191 +313,6 @@ function App() {
     });
   }
 
-  function enterSettings(section: SettingsSection = "general") {
-    if (activeStep !== "settings") {
-      setSettingsReturnTarget({ appMode, activeStep });
-    }
-
-    setAppMode("setup");
-    setActiveStep("settings");
-    setSettingsSection(section);
-  }
-
-  function exitSettings() {
-    setAppMode(settingsReturnTarget.appMode);
-    setActiveStep(settingsReturnTarget.activeStep === "settings" ? "welcome" : settingsReturnTarget.activeStep);
-  }
-
-  function openAuth() {
-    if (appMode !== "auth") {
-      setAuthReturnTarget({ appMode, activeStep });
-    }
-
-    setAppMode("auth");
-  }
-
-  function closeAuth() {
-    setAppMode(authReturnTarget.appMode === "auth" ? "studio" : authReturnTarget.appMode);
-    setActiveStep(authReturnTarget.activeStep === "settings" ? "welcome" : authReturnTarget.activeStep);
-  }
-
-  function goToNextStep() {
-    const next = steps[Math.min(activeIndex + 1, steps.length - 1)];
-    if (next.id === "chat") {
-      void finalizeCurrentLocalAssistantProfile();
-    }
-    setActiveStep(next.id);
-  }
-
-  function goToPreviousStep() {
-    const previous = steps[Math.max(activeIndex - 1, 0)];
-    setActiveStep(previous.id);
-  }
-
-  function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
-    chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
-    shouldAutoScrollChatRef.current = true;
-    setShowJumpToLatest(false);
-  }
-
-  function handleChatScroll() {
-    const element = chatScrollRef.current;
-    if (!element) {
-      return;
-    }
-
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const nearBottom = distanceFromBottom < 120;
-    shouldAutoScrollChatRef.current = nearBottom;
-    setShowJumpToLatest((current) => (current === !nearBottom ? current : !nearBottom));
-  }
-
-  async function sendMessage() {
-    const prompt = chatInput.trim();
-    const chatMode = appMode;
-    const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const assistantProfile = buildCurrentLocalAssistantProfile(activeLocalProfile?.status ?? "draft");
-    const apiKey = selectedProvider === "openai"
-      ? providerKeys.openai.trim()
-      : selectedProvider === "gemini"
-        ? providerKeys.gemini.trim()
-        : "";
-    const localUnavailable = selectedProvider === "ollama" && !status?.installed;
-
-    if (!prompt || localUnavailable || busyAction === "chat") {
-      return;
-    }
-
-    if (selectedProvider !== "ollama" && !authSession) {
-      const requestedAt = new Date().toISOString();
-      setChatInput("");
-      shouldAutoScrollChatRef.current = true;
-      setShowJumpToLatest(false);
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
-        {
-          role: "assistant",
-          content: "Sign in to use cloud models. Continue without signing in only supports local Ollama assistants.",
-          createdAt: new Date().toISOString(),
-          provider: selectedProvider,
-          model: providerModel,
-        },
-      ]);
-      log("Cloud chat blocked because no account is signed in.");
-      return;
-    }
-
-    setBusyAction("chat");
-    const runtimeReady = await ensureOllamaReadyForChat(providerModel);
-    if (!runtimeReady) {
-      setBusyAction(null);
-      return;
-    }
-
-    setChatInput("");
-    shouldAutoScrollChatRef.current = true;
-    setShowJumpToLatest(false);
-    const startedAt = performance.now();
-    const requestedAt = new Date().toISOString();
-    updateChatMessages(chatMode, (current) => [
-      ...current,
-      { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
-    ]);
-
-    try {
-      const answer = await runChatOnce({
-        provider: selectedProvider,
-        model: providerModel,
-        prompt,
-        locale: ACTIVE_LOCALE,
-        apiKey: apiKey || null,
-        profile: assistantProfile,
-      });
-      const latencyMs = Math.round(performance.now() - startedAt);
-      setChatMetrics({
-        provider: selectedProvider,
-        model: providerModel,
-        latencyMs,
-        measuredAt: new Date().toISOString(),
-      });
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: answer,
-          createdAt: new Date().toISOString(),
-          provider: selectedProvider,
-          model: providerModel,
-          latencyMs,
-        },
-      ]);
-      log("Chat response received.");
-      if (chatMode === "runtime" && authSession) {
-        void recordRuntimeUsageEvent({
-          assistantProfileId: assistantProfile.sync.cloudProfileId ?? assistantProfile.id,
-          provider: selectedProvider,
-          model: providerModel,
-          inputChars: prompt.length,
-          outputChars: answer.length,
-          durationMs: latencyMs,
-          success: true,
-        }).catch((usageError) => {
-          log(`Runtime usage sync failed: ${String(usageError)}`);
-        });
-      }
-    } catch (error) {
-      const message = `Chat failed: ${String(error)}`;
-      const latencyMs = Math.round(performance.now() - startedAt);
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: message,
-          createdAt: new Date().toISOString(),
-          provider: selectedProvider,
-          model: providerModel,
-        },
-      ]);
-      log(message);
-      if (chatMode === "runtime" && authSession) {
-        void recordRuntimeUsageEvent({
-          assistantProfileId: assistantProfile.sync.cloudProfileId ?? assistantProfile.id,
-          provider: selectedProvider,
-          model: providerModel,
-          inputChars: prompt.length,
-          outputChars: message.length,
-          durationMs: latencyMs,
-          success: false,
-        }).catch((usageError) => {
-          log(`Runtime usage sync failed: ${String(usageError)}`);
-        });
-      }
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   useEffect(() => {
     if (!authSession) {
       return;
@@ -537,26 +322,6 @@ function App() {
       log(`Device registration failed: ${String(error)}`);
     });
   }, [authSession, hardware?.osName, selectedProvider, selectedModel, selectedCloudModel, status?.running]);
-
-  useEffect(() => {
-    saveRuntimeChatMessages(runtimeChatMessages);
-  }, [runtimeChatMessages]);
-
-  useEffect(() => {
-    if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
-      return;
-    }
-
-    if (!shouldAutoScrollChatRef.current) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      scrollChatToLatest(activeChatMessages.length === 0 ? "auto" : "smooth");
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [appMode, activeStep, activeChatMessages.length, busyAction, showChatIntroCard, selectedProvider, selectedModel, selectedCloudModel]);
 
   useEffect(() => {
     setSelectedModel(recommendedModel);
@@ -572,20 +337,6 @@ function App() {
 
     setSelectedProvider("ollama");
   }, [cloudRecommended, recommendedCloudModel]);
-
-  useEffect(() => {
-    if (!surveyTipExpanded) {
-      setSurveyTipContentVisible(false);
-      return;
-    }
-
-    setSurveyTipContentVisible(false);
-    const timer = window.setTimeout(() => {
-      setSurveyTipContentVisible(true);
-    }, 320);
-
-    return () => window.clearTimeout(timer);
-  }, [surveyTipExpanded]);
 
   const renderNavigation = () => (
     <SetupNavigation
@@ -626,7 +377,7 @@ function App() {
   const renderRuntimeNavigation = () => (
     <RuntimeNavigation
       activeAssistantId={promptProfileId}
-      activeConversationId={currentConversationId}
+      activeConversationId={activeConversationId}
       assistantConversationGroups={assistantConversationGroups}
       authSession={authSession}
       currentAssistantConversations={currentAssistantConversations}
@@ -916,10 +667,7 @@ function App() {
       t={t}
       onClearProviderKeys={clearProviderKeys}
       onExitSettings={exitSettings}
-      onOpenInitialSetup={() => {
-        setAppMode("setup");
-        setActiveStep("welcome");
-      }}
+      onOpenInitialSetup={openInitialSetup}
       onProviderKeysChange={setProviderKeys}
       onSaveProviderKeys={saveProviderKeys}
       onSelectedCloudModelChange={setSelectedCloudModel}
