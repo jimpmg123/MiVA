@@ -86,7 +86,7 @@ export function useRuntimeChat({
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
-  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages());
+  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages(promptProfileId));
   const [activeRuntimeConversationId, setActiveRuntimeConversationId] = useState<string | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -108,7 +108,7 @@ export function useRuntimeChat({
     messageCount: runtimeChatMessages.length,
     updatedAtLabel: lastRuntimeMessage?.createdAt ? justNowLabel : "Ready",
   };
-  const currentAssistantConversations = [currentRuntimeConversation];
+  const currentAssistantConversations = runtimeChatMessages.length ? [currentRuntimeConversation] : [];
   const runtimeAssistantProfiles = (() => {
     const profiles = new Map<string, LocalAssistantProfile>();
     visibleAssistantProfiles.forEach((profile) => profiles.set(profile.id, profile));
@@ -120,11 +120,29 @@ export function useRuntimeChat({
     }
     return Array.from(profiles.values());
   })();
-  const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => ({
-    assistantId: profile.id,
-    assistantName: profile.name,
-    conversations: profile.id === promptProfileId ? currentAssistantConversations : [],
-  }));
+  const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => {
+    const messages = profile.id === promptProfileId ? runtimeChatMessages : loadRuntimeChatMessages(profile.id);
+    const firstMessage = messages.find((message) => message.role === "user")?.content.trim();
+    const lastMessage = messages[messages.length - 1];
+    const conversations = messages.length
+      ? [{
+          id: `runtime_${profile.id}_current`,
+          assistantId: profile.id,
+          assistantName: profile.name,
+          title: firstMessage ? firstMessage.slice(0, 48) : chatTitle,
+          preview: lastMessage?.content,
+          modelLabel: profile.modelLabel || profile.model,
+          messageCount: messages.length,
+          updatedAtLabel: lastMessage?.createdAt ? justNowLabel : "Ready",
+        }]
+      : [];
+
+    return {
+      assistantId: profile.id,
+      assistantName: profile.name,
+      conversations,
+    };
+  });
 
   function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
     if (mode === "runtime") {
@@ -153,6 +171,7 @@ export function useRuntimeChat({
     }
 
     setRuntimeChatMessages([]);
+    saveRuntimeChatMessages(assistantId, []);
     setChatInput("");
     setActiveRuntimeConversationId(`runtime_${assistantId}_${Date.now()}`);
     setAppMode("runtime");
@@ -166,6 +185,7 @@ export function useRuntimeChat({
       setActiveLocalProfileId(profile.id);
       applyLocalAssistantProfile(profile);
     }
+    setRuntimeChatMessages(loadRuntimeChatMessages(conversation.assistantId));
     setActiveRuntimeConversationId(conversation.id);
     setAppMode("runtime");
   }
@@ -315,8 +335,22 @@ export function useRuntimeChat({
   }
 
   useEffect(() => {
-    saveRuntimeChatMessages(runtimeChatMessages);
-  }, [runtimeChatMessages]);
+    saveRuntimeChatMessages(promptProfileId, runtimeChatMessages);
+  }, [promptProfileId, runtimeChatMessages]);
+
+  useEffect(() => {
+    if (appMode !== "runtime") {
+      return;
+    }
+
+    setRuntimeChatMessages(loadRuntimeChatMessages(promptProfileId));
+    setActiveRuntimeConversationId((current) => (
+      current?.startsWith(`runtime_${promptProfileId}_`) ? current : `runtime_${promptProfileId}_current`
+    ));
+    setChatInput("");
+    shouldAutoScrollChatRef.current = true;
+    setShowJumpToLatest(false);
+  }, [appMode, promptProfileId]);
 
   useEffect(() => {
     if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
