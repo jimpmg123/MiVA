@@ -4,6 +4,7 @@ import { providerMeta } from "../features/models/catalog";
 import type { AppMode, AssistantProfileSyncState, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
 import { ModelsPanel } from "../studio/ModelsPage";
 import { MyAssistantsPanel } from "../studio/MyAssistantsPage";
+import { GoogleWorkspacePanel } from "../studio/GoogleWorkspacePage";
 import { PromptStudioPanel } from "../studio/PromptsPage";
 import { StudioOverviewPanel } from "../studio/OverviewPage";
 import { StudioToolsPanel } from "../studio/ToolsPage";
@@ -49,6 +50,10 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
     ["Agent skills", "Enable specialized abilities such as code help or file workflows.", "extension"],
     ["External APIs", "Attach custom APIs after provider security is finalized.", "api"],
   ],
+};
+
+const studioSectionDescription: Partial<Record<StudioSection, string>> = {
+  googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products, set permission levels, and let MiVA handle the local CLI setup flow.",
 };
 
 type StudioPageProps = {
@@ -315,6 +320,19 @@ export function StudioPage({
       );
     };
 
+    const renderGoogleWorkspaceStudio = () => {
+      const profile = buildCurrentLocalAssistantProfile();
+
+      return (
+        <GoogleWorkspacePanel
+          settings={profile.prompt.settings}
+          tauriRuntime={tauriRuntime}
+          workspacePolicyCopy={workspacePolicyCopy}
+          onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
+        />
+      );
+    };
+
     const renderModelStudio = () => (
       <ModelsPanel
         activeLocale={activeLocale}
@@ -354,7 +372,7 @@ export function StudioPage({
             {activeStudioSection.label}
           </h2>
           <p className="mt-2 max-w-[720px] text-base leading-7 text-[#42474d]">
-            Studio is the free-editing workspace after initial Setup. Prompts, 2D character, TTS, Google Workspace, and tools will be configured here.
+            {studioSectionDescription[studioSection] ?? "Studio is the free-editing workspace after initial Setup. Prompts, 2D character, TTS, Google Workspace, and tools will be configured here."}
           </p>
         </header>
 
@@ -366,6 +384,8 @@ export function StudioPage({
           renderModelStudio()
         ) : studioSection === "prompts" ? (
           renderPromptStudio()
+        ) : studioSection === "googleWorkspace" ? (
+          renderGoogleWorkspaceStudio()
         ) : studioSection === "tools" ? (
           renderStudioTools()
         ) : (

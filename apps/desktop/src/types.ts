@@ -27,6 +27,7 @@ export type CloudProviderId = Exclude<ProviderId, "ollama">;
 export type ProviderMode = "local" | "cloud";
 export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
 export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
+export type WorkspaceServiceId = "drive" | "gmail" | "calendar" | "docs" | "sheets";
 export type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
 export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
 export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
@@ -79,6 +80,7 @@ export type PromptSettings = {
   };
   toolConnections: {
     googleWorkspaceCli: boolean;
+    googleWorkspaceServices: WorkspaceServiceId[];
     daisoCli: boolean;
   };
   persona: string;
@@ -205,6 +207,25 @@ export type RuntimeRequirement = {
 
 export type RuntimeRequirements = {
   python: RuntimeRequirement;
+};
+
+export type WorkspaceCliToolStatus = {
+  installed: boolean;
+  command?: string | null;
+  version?: string | null;
+  error?: string | null;
+};
+
+export type WorkspaceCliStatus = {
+  npm: WorkspaceCliToolStatus;
+  gcloud: WorkspaceCliToolStatus;
+  gws: WorkspaceCliToolStatus;
+  auth: {
+    gcloudAccount?: string | null;
+    gwsAuthenticated: boolean;
+    gwsStatus?: string | null;
+    error?: string | null;
+  };
 };
 
 export type ProfileDetailsDraft = {

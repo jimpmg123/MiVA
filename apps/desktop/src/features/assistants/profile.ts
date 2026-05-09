@@ -7,6 +7,7 @@
   MemorySyncMode,
   ProfileDetailsDraft,
   PromptSettings,
+  WorkspaceServiceId,
   WorkspaceToolPolicy,
 } from "../../types";
 export const defaultProfileDetails: ProfileDetailsDraft = {
@@ -24,6 +25,7 @@ export const defaultPromptSettings: PromptSettings = {
   },
   toolConnections: {
     googleWorkspaceCli: false,
+    googleWorkspaceServices: ["drive", "gmail", "calendar"],
     daisoCli: false,
   },
   persona: "A practical personal assistant named MiVA.",
@@ -64,9 +66,9 @@ export const scheduleModeCopy: Record<CalendarActionMode, string> = {
 };
 
 export const workspacePolicyCopy: Record<WorkspaceToolPolicy, string> = {
-  disabled: "Disabled",
-  askFirst: "Ask first",
-  connectedOnly: "Connected only",
+  disabled: "Off",
+  askFirst: "Ask before every action",
+  connectedOnly: "Ask before every action",
 };
 
 export const codingCapabilityCopy: Record<CodingCapability, string> = {
@@ -101,6 +103,33 @@ function normalizeStringList(value: unknown, fallback: string[]) {
   return normalized.length ? normalized : [...fallback];
 }
 
+const workspaceServiceIds: WorkspaceServiceId[] = ["drive", "gmail", "calendar", "docs", "sheets"];
+
+function normalizeWorkspaceServices(value: unknown): WorkspaceServiceId[] {
+  if (!Array.isArray(value)) {
+    return [...defaultPromptSettings.toolConnections.googleWorkspaceServices];
+  }
+
+  const normalized = value
+    .filter((item): item is WorkspaceServiceId => (
+      typeof item === "string" && workspaceServiceIds.includes(item as WorkspaceServiceId)
+    ));
+
+  return Array.from(new Set(normalized));
+}
+
+function workspaceServicesToScopes(services: WorkspaceServiceId[]) {
+  const scopeMap: Record<WorkspaceServiceId, string[]> = {
+    drive: ["drive"],
+    gmail: ["gmail"],
+    calendar: ["calendar"],
+    docs: ["docs"],
+    sheets: ["sheets"],
+  };
+
+  return services.flatMap((service) => scopeMap[service]);
+}
+
 export function normalizePromptSettings(value: unknown): PromptSettings {
   const source = value && typeof value === "object" ? value as Partial<PromptSettings> : {};
   const simple = source.simple && typeof source.simple === "object"
@@ -125,7 +154,7 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       : defaultPromptSettings.scheduleRules.mode;
 
   const normalizeWorkspacePolicy = (value: unknown): WorkspaceToolPolicy => (
-    value === "askFirst" || value === "connectedOnly" || value === "disabled"
+    value === "askFirst" || value === "disabled"
       ? value
       : "disabled"
   );
@@ -166,6 +195,7 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       googleWorkspaceCli: typeof toolConnections.googleWorkspaceCli === "boolean"
         ? toolConnections.googleWorkspaceCli
         : defaultPromptSettings.toolConnections.googleWorkspaceCli,
+      googleWorkspaceServices: normalizeWorkspaceServices(toolConnections.googleWorkspaceServices),
       daisoCli: typeof toolConnections.daisoCli === "boolean"
         ? toolConnections.daisoCli
         : defaultPromptSettings.toolConnections.daisoCli,
@@ -246,10 +276,17 @@ export function normalizeProfileCapabilities(
     ? value.coding
     : codingSettingsToCapability(settings);
 
+  const workspaceEnabled = settings.toolConnections.googleWorkspaceCli;
+  const workspaceScopes = workspaceServicesToScopes(settings.toolConnections.googleWorkspaceServices);
+
   return {
     voice: value?.voice ?? { enabled: false, sttProvider: null, ttsProvider: null },
     character: value?.character ?? { enabled: false, renderer: null, characterId: null },
-    googleWorkspace: value?.googleWorkspace ?? { enabled: false, accountId: null, scopes: [] },
+    googleWorkspace: {
+      accountId: value?.googleWorkspace?.accountId ?? null,
+      enabled: workspaceEnabled,
+      scopes: workspaceEnabled ? workspaceScopes : [],
+    },
     files: value?.files ?? { enabled: false, allowedRoots: [] },
     tools: value?.tools ?? { enabled: false, enabledToolIds: [] },
     coding: {

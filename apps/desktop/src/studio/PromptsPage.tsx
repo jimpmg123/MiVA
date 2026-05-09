@@ -43,7 +43,9 @@ export function PromptStudioPanel({
       },
     }));
   };
-  const updateToolConnection = (key: keyof PromptSettings["toolConnections"], enabled: boolean) => {
+  type BooleanToolConnectionKey = "googleWorkspaceCli" | "daisoCli";
+
+  const updateToolConnection = (key: BooleanToolConnectionKey, enabled: boolean) => {
     onPromptSettingsChange((current) => ({
       ...current,
       toolConnections: {
@@ -71,7 +73,7 @@ export function PromptStudioPanel({
     }));
   };
   const toolOptions: Array<{
-    id: keyof PromptSettings["toolConnections"];
+    id: BooleanToolConnectionKey;
     title: string;
     label: string;
     icon: string;
