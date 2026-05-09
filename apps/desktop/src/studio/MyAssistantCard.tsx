@@ -1,14 +1,10 @@
-﻿import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
+import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
 import { Badge, PrimaryButton, SecondaryButton } from "../components/ui";
 
 type MyAssistantCardProps = {
   profile: LocalAssistantProfile;
   active: boolean;
   syncState: AssistantProfileSyncState;
-  providerLabel: string;
-  codingLabel: string;
-  codingProviderPolicyLabel: string;
-  codingProviderPolicyTone: "neutral" | "action";
   onSelect: () => void;
   onEdit: () => void;
   onSync: () => void;
@@ -16,14 +12,41 @@ type MyAssistantCardProps = {
   onDelete: () => void;
 };
 
+function formatCardDate(value?: string | null) {
+  if (!value) {
+    return "Not started";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not started";
+  }
+
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getPromptSummary(profile: LocalAssistantProfile) {
+  const purpose = profile.prompt?.settings?.simple?.assistantPurpose?.trim();
+  const desiredTasks = profile.prompt?.settings?.simple?.desiredTasks?.trim();
+  const defaultPurpose = "Help me organize daily tasks, answer questions, and plan practical next actions.";
+  const defaultTasks = "Write what you want this assistant to help with. Example: plan my study schedule, summarize notes, prepare calendar reminders.";
+
+  if (!purpose || purpose === defaultPurpose) {
+    return "Default";
+  }
+
+  if (desiredTasks && desiredTasks !== defaultTasks) {
+    return `${purpose} ${desiredTasks}`;
+  }
+
+  return purpose;
+}
+
 export function MyAssistantCard({
   profile,
   active,
   syncState,
-  providerLabel,
-  codingLabel,
-  codingProviderPolicyLabel,
-  codingProviderPolicyTone,
   onSelect,
   onEdit,
   onSync,
@@ -32,23 +55,8 @@ export function MyAssistantCard({
 }: MyAssistantCardProps) {
   const syncLabel = profile.sync?.cloudEnabled ? "Cloud synced" : "Local only";
   const syncTone = profile.sync?.cloudEnabled ? "success" : "neutral";
-  const formatCardDate = (value?: string | null) => {
-    if (!value) {
-      return "Not started";
-    }
-
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return "Not started";
-    }
-
-    const pad = (number: number) => String(number).padStart(2, "0");
-    return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  };
-  const promptSummary = profile.prompt.settings.simple.assistantPurpose
-    || profile.prompt.systemPrompt
-    || profile.description
-    || "No prompt summary yet.";
+  const promptSummary = getPromptSummary(profile);
+  const roleLabel = profile.useCase ? profile.useCase[0].toUpperCase() + profile.useCase.slice(1) : "General";
 
   return (
     <article
@@ -69,28 +77,23 @@ export function MyAssistantCard({
       <h4 className="mt-3 truncate font-heading text-lg font-bold text-[#191c1d]">{profile.name}</h4>
       <p className="mt-1 line-clamp-1 text-sm leading-6 text-[#42474d]">{profile.description}</p>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {[
-          ["Role", profile.useCase ?? "daily"],
-          ["Model", profile.modelLabel || profile.model],
-        ].map(([label, value]) => (
-          <div className="rounded-xl bg-[#f3f4f5] p-2.5" key={label}>
-            <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">{label}</span>
-            <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{value}</p>
-          </div>
-        ))}
+      <div className="mt-3 grid gap-2">
+        <div className="rounded-xl bg-[#f3f4f5] p-3">
+          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Prompt character</span>
+          <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[#191c1d]">{promptSummary}</p>
+        </div>
       </div>
 
       <div className="pointer-events-none absolute left-0 right-0 top-[calc(100%-6px)] z-50 translate-y-1 opacity-0 transition duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
         <div className="rounded-2xl border border-[#c2c7ce]/70 bg-white p-4 shadow-[0_18px_42px_rgba(53,96,127,0.22)]">
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Provider</span>
-              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{providerLabel}</p>
+              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Prompt character</span>
+              <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[#191c1d]">{promptSummary}</p>
             </div>
             <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Coding</span>
-              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{codingLabel}</p>
+              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Role</span>
+              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{roleLabel}</p>
             </div>
             <div className="rounded-xl bg-[#f3f4f5] p-2.5">
               <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Last updated</span>
@@ -102,16 +105,12 @@ export function MyAssistantCard({
             </div>
           </div>
 
-          <div className="mt-3 rounded-xl bg-[#f3f4f5] p-2.5">
-            <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Prompt summary</span>
-            <p className="mt-1 line-clamp-2 text-sm leading-6 text-[#42474d]">{promptSummary}</p>
-          </div>
-
           <div className="mt-3 flex flex-wrap gap-2">
-            <Badge tone={codingProviderPolicyTone}>{codingProviderPolicyLabel}</Badge>
-            {profile.futureFeatures.map((feature) => (
-              <Badge key={feature}>{feature}</Badge>
-            ))}
+            {profile.futureFeatures.length ? (
+              profile.futureFeatures.map((feature) => <Badge key={feature}>{feature}</Badge>)
+            ) : (
+              <Badge>Default profile</Badge>
+            )}
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">

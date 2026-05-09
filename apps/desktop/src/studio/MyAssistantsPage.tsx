@@ -1,4 +1,4 @@
-﻿import type { AssistantProfileSyncState, CodingProviderPolicy, LocalAssistantProfile } from "../types";
+import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
 import { Badge, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
 import { MyAssistantCard } from "./MyAssistantCard";
 
@@ -6,10 +6,6 @@ type MyAssistantsPanelProps = {
   profiles: LocalAssistantProfile[];
   activeProfileId: string;
   syncState: AssistantProfileSyncState;
-  getProviderLabel: (profile: LocalAssistantProfile) => string;
-  getCodingLabel: (profile: LocalAssistantProfile) => string;
-  getCodingProviderPolicy: (profile: LocalAssistantProfile) => CodingProviderPolicy;
-  getCodingProviderPolicyLabel: (profile: LocalAssistantProfile) => string;
   onSelect: (profile: LocalAssistantProfile) => void;
   onEdit: (profile: LocalAssistantProfile) => void;
   onSync: (profile: LocalAssistantProfile) => void;
@@ -23,10 +19,6 @@ export function MyAssistantsPanel({
   profiles,
   activeProfileId,
   syncState,
-  getProviderLabel,
-  getCodingLabel,
-  getCodingProviderPolicy,
-  getCodingProviderPolicyLabel,
   onSelect,
   onEdit,
   onSync,
@@ -56,28 +48,19 @@ export function MyAssistantsPanel({
       </Panel>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        {profiles.map((profile) => {
-          const active = profile.id === activeProfileId;
-          const codingProviderPolicy = getCodingProviderPolicy(profile);
-
-          return (
-            <MyAssistantCard
-              active={active}
-              codingLabel={getCodingLabel(profile)}
-              codingProviderPolicyLabel={getCodingProviderPolicyLabel(profile)}
-              codingProviderPolicyTone={codingProviderPolicy === "cloudRequired" ? "action" : "neutral"}
-              key={profile.id}
-              onDelete={() => onDelete(profile)}
-              onEdit={() => onEdit(profile)}
-              onRun={() => onRun(profile)}
-              onSelect={() => onSelect(profile)}
-              onSync={() => onSync(profile)}
-              profile={profile}
-              providerLabel={getProviderLabel(profile)}
-              syncState={syncState}
-            />
-          );
-        })}
+        {profiles.map((profile) => (
+          <MyAssistantCard
+            active={profile.id === activeProfileId}
+            key={profile.id}
+            onDelete={() => onDelete(profile)}
+            onEdit={() => onEdit(profile)}
+            onRun={() => onRun(profile)}
+            onSelect={() => onSelect(profile)}
+            onSync={() => onSync(profile)}
+            profile={profile}
+            syncState={syncState}
+          />
+        ))}
       </div>
     </div>
   );

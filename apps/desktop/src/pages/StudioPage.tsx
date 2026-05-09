@@ -63,6 +63,7 @@ type StudioPageProps = {
   activeModelLabel: string;
   assistantProfileStore: { profiles: LocalAssistantProfile[] };
   assistantProfileError: string | null;
+  assistantProfileSaveState: "idle" | "saving" | "saved" | "error";
   assistantProfileSyncMessage: string | null;
   assistantProfileSyncState: AssistantProfileSyncState;
   busyAction: string | null;
@@ -112,6 +113,7 @@ export function StudioPage({
   activeModelLabel,
   assistantProfileStore,
   assistantProfileError,
+  assistantProfileSaveState,
   assistantProfileSyncMessage,
   assistantProfileSyncState,
   busyAction,
@@ -181,10 +183,6 @@ export function StudioPage({
       return (
         <MyAssistantsPanel
           activeProfileId={activeLocalProfileId}
-          getCodingLabel={(profile) => codingCapabilityCopy[normalizePromptSettings(profile.prompt?.settings).coding.capability]}
-          getCodingProviderPolicy={(profile) => normalizePromptSettings(profile.prompt?.settings).coding.providerPolicy}
-          getCodingProviderPolicyLabel={(profile) => codingProviderPolicyCopy[normalizePromptSettings(profile.prompt?.settings).coding.providerPolicy]}
-          getProviderLabel={(profile) => providerMeta[profile.provider]?.label ?? profile.provider}
           onDelete={(profile) => void deleteLocalAssistantProfile(profile.id)}
           onEdit={(profile) => {
             if (!onConfirmDiscardStudioChanges()) {
@@ -400,6 +398,17 @@ export function StudioPage({
                 <Badge>Placeholder</Badge>
               </Panel>
             ))}
+          </div>
+        )}
+
+        {(assistantProfileSaveState === "saving" || assistantProfileSaveState === "saved") && (
+          <div className="pointer-events-none fixed left-[calc(290px+(100vw-290px)/2)] top-6 z-[80] w-[min(520px,calc(100vw-338px))] rounded-2xl border border-[#c2c7ce]/70 bg-white/82 px-5 py-4 text-center shadow-[0_18px_48px_rgba(53,96,127,0.22)] backdrop-blur-md save-toast-enter">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#72787e]">
+              {assistantProfileSaveState === "saving" ? "Saving assistant" : "Saved"}
+            </p>
+            <p className="mt-1 font-heading text-lg font-bold text-[#191c1d]">
+              {assistantProfileSaveState === "saving" ? "Saving changes..." : "Changes saved."}
+            </p>
           </div>
         )}
 

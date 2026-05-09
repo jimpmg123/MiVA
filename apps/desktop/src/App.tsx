@@ -421,6 +421,7 @@ function App() {
       applyLocalAssistantProfile={applyLocalAssistantProfile}
       assistantProfileStore={visibleAssistantProfileStore}
       assistantProfileError={assistantProfileError}
+      assistantProfileSaveState={assistantProfileSaveState}
       assistantProfileSyncMessage={assistantProfileSyncMessage}
       assistantProfileSyncState={assistantProfileSyncState}
       buildCurrentLocalAssistantProfile={buildCurrentLocalAssistantProfile}
