@@ -1,6 +1,6 @@
 # MiVA Software Design Document
 
-Last updated: 2026-05-04
+Last updated: 2026-05-07
 
 ## 1. Project Overview
 
@@ -345,6 +345,14 @@ Web is treated as setup/admin/sync console.
 Local model chat happens in MiVA Desktop through Local Helper and Ollama.
 ```
 
+Local desktop storage policy:
+
+```text
+MiVA Desktop keeps a small local data store for assistant profiles, setup state, device identity, and optional local conversations or memory snapshots. Runtime states such as Ollama status, installed model lists, gcloud/gws status, and download progress are detected on demand instead of stored permanently.
+```
+
+See `docs/LOCAL_DATA_STORE.md` for the detailed local storage policy.
+
 | Data | Default Location | Notes |
 | --- | --- | --- |
 | User account | Cloud DB | Required for web account features |
@@ -365,7 +373,7 @@ Local model chat happens in MiVA Desktop through Local Helper and Ollama.
 | Dashboard | Connection health, active model, local status overview |
 | Devices | Hardware and desktop/local service visibility |
 | Models | Local model catalog and model download actions |
-| My Assistants | Assistant profile creation and management |
+| My Assistants | Read-only review of synced assistant prompts and enabled features |
 | API Keys | Cloud provider key registration and test UI |
 | Usage | Usage summary and recent events |
 | Billing | Placeholder plan UI |
@@ -414,7 +422,7 @@ POST /auth/device/complete
 GET  /assistant-profiles
 POST /assistant-profiles
 PATCH /assistant-profiles/:id
-POST /assistant-profiles/:id/finalize
+DELETE /assistant-profiles/:id
 GET  /api-keys
 POST /api-keys
 POST /api-keys/:id/test
@@ -422,6 +430,14 @@ GET  /usage/summary
 POST /usage/local-events
 POST /usage-events
 GET  /admin/stats
+```
+
+Planned report/export endpoints:
+
+```text
+GET  /reports/summary
+POST /reports/pdf
+GET  /reports/:id
 ```
 
 ### Current Local Helper API
@@ -543,13 +559,13 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant Desktop as MiVA Desktop
 
-  User->>Web: Edit assistant profile
-  Web->>API: PATCH /assistant-profiles/:id
+  User->>Desktop: Edit assistant profile
+  Desktop->>API: POST /assistant-profiles
   API->>DB: Save structured profile settings
   DB-->>API: Updated profile
-  API-->>Web: Return updated profile
-  Desktop->>API: Sync profile update
-  API-->>Desktop: Return latest profile
+  API-->>Desktop: Return synced profile
+  Web->>API: GET /assistant-profiles
+  API-->>Web: Return latest profile for read-only review
   Desktop->>Desktop: Use profile for runtime prompt
 ```
 

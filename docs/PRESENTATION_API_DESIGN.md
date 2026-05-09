@@ -1,0 +1,382 @@
+# MiVA API, Data, and Sequence Design
+
+Last updated: 2026-05-07
+
+This document is prepared for presentation and report material. It summarizes the current implemented APIs, the planned report APIs, the database choice, and two UML sequence diagrams based on main use cases.
+
+## 1. API Architecture Overview
+
+MiVA uses two service layers.
+
+```text
+Cloud API
+- Runs as the account, sync, database, admin, and integration service.
+- Current dev URL: http://127.0.0.1:4000
+- Planned production host: Railway
+
+Local Helper API
+- Runs only on the user's computer.
+- Controls Ollama, local model download, and local chat execution.
+- Current dev URL: http://127.0.0.1:43110
+```
+
+High-level request path:
+
+```mermaid
+flowchart LR
+  User["User"] --> Web["MiVA Web Console"]
+  User --> Desktop["MiVA Desktop"]
+
+  Web --> Api["Cloud API"]
+  Desktop --> Api
+  Api --> Db["Supabase PostgreSQL"]
+  Api --> Google["Google OAuth"]
+
+  Web -. "same-device localhost" .-> Helper["Local Helper API"]
+  Desktop --> Helper
+  Helper --> Ollama["Ollama Runtime"]
+  Ollama --> Models["Local Model Files"]
+```
+
+## 2. Role-Based API Groups
+
+### Public / Health APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/health` | Web, Desktop, monitors | Check Cloud API availability | Implemented |
+| GET | Local Helper `/health` | Web, Desktop | Check Local Helper availability | Implemented |
+
+### Authentication APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/me` | Web, Desktop | Resolve current user from bearer token. Falls back to dev user in local mode. | Implemented |
+| POST | `/auth/login` | Web dev login | Local development email/password login. Not intended for production. | Implemented |
+| POST | `/auth/google` | Web | Verify Google ID token, upsert user, create MiVA session. | Implemented |
+| POST | `/auth/device/start` | Desktop/Web bridge | Start temporary device auth request. | Implemented in memory |
+| GET | `/auth/device/:code` | Desktop polling | Check device auth request status. | Implemented in memory |
+| POST | `/auth/device/complete` | Web | Complete device login using an existing session token. | Implemented in memory |
+
+Production policy:
+
+```text
+Primary login: Google OAuth
+Admin account: role = ADMIN in users table
+Local email/password login: development fallback only
+```
+
+### User Device APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/devices` | Web, Desktop | List devices owned by the current user. | Implemented |
+| POST | `/devices` | Desktop | Register or update a desktop device record. | Implemented |
+
+Device data is a summary only. MiVA does not upload full local hardware snapshots by default.
+
+### Assistant Profile APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/assistant-profiles` | Web, Desktop | List current user's synced assistant profiles. | Implemented |
+| POST | `/assistant-profiles` | Desktop | Create or upsert a synced assistant profile. | Implemented |
+| GET | `/assistant-profiles/:id` | Web, Desktop | Read one assistant profile. | Implemented |
+| PATCH | `/assistant-profiles/:id` | Desktop/API clients | Update one assistant profile. | Implemented |
+| DELETE | `/assistant-profiles/:id` | API clients | Delete one assistant profile. | Implemented |
+
+Current product rule:
+
+```text
+Desktop is the main editor for assistant profiles.
+Web My Assistants is read-only for reviewing synced prompts and enabled features.
+Assistant profiles store settings, not raw chat history.
+```
+
+### Model Catalog / Local Model APIs
+
+Cloud API:
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/catalog/models` | Web, Desktop | Return the allowed lightweight model catalog. | Implemented |
+
+Local Helper API:
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/ollama/status` | Web, Desktop | Detect Ollama installation, running state, and installed models. | Implemented |
+| POST | `/ollama/start` | Web, Desktop | Start Ollama locally if installed. | Implemented |
+| POST | `/ollama/install` | Desktop/local helper flow | Install Ollama through winget when available. | Implemented |
+| GET | `/catalog/models` | Web, Desktop | Return local model catalog. | Implemented |
+| GET | `/models` | Web, Desktop | Return Ollama state and catalog with installed flags. | Implemented |
+| POST | `/models/pull` | Web, Desktop | Download an allowed Ollama model and stream progress. | Implemented |
+| POST | `/chat` | Desktop runtime | Send a local chat request to Ollama or configured provider. | Implemented in local helper |
+
+Important boundary:
+
+```text
+The Cloud API does not download model files.
+Local model files are downloaded through Local Helper and stored by Ollama on the user's computer.
+```
+
+### Provider Credential APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/api-keys` | Web | List configured provider credential metadata. | Implemented |
+| POST | `/api-keys` | Web | Save provider credential metadata/key material. | Implemented |
+| POST | `/api-keys/:id/test` | Web | Mark/test a provider credential. | Implemented |
+
+Security note:
+
+```text
+Production storage must encrypt provider keys at rest.
+For a university MVP, full encryption may be added later, but plaintext keys should not be used in production.
+```
+
+### Usage and Admin APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| POST | `/usage-events` | Web | Record simple non-sensitive usage metrics. | Implemented |
+| GET | `/usage/summary` | Web | Return usage summary for dashboard/report views. | Implemented |
+| POST | `/usage/local-events` | Desktop | Sync local runtime usage metadata without chat text. | Implemented |
+| GET | `/admin/stats` | Admin Web | Return product-level admin analytics. | Implemented |
+
+Admin policy:
+
+```text
+Admin accounts are for the web analytics/dashboard only.
+Admin users should not create or run assistant profiles in the desktop app.
+```
+
+### Planned Report APIs
+
+These endpoints are useful for the final report/presentation, but they are not implemented in the current codebase yet.
+
+| Method | Endpoint | Caller | Purpose | Implementation Plan |
+| --- | --- | --- | --- | --- |
+| GET | `/reports/summary` | Admin Web | Return a report-friendly summary combining user/device/profile/model/usage data. | Can wrap `/admin/stats` and `/usage/summary`. |
+| POST | `/reports/pdf` | Admin Web | Generate or request a PDF export of admin/report data. | Add later as a report module or background job. |
+| GET | `/reports/:id` | Admin Web | Retrieve generated report metadata or download URL. | Future. |
+
+Recommended mapping:
+
+```text
+GET /reports/summary
+  -> internally calls admin statistics and usage aggregation logic
+
+POST /reports/pdf
+  -> accepts report filters
+  -> creates a PDF export job
+  -> returns report id or download URL
+```
+
+## 3. Database and ORM
+
+MiVA currently uses:
+
+```text
+Database: Supabase PostgreSQL
+ORM: Prisma
+API database access: Prisma Client
+Migration control: Prisma Migrate
+Planned backend host: Railway
+Planned frontend host: Vercel
+```
+
+Why PostgreSQL:
+
+```text
+- Users, sessions, devices, assistant profiles, credentials, and usage events are relational.
+- Prisma gives explicit schema and migration history.
+- JSON columns can handle semi-structured assistant prompt settings and capability flags.
+- Supabase provides managed PostgreSQL without requiring MiVA to use Supabase Auth.
+```
+
+Core tables:
+
+| Table | Main Purpose |
+| --- | --- |
+| `users` | MiVA account identity, Google subject, role, locale |
+| `auth_sessions` | Hashed session tokens |
+| `devices` | Registered desktop device summaries |
+| `assistant_profiles` | Synced assistant settings, prompt, model/provider choice |
+| `model_preferences` | Preferred local/cloud model choices |
+| `provider_credentials` | Provider API key metadata and stored credential value |
+| `workspace_connections` | Google Workspace connection state and token metadata |
+| `tool_permissions` | Future tool/MCP permission policies |
+| `usage_events` | Non-sensitive usage and runtime metrics |
+| `audit_logs` | Security/action audit history |
+
+Data boundary:
+
+```text
+Stored in cloud:
+- account data
+- device summaries
+- assistant profile settings
+- provider/workspace metadata
+- usage/admin metrics
+
+Not stored in cloud by default:
+- raw chat transcripts
+- local model files
+- local files
+- microphone/audio data
+- raw terminal/tool output
+```
+
+## 4. UML Sequence Diagram 1: Google Login and Assistant Sync
+
+Use case:
+
+```text
+User signs in with Google, creates/edits an assistant in Desktop, and syncs it so Web can review the profile.
+```
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop
+  participant Web as MiVA Web
+  participant Google as Google OAuth
+  participant API as MiVA Cloud API
+  participant DB as Supabase PostgreSQL
+
+  User->>Web: Click Continue with Google
+  Web->>Google: Request Google credential
+  Google-->>Web: Return ID token
+  Web->>API: POST /auth/google
+  API->>Google: Verify ID token
+  Google-->>API: Verified Google profile
+  API->>DB: Upsert user and create auth session
+  DB-->>API: User/session saved
+  API-->>Web: Return MiVA session token
+
+  User->>Desktop: Edit assistant profile
+  Desktop->>API: POST /assistant-profiles
+  API->>DB: Upsert assistant profile for current user
+  DB-->>API: Saved profile
+  API-->>Desktop: Return synced profile
+
+  User->>Web: Open My Assistants
+  Web->>API: GET /assistant-profiles
+  API->>DB: Query profiles by userId
+  DB-->>API: Assistant profile list
+  API-->>Web: Return profiles
+  Web-->>User: Display read-only prompt and enabled features
+```
+
+## 5. UML Sequence Diagram 2: Local Model Download and Runtime Usage Reporting
+
+Use case:
+
+```text
+User downloads a local model, runs a local chat in Desktop, and MiVA sends non-sensitive usage metadata to the cloud.
+```
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop
+  participant Helper as Local Helper API
+  participant Ollama as Ollama Runtime
+  participant API as MiVA Cloud API
+  participant DB as Supabase PostgreSQL
+
+  User->>Desktop: Open Models page
+  Desktop->>Helper: GET /models
+  Helper->>Ollama: GET /api/tags
+  Ollama-->>Helper: Installed model list
+  Helper-->>Desktop: Catalog with installed status
+
+  User->>Desktop: Click Download Model
+  Desktop->>Helper: POST /models/pull
+  Helper->>Ollama: POST /api/pull
+  Ollama-->>Helper: Stream download progress
+  Helper-->>Desktop: Stream progress to UI
+
+  User->>Desktop: Send chat message
+  Desktop->>Helper: POST /chat
+  Helper->>Ollama: POST /api/chat
+  Ollama-->>Helper: Model response
+  Helper-->>Desktop: Assistant answer
+
+  Desktop->>API: POST /usage/local-events
+  API->>DB: Insert usage_events metadata
+  DB-->>API: Usage event saved
+  API-->>Desktop: Accepted
+```
+
+Privacy point:
+
+```text
+The usage event stores provider/model/duration/success counters.
+It does not store the raw user message or assistant response by default.
+```
+
+## 6. Current vs Planned API Summary
+
+Current implementation:
+
+```text
+GET  /health
+GET  /me
+POST /auth/login
+POST /auth/google
+POST /auth/device/start
+GET  /auth/device/:code
+POST /auth/device/complete
+GET  /catalog/models
+GET  /devices
+POST /devices
+GET  /api-keys
+POST /api-keys
+POST /api-keys/:id/test
+GET  /assistant-profiles
+POST /assistant-profiles
+GET  /assistant-profiles/:id
+PATCH /assistant-profiles/:id
+DELETE /assistant-profiles/:id
+POST /usage-events
+GET  /usage/summary
+POST /usage/local-events
+GET  /admin/stats
+```
+
+Current Local Helper implementation:
+
+```text
+GET  /health
+GET  /ollama/status
+POST /ollama/start
+POST /ollama/install
+GET  /catalog/models
+GET  /models
+POST /models/pull
+POST /chat
+```
+
+Planned report API:
+
+```text
+GET  /reports/summary
+POST /reports/pdf
+GET  /reports/:id
+```
+
+## 7. Presentation Notes
+
+Key talking points:
+
+```text
+1. MiVA is local-first: actual local model execution stays on the user's computer.
+2. The cloud API manages identity, sync, settings, and admin statistics.
+3. Web is a console for setup/review/admin, not the default local chat runtime.
+4. Desktop and Local Helper handle Ollama, model downloads, and local chat.
+5. PostgreSQL stores structured settings and metrics, not private chat transcripts.
+6. Admin analytics use usage_events and assistant profile metadata.
+7. Report APIs are planned as a wrapper/export layer over current usage/admin APIs.
+```

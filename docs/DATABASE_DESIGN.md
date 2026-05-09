@@ -1,6 +1,6 @@
-# MiVA Database Design
+﻿# MiVA Database Design
 
-Last updated: 2026-05-04
+Last updated: 2026-05-07
 
 ## 1. Database Decision
 
@@ -49,6 +49,26 @@ Memory policy is also local-first. Raw chat transcripts stay on the device by de
 Initial setup is device-local. It is considered complete when the current device has at least one finalized local assistant profile. Login is not required for local setup or test chat.
 
 Cross-device sync starts after login. Another device can download synced assistant profiles and optional summary memories, then download any missing local model separately.
+
+Local storage policy is documented separately in [LOCAL_DATA_STORE.md](./LOCAL_DATA_STORE.md). The desktop local store is treated as part of MiVA's data design, but it intentionally stays small:
+
+```text
+Persist locally:
+- assistant profiles
+- setup completed flag
+- stable local device id
+- optional local conversations
+- optional summary memory snapshots
+- temporary offline usage queue
+
+Detect on demand instead of storing:
+- Ollama status
+- installed model list
+- gcloud/gws status
+- CLI setup progress
+- model download progress
+- routine logs
+```
 
 ## 3. User-Facing Tables
 
@@ -139,7 +159,7 @@ Device sync policy:
 
 ### assistant_profiles
 
-Stores structured assistant configuration synced from Desktop or edited from Web. Assistant profile sync is separate from chat history sync.
+Stores structured assistant configuration synced from Desktop. Assistant profile sync is separate from chat history sync. The web console currently reviews synced profiles as read-only data.
 
 ```text
 id
@@ -155,11 +175,9 @@ provider
 model
 future_features JSON
 is_default
-status
 source
 prompt JSON
 capabilities JSON
-completed_at
 created_at
 updated_at
 ```
@@ -197,10 +215,9 @@ summaryMemory
 UI labels:
 
 ```text
-설정만 동기화
-요약 기억 동기화
+Settings only
+Summary memory sync
 ```
-
 Policy:
 
 ```text
@@ -452,6 +469,7 @@ Implemented:
 - desktop device registration
 - desktop runtime usage metadata sync
 - profileOnly / summaryMemory setup choice stored in assistant profile capabilities
+- assistant profile draft/finalized status removed for simpler save semantics
 
 Planned:
 - OAuth-only production login UI
