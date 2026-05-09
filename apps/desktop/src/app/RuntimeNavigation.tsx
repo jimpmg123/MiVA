@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AuthSession } from "../types";
+import { BrandLogo } from "./BrandLogo";
 import { UserNavButton } from "./UserNavButton";
 
 type RuntimeNavigationProps = {
@@ -59,9 +60,7 @@ export function RuntimeNavigation({
   return (
     <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
       <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
-        <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#35607f] text-white shadow-sm">
-          <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
-        </div>
+        <BrandLogo />
         <div>
           <h1 className="font-heading text-sm font-extrabold text-[#191c1d]">MiVA</h1>
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantWorkspace}</p>

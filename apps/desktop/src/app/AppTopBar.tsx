@@ -36,7 +36,6 @@ export function AppTopBar({
   return (
     <header className="grid h-[60px] w-full min-w-0 grid-cols-[minmax(0,1fr)_minmax(180px,320px)_auto] items-center gap-3 border-b border-[#c2c7ce]/60 bg-[#f8f9fa]/85 px-5 backdrop-blur-md">
       <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-        <span className="font-heading text-lg font-bold tracking-tight text-[#35607f]">MiVA</span>
         {!settingsOpen && (
           <div className="flex min-w-0 shrink rounded-full border border-[#c2c7ce]/60 bg-[#e7e8e9]/60 p-0.5">
             <button
