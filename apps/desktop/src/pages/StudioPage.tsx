@@ -83,6 +83,7 @@ type StudioPageProps = {
   syncAllAssistantProfilesToCloud: () => Promise<void>;
   syncAssistantProfileToCloud: (profile: LocalAssistantProfile) => Promise<void>;
   deleteLocalAssistantProfile: (profileId: string) => Promise<void>;
+  renameLocalAssistantProfile: (profileId: string, name: string) => Promise<void>;
   applyLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
   addCurrentLocalAssistantProfile: () => Promise<unknown>;
   buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
@@ -133,6 +134,7 @@ export function StudioPage({
   syncAllAssistantProfilesToCloud,
   syncAssistantProfileToCloud,
   deleteLocalAssistantProfile,
+  renameLocalAssistantProfile,
   applyLocalAssistantProfile,
   addCurrentLocalAssistantProfile,
   buildCurrentLocalAssistantProfile,
@@ -184,6 +186,7 @@ export function StudioPage({
         <MyAssistantsPanel
           activeProfileId={activeLocalProfileId}
           onDelete={(profile) => void deleteLocalAssistantProfile(profile.id)}
+          onRename={(profile, name) => void renameLocalAssistantProfile(profile.id, name)}
           onEdit={(profile) => {
             if (!onConfirmDiscardStudioChanges()) {
               return;

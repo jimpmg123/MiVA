@@ -7,6 +7,7 @@ type MyAssistantCardProps = {
   syncState: AssistantProfileSyncState;
   onSelect: () => void;
   onEdit: () => void;
+  onRename: () => void;
   onSync: () => void;
   onRun: () => void;
   onDelete: () => void;
@@ -49,6 +50,7 @@ export function MyAssistantCard({
   syncState,
   onSelect,
   onEdit,
+  onRename,
   onSync,
   onRun,
   onDelete,
@@ -74,7 +76,27 @@ export function MyAssistantCard({
         </div>
       </div>
 
-      <h4 className="mt-3 truncate font-heading text-lg font-bold text-[#191c1d]">{profile.name}</h4>
+      <div className="mt-3 flex min-w-0 items-center gap-2">
+        <h4 className="min-w-0 flex-1 truncate font-heading text-lg font-bold text-[#191c1d]">{profile.name}</h4>
+        <button
+          aria-label={`Rename ${profile.name}`}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#35607f]"
+          onClick={onRename}
+          title="Rename assistant"
+          type="button"
+        >
+          <span className="material-symbols-outlined text-[18px]">edit</span>
+        </button>
+        <button
+          aria-label={`Delete ${profile.name}`}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#ffdad6] hover:text-[#93000a]"
+          onClick={onDelete}
+          title="Delete assistant"
+          type="button"
+        >
+          <span className="material-symbols-outlined text-[18px]">delete</span>
+        </button>
+      </div>
       <p className="mt-1 line-clamp-1 text-sm leading-6 text-[#42474d]">{profile.description}</p>
 
       <div className="mt-3 grid gap-2">
@@ -120,9 +142,6 @@ export function MyAssistantCard({
               {syncState === "syncing" ? "Syncing..." : "Sync"}
             </SecondaryButton>
             <PrimaryButton onClick={onRun}>Run</PrimaryButton>
-            <SecondaryButton className="border-[#ffdad6] text-[#93000a] hover:bg-[#ffdad6]/40" onClick={onDelete}>
-              Delete
-            </SecondaryButton>
           </div>
         </div>
       </div>

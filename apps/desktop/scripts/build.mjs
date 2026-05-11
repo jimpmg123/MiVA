@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const commands = [
   [process.execPath, [join("node_modules", "typescript", "bin", "tsc")]],
@@ -8,6 +11,7 @@ const commands = [
 
 for (const [command, args] of commands) {
   const result = spawnSync(command, args, {
+    cwd: packageRoot,
     stdio: "inherit",
     shell: false,
   });
@@ -16,4 +20,3 @@ for (const [command, args] of commands) {
     process.exit(result.status || 1);
   }
 }
-

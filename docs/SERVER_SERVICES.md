@@ -318,7 +318,7 @@ Why:
 
 - NestJS is structured enough for auth, devices, integrations, providers, and billing.
 - Prisma fits the TypeScript stack and keeps migrations explicit.
-- PostgreSQL is the safest default for user, device, preference, OAuth, and audit data.
+- PostgreSQL is the safest default for user, device, preference, OAuth, and usage data.
 - Redis/BullMQ should be added only when background jobs become real.
 
 ## Initial Database Sketch
@@ -384,14 +384,6 @@ tool_permissions
   device_id
   tool_id
   permission_scope
-  created_at
-
-audit_logs
-  id
-  user_id
-  device_id
-  action
-  metadata
   created_at
 ```
 

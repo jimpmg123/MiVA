@@ -170,6 +170,7 @@ function App() {
     applyLocalAssistantProfile,
     saveCurrentLocalAssistantProfile,
     addCurrentLocalAssistantProfile,
+    renameLocalAssistantProfile,
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,
@@ -356,7 +357,7 @@ function App() {
       activeProviderLabel={activeProviderLabel}
       activeProviderMode={activeProviderMode}
       appMode={appMode}
-      centerHidden={appMode === "studio"}
+      centerHidden={appMode === "studio" || appMode === "setup"}
       onEnterSettings={enterGeneralSettingsFromTopBar}
       onModeChange={changeAppMode}
       onStudioSave={saveStudioDraft}
@@ -436,6 +437,7 @@ function App() {
       promptEditorMode={promptEditorMode}
       providerText={providerText}
       saveCurrentLocalAssistantProfile={saveCurrentLocalAssistantProfile}
+      renameLocalAssistantProfile={renameLocalAssistantProfile}
       selectedCloudModel={selectedCloudModel}
       selectedModel={selectedModel}
       selectedProvider={selectedProvider}

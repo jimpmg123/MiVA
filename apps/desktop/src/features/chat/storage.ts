@@ -48,3 +48,11 @@ export function loadRuntimeChatMessages(assistantId: string): ChatMessage[] {
 export function saveRuntimeChatMessages(assistantId: string, messages: ChatMessage[]) {
   window.localStorage.setItem(runtimeChatStorageKey(assistantId), JSON.stringify(messages));
 }
+
+export function deleteRuntimeChatMessages(assistantId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(runtimeChatStorageKey(assistantId));
+}

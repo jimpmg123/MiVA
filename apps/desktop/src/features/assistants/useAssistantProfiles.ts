@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
 import { upsertCloudAssistantProfile } from "../cloud/client";
+import { deleteRuntimeChatMessages } from "../chat/storage";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
 import { buildLocalAssistantProfile } from "./profileFactory";
 import {
@@ -342,10 +343,6 @@ export function useAssistantProfiles({
       return;
     }
 
-    if (!window.confirm(`Delete "${profile.name}" from this computer?`)) {
-      return;
-    }
-
     const { nextStore, nextActiveProfile } = removeAssistantProfileStore(assistantProfileStore, profileId);
     setAssistantProfileSaveState("saving");
     setAssistantProfileError(null);
@@ -374,15 +371,51 @@ export function useAssistantProfiles({
 
     try {
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      deleteRuntimeChatMessages(profileId);
       setAssistantProfileStore(savedStore);
-      setAssistantProfileSaveState("saved");
+      setAssistantProfileSaveState("idle");
       onLog(`Deleted assistant profile: ${profile.name}.`);
-      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
     } catch (error) {
       const message = String(error);
       setAssistantProfileError(message);
       setAssistantProfileSaveState("error");
       onLog(`Assistant profile delete failed: ${message}`);
+    }
+  }
+
+  async function renameLocalAssistantProfile(profileId: string, name: string) {
+    const profile = assistantProfileStore.profiles.find((item) => item.id === profileId);
+    const trimmedName = name.trim();
+    if (!profile || !trimmedName) {
+      return;
+    }
+
+    const renamedProfile = {
+      ...profile,
+      name: trimmedName,
+      updatedAt: new Date().toISOString(),
+    };
+    validateUniqueProfileName(renamedProfile, "save");
+    const nextStore = upsertAssistantProfileStore(assistantProfileStore, renamedProfile);
+    setAssistantProfileSaveState("saving");
+    setAssistantProfileError(null);
+    setAssistantProfileStore(nextStore);
+
+    try {
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      setAssistantProfileSaveState("saved");
+      if (profileId === activeLocalProfileId) {
+        applyLocalAssistantProfile(renamedProfile);
+      }
+      onLog(`Renamed assistant profile: ${trimmedName}.`);
+      window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
+    } catch (error) {
+      const message = String(error);
+      setAssistantProfileError(message);
+      setAssistantProfileSaveState("error");
+      onLog(`Assistant profile rename failed: ${message}`);
+      throw error;
     }
   }
 
@@ -501,6 +534,7 @@ export function useAssistantProfiles({
         setAssistantProfileSyncState("synced");
         setAssistantProfileSyncMessage("Initial assistant profile uploaded to the web console.");
       }
+      setAssistantProfileSaveState("idle");
       return true;
     } catch {
       // The save function already records the visible error state.
@@ -612,6 +646,7 @@ export function useAssistantProfiles({
     applyLocalAssistantProfile,
     saveCurrentLocalAssistantProfile,
     addCurrentLocalAssistantProfile,
+    renameLocalAssistantProfile,
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,

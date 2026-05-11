@@ -12,6 +12,7 @@ import {
 } from "../services/ollama.mjs";
 import { getOpenAiAnswer } from "../services/openai.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
+import { buildWorkspaceContext } from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import { sendOllamaUnavailable } from "./ollama.mjs";
 
@@ -82,6 +83,17 @@ export async function handleChat(req, res, origin) {
       error: "MESSAGES_REQUIRED"
     }, origin);
     return;
+  }
+
+  const workspaceContext = await buildWorkspaceContext({
+    prompt: body.prompt,
+    profile: body.profile,
+  });
+  if (workspaceContext) {
+    messages.splice(1, 0, {
+      role: "system",
+      content: workspaceContext,
+    });
   }
 
   if (provider === "ollama") {

@@ -1,6 +1,6 @@
 # MiVA API, Data, and Sequence Design
 
-Last updated: 2026-05-07
+Last updated: 2026-05-10
 
 This document is prepared for presentation and report material. It summarizes the current implemented APIs, the planned report APIs, the database choice, and two UML sequence diagrams based on main use cases.
 
@@ -11,6 +11,7 @@ MiVA uses two service layers.
 ```text
 Cloud API
 - Runs as the account, sync, database, admin, and integration service.
+- Implemented with NestJS, TypeScript, Prisma, and Supabase PostgreSQL.
 - Current dev URL: http://127.0.0.1:4000
 - Planned production host: Railway
 
@@ -208,7 +209,6 @@ Core tables:
 | `workspace_connections` | Google Workspace connection state and token metadata |
 | `tool_permissions` | Future tool/MCP permission policies |
 | `usage_events` | Non-sensitive usage and runtime metrics |
-| `audit_logs` | Security/action audit history |
 
 Data boundary:
 

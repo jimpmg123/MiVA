@@ -445,7 +445,7 @@ fn install_python_inner(target_dir: Option<String>) -> Result<String, String> {
 }
 
 fn npm_candidates() -> Vec<String> {
-    let mut candidates = vec!["npm".to_string(), "npm.cmd".to_string()];
+    let mut candidates = vec!["npm.cmd".to_string(), "npm".to_string()];
     if let Ok(value) = env::var("APPDATA") {
         candidates.push(format!(r"{value}\npm\npm.cmd"));
     }

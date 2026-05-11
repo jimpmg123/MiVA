@@ -13,14 +13,14 @@ The correct long-term structure is:
 - Web app for account management, preferences, model/provider settings, integrations, and remote visibility.
 - Cloud API server for auth, database, synchronization, OAuth integrations, and server-side business logic.
 
-## Current Temporary Structure
+## Current MVP Structure
 
 ```txt
 apps/
   desktop/        Tauri + React desktop app
   local-helper/   Node local bridge for Ollama, hardware, provider calls
   web/            React web console
-  api/            temporary API skeleton
+  api/            NestJS API for auth, sync, usage, and admin features
 packages/
   shared/         shared lightweight model catalog
 docs/
@@ -30,7 +30,7 @@ docs/
   DESIGN.md
 ```
 
-This is acceptable for MVP validation. The current local-helper is intentionally simple, but `server.mjs` should be split before adding many more integrations.
+This is acceptable for MVP validation. The local-helper remains intentionally simple because it only runs on the user's computer, while the cloud API now uses NestJS so account, sync, usage, and admin endpoints can be separated into controller/service/module structure.
 
 ## Production Architecture
 
@@ -202,7 +202,7 @@ Recommended:
 
 Why:
 
-- PostgreSQL is stable for user accounts, devices, preferences, integration state, and audit logs.
+- PostgreSQL is stable for user accounts, devices, preferences, integration state, and usage events.
 - Prisma works well with TypeScript/NestJS and gives clear schema migrations.
 
 Core tables later:
@@ -218,7 +218,6 @@ integration_accounts
 google_workspace_connections
 tool_permissions
 chat_sessions
-audit_logs
 ```
 
 Important security note:

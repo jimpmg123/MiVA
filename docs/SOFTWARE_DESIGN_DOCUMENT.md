@@ -148,7 +148,7 @@ Supabase is used as the managed PostgreSQL database provider only. The MiVA back
 | Web frontend | React, Vite, TypeScript, Tailwind CSS | Browser dashboard and web console |
 | Desktop app | Tauri v2, React, TypeScript, Tailwind CSS | Local setup, runtime, hardware, model control |
 | Local helper | Node.js HTTP server | Local bridge to Ollama and provider APIs |
-| API server | Node.js HTTP server | Temporary cloud API skeleton |
+| API server | NestJS, TypeScript | Cloud auth, assistant sync, usage reporting, admin APIs |
 | Local model runtime | Ollama | Local LLM model download and inference |
 | Shared package | JavaScript module | Shared model catalog and constants |
 | Version control | Git / GitHub | Source control and collaboration |
@@ -224,7 +224,6 @@ provider_credentials
 workspace_connections
 tool_permissions
 usage_events
-audit_logs
 ```
 
 ### Initial Relational Sketch
@@ -326,13 +325,6 @@ usage_events
   success
   created_at
 
-audit_logs
-  id
-  user_id
-  device_id
-  action
-  metadata_json
-  created_at
 ```
 
 ### Data Storage Policy

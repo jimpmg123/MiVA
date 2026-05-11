@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
 import {
   getWorkspaceCliStatus,
@@ -70,27 +70,31 @@ export function GoogleWorkspacePanel({
 }: GoogleWorkspacePanelProps) {
   const [status, setStatus] = useState<WorkspaceCliStatus | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectedServices = settings.toolConnections.googleWorkspaceServices;
 
-  const refreshStatus = async () => {
+  const refreshStatus = useCallback(async () => {
     if (!tauriRuntime) {
       setError("Workspace CLI setup requires the Tauri desktop runtime.");
       return;
     }
 
+    setIsRefreshing(true);
     try {
       setError(null);
       setStatus(await getWorkspaceCliStatus());
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : String(statusError));
+    } finally {
+      setIsRefreshing(false);
     }
-  };
+  }, [tauriRuntime]);
 
   useEffect(() => {
     void refreshStatus();
-  }, [tauriRuntime]);
+  }, [refreshStatus]);
 
   const goalSteps = useMemo(() => {
     const gcloudInstalled = Boolean(status?.gcloud.installed);
@@ -120,6 +124,8 @@ export function GoogleWorkspacePanel({
   const setupProgressPercent = Math.round((completedStepCount / goalSteps.length) * 100);
   const activeStepLabel = busyAction
     ? actionLabels[busyAction] ?? "Working"
+    : isRefreshing
+      ? "Refreshing Workspace status"
     : nextGoalStep?.label ?? "Workspace setup complete";
 
   const actionMessages: Record<string, string> = {
@@ -218,10 +224,13 @@ export function GoogleWorkspacePanel({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <SecondaryButton disabled={busyAction !== null} onClick={() => void refreshStatus()}>
-              Refresh
+            <SecondaryButton disabled={busyAction !== null || isRefreshing} onClick={() => void refreshStatus()}>
+              <span className="inline-flex items-center gap-2">
+                {isRefreshing && <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#35607f]/25 border-t-[#35607f]" />}
+                <span>{isRefreshing ? "Refreshing" : "Refresh"}</span>
+              </span>
             </SecondaryButton>
-            <PrimaryButton disabled={busyAction !== null || !tauriRuntime} onClick={runNextGoalStep}>
+            <PrimaryButton disabled={busyAction !== null || isRefreshing || !tauriRuntime} onClick={runNextGoalStep}>
               {busyAction ? "Working..." : nextGoalStep ? `Run: ${nextGoalStep.label}` : "Setup ready"}
             </PrimaryButton>
           </div>
@@ -231,9 +240,12 @@ export function GoogleWorkspacePanel({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">Setup progress</p>
-              <p className="mt-1 text-sm font-bold text-[#191c1d]">{activeStepLabel}</p>
+              <p className="mt-1 inline-flex items-center gap-2 text-sm font-bold text-[#191c1d]">
+                {isRefreshing && <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#35607f]/25 border-t-[#35607f]" />}
+                <span>{activeStepLabel}</span>
+              </p>
             </div>
-            <Badge tone={setupReady ? "success" : busyAction ? "action" : "neutral"}>{setupProgressPercent}%</Badge>
+            <Badge tone={setupReady ? "success" : busyAction || isRefreshing ? "action" : "neutral"}>{setupProgressPercent}%</Badge>
           </div>
           <div className="mt-4 h-3 overflow-hidden rounded-full bg-[#dfe3e6]">
             <div

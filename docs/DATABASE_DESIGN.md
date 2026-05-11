@@ -31,7 +31,6 @@ Stored in cloud DB:
 - Google Workspace connection metadata/tokens
 - tool permissions
 - usage summaries/events
-- audit logs
 
 Stored locally:
 - Ollama model files
@@ -332,7 +331,7 @@ updated_at
 
 ## 4. Admin-Facing Tables
 
-These tables support product monitoring, audit, and admin dashboards.
+These tables support product monitoring and admin dashboards.
 
 ### usage_events
 
@@ -370,29 +369,6 @@ Admin dashboard examples:
 - coding capability distribution
 ```
 
-### audit_logs
-
-Stores security-sensitive action records.
-
-```text
-id
-user_id
-device_id
-action
-metadata JSON
-created_at
-```
-
-Audit examples:
-
-```text
-- Google Workspace connected
-- provider credential configured
-- assistant profile deleted
-- tool permission changed
-- device registered
-```
-
 ## 5. ERD Summary
 
 ```text
@@ -406,12 +382,10 @@ users
   1:N workspace_connections
   1:N tool_permissions
   1:N usage_events
-  1:N audit_logs
 
 devices
   1:N tool_permissions
   1:N usage_events
-  1:N audit_logs
 
 assistant_profiles
   1:N assistant_memory_snapshots (planned)
@@ -462,7 +436,6 @@ Implemented:
 - assistant_profiles
 - provider_credentials
 - usage_events
-- audit_logs
 - device registration without pairing table
 - DB-backed dev login sessions
 - Google OAuth user upsert endpoint shape

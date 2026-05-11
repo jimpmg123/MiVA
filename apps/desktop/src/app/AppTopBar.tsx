@@ -36,7 +36,7 @@ export function AppTopBar({
   return (
     <header className="grid h-[60px] w-full min-w-0 grid-cols-[minmax(0,1fr)_minmax(180px,320px)_auto] items-center gap-3 border-b border-[#c2c7ce]/60 bg-[#f8f9fa]/85 px-5 backdrop-blur-md">
       <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-        {!settingsOpen && (
+        {!settingsOpen && appMode !== "setup" && (
           <div className="flex min-w-0 shrink rounded-full border border-[#c2c7ce]/60 bg-[#e7e8e9]/60 p-0.5">
             <button
               className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${

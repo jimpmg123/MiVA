@@ -39,7 +39,6 @@ Models & Providers
 Devices
 Setup Funnel
 Integrations
-Safety / Audit Logs
 System Health
 ```
 
@@ -215,19 +214,7 @@ Track planned and connected features:
 
 Early phase can show interest signals from survey `futureFeatures`.
 
-## 9. Safety / Audit Logs
-
-Needed before tools become powerful.
-
-Track:
-
-- Login events
-- Profile sync events
-- API key setting changes, without storing keys
-- Tool permission changes
-- Local tool execution requests
-- Risky action approvals
-- Failed auth attempts
+## 9. Safety Boundaries
 
 Never store:
 
@@ -260,11 +247,10 @@ GET /admin/assistant-profiles
 GET /admin/prompts
 GET /admin/models
 GET /admin/setup-funnel
-GET /admin/audit-logs
 GET /admin/system-health
 ```
 
-For MVP, `GET /admin/stats` can continue returning aggregate stats from memory. When persistence starts, move this to NestJS + Prisma.
+For MVP, `GET /admin/stats` is served by the NestJS API and Prisma. It should remain aggregate-only for presentation, with deeper reports added as separate admin endpoints later.
 
 ## Initial UI Direction
 
@@ -280,6 +266,6 @@ Admin UI should be:
 Recommended first implementation:
 
 1. Replace `Admin Analytics` with an admin-only shell.
-2. Add admin sidebar sections: Overview, Users, Profiles, Prompts, Models, Funnel, Audit, Health.
+2. Add admin sidebar sections: Overview, Users, Profiles, Prompts, Models, Funnel, Health.
 3. Keep the first version read-only.
 4. Use existing memory API stats until DB is added.

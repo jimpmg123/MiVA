@@ -102,15 +102,15 @@ Required:
 - Development auth endpoints.
 - Device auth scaffolding for later desktop/web login.
 
-The API can remain in-memory for Scope 1. Persistence moves to a Railway-hosted NestJS API with Prisma and Supabase PostgreSQL after the data design is finalized.
+The API now runs as a NestJS service with Prisma and Supabase PostgreSQL. Some short-lived device-auth state can remain in memory during Scope 1, but durable account, device, assistant profile, and usage data should stay in PostgreSQL.
 
 ## Out Of Scope For Scope 1
 
 - Production Google OAuth.
 - Real payment processing.
 - Real billing enforcement.
-- Production database migration.
-- Full NestJS migration.
+- Production database hardening.
+- Full backend module split beyond the current NestJS controller/service migration.
 - Real installer release pipeline.
 - Real TTS.
 - Real STT.

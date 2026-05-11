@@ -64,7 +64,6 @@ model User {
   workspaceConnections WorkspaceConnection[]
   toolPermissions      ToolPermission[]
   usageEvents          UsageEvent[]
-  auditLogs            AuditLog[]
 
   @@map("users")
 }
@@ -95,7 +94,6 @@ model Device {
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   toolPermissions ToolPermission[]
   usageEvents     UsageEvent[]
-  auditLogs       AuditLog[]
 
   @@index([userId])
   @@map("devices")
@@ -225,20 +223,4 @@ model UsageEvent {
   @@index([assistantProfileId])
   @@index([createdAt])
   @@map("usage_events")
-}
-
-model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  deviceId  String?
-  action    String
-  metadata  Json?
-  createdAt DateTime @default(now())
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  device    Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
-
-  @@index([userId])
-  @@index([deviceId])
-  @@index([createdAt])
-  @@map("audit_logs")
 }

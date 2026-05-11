@@ -14,7 +14,7 @@ The first proof of concept focuses on:
 ```text
 apps/local-helper  Local API that controls Ollama
 apps/web           Minimal browser UI for testing local-helper
-apps/api           Placeholder backend API skeleton
+apps/api           NestJS backend API for auth, sync, usage, and admin data
 packages/shared    Shared constants and model catalog
 docs               Product and architecture notes
 ```
