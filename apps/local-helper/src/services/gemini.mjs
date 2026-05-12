@@ -19,6 +19,14 @@ class ProviderHttpError extends Error {
   }
 }
 
+class ProviderEmptyResponseError extends Error {
+  constructor(provider, message) {
+    super(message);
+    this.name = "ProviderEmptyResponseError";
+    this.provider = provider;
+  }
+}
+
 function getGeminiModelAttempts(model) {
   const requestedModel = typeof model === "string" && model.trim() ? model.trim() : GEMINI_DEFAULT_MODEL;
   const fallbackIndex = GEMINI_FALLBACK_MODELS.indexOf(requestedModel);
@@ -34,6 +42,10 @@ function getGeminiModelAttempts(model) {
 }
 
 function shouldFallbackGemini(error) {
+  if (error instanceof ProviderEmptyResponseError) {
+    return true;
+  }
+
   if (!(error instanceof ProviderHttpError)) {
     return false;
   }
@@ -84,7 +96,13 @@ async function getGeminiAnswer({ model, messages, systemPrompt, apiKey }) {
     .trim();
 
   if (!answer) {
-    throw new Error("Gemini returned an empty response.");
+    const candidate = data?.candidates?.[0];
+    const finishReason = candidate?.finishReason ? ` finishReason=${candidate.finishReason}.` : "";
+    const blockReason = data?.promptFeedback?.blockReason ? ` blockReason=${data.promptFeedback.blockReason}.` : "";
+    const safety = Array.isArray(candidate?.safetyRatings)
+      ? ` safety=${candidate.safetyRatings.map((rating) => `${rating.category}:${rating.probability}`).join(", ")}.`
+      : "";
+    throw new ProviderEmptyResponseError("gemini", `Gemini returned an empty response.${finishReason}${blockReason}${safety}`.trim());
   }
 
   return answer;

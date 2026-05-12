@@ -101,7 +101,8 @@ function buildProfileInstructions(profile, provider) {
 
       instructions.push(`Google Workspace CLI tool access: ${googleWorkspaceCli ? "on" : "off"}.`);
       if (googleWorkspaceCli) {
-        instructions.push("When Google Workspace CLI is available, you may prepare Calendar, Gmail, Drive, and Workspace actions. Only say an action is done after the connected tool confirms completion.");
+        instructions.push("When Google Workspace CLI is available, read-only context from Gmail, Calendar, Drive, Docs, or Sheets may be provided in the system prompt. You may use that provided context to answer the user.");
+        instructions.push("Workspace write actions such as sending email, creating calendar events, editing files, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion.");
       } else {
         instructions.push("Google Workspace CLI is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.");
       }
@@ -189,6 +190,8 @@ function buildProfileInstructions(profile, provider) {
       instructions.push(`Google Workspace policy: ${googleWorkspacePolicy}. Calendar policy: ${calendarPolicy}.`);
       if (googleWorkspacePolicy === "disabled") {
         instructions.push("Google Workspace tools are not connected. Do not say you can read Gmail, Drive, or Calendar yet.");
+      } else {
+        instructions.push("Google Workspace read-only lookup is allowed when Workspace context is present in this prompt. Do not ask for extra permission just to read already-provided Gmail, Calendar, Drive, Docs, or Sheets context.");
       }
     }
 

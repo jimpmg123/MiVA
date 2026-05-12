@@ -4,6 +4,7 @@ const files = [
   "apps/local-helper/src/server.mjs",
   "apps/local-helper/src/routes/chat.mjs",
   "apps/local-helper/src/services/workspace.mjs",
+  "apps/local-helper/src/prompt.mjs",
   "apps/web/server.mjs",
   "apps/api/src/db.mjs",
   "apps/api/scripts/db-check.mjs",
