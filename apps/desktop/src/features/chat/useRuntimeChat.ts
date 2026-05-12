@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
 import { runChatOnce } from "../models/ollamaRuntime";
-import { loadRuntimeChatMessages, saveRuntimeChatMessages } from "./storage";
+import {
+  emptyRuntimeChatStore,
+  loadRuntimeChatStore,
+  saveRuntimeChatMessages,
+} from "./storage";
 import type { RuntimeConversationNavItem } from "../../app/AppNavigation";
 import type {
   AppMode,
@@ -86,13 +90,17 @@ export function useRuntimeChat({
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
-  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>(() => loadRuntimeChatMessages(promptProfileId));
+  const [runtimeChatStore, setRuntimeChatStore] = useState(emptyRuntimeChatStore);
+  const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>([]);
   const [activeRuntimeConversationId, setActiveRuntimeConversationId] = useState<string | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
+  const loadedRuntimeProfileIdRef = useRef(promptProfileId);
+  const runtimeChatStoreRef = useRef(emptyRuntimeChatStore);
+  const runtimeChatStoreLoadedRef = useRef(false);
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
   const currentConversationId = activeRuntimeConversationId ?? `runtime_${promptProfileId}_current`;
@@ -121,7 +129,7 @@ export function useRuntimeChat({
     return Array.from(profiles.values());
   })();
   const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => {
-    const messages = profile.id === promptProfileId ? runtimeChatMessages : loadRuntimeChatMessages(profile.id);
+    const messages = profile.id === promptProfileId ? runtimeChatMessages : runtimeChatStore.conversations[profile.id] ?? [];
     const firstMessage = messages.find((message) => message.role === "user")?.content.trim();
     const lastMessage = messages[messages.length - 1];
     const conversations = messages.length
@@ -171,7 +179,14 @@ export function useRuntimeChat({
     }
 
     setRuntimeChatMessages([]);
-    saveRuntimeChatMessages(assistantId, []);
+    void saveRuntimeChatMessages(runtimeChatStoreRef.current, assistantId, [])
+      .then((store) => {
+        runtimeChatStoreRef.current = store;
+        setRuntimeChatStore(store);
+      })
+      .catch((error) => {
+        onLog(`Runtime chat save failed: ${String(error)}`);
+      });
     setChatInput("");
     setActiveRuntimeConversationId(`runtime_${assistantId}_${Date.now()}`);
     setAppMode("runtime");
@@ -185,7 +200,7 @@ export function useRuntimeChat({
       setActiveLocalProfileId(profile.id);
       applyLocalAssistantProfile(profile);
     }
-    setRuntimeChatMessages(loadRuntimeChatMessages(conversation.assistantId));
+    setRuntimeChatMessages(runtimeChatStore.conversations[conversation.assistantId] ?? []);
     setActiveRuntimeConversationId(conversation.id);
     setAppMode("runtime");
   }
@@ -335,22 +350,51 @@ export function useRuntimeChat({
   }
 
   useEffect(() => {
-    saveRuntimeChatMessages(promptProfileId, runtimeChatMessages);
-  }, [promptProfileId, runtimeChatMessages]);
+    if (loadedRuntimeProfileIdRef.current !== promptProfileId) {
+      return;
+    }
+    if (!runtimeChatStoreLoadedRef.current) {
+      return;
+    }
+
+    void saveRuntimeChatMessages(runtimeChatStoreRef.current, promptProfileId, runtimeChatMessages)
+      .then((store) => {
+        runtimeChatStoreRef.current = store;
+        setRuntimeChatStore(store);
+      })
+      .catch((error) => {
+        onLog(`Runtime chat save failed: ${String(error)}`);
+      });
+  }, [onLog, promptProfileId, runtimeChatMessages]);
 
   useEffect(() => {
     if (appMode !== "runtime") {
       return;
     }
 
-    setRuntimeChatMessages(loadRuntimeChatMessages(promptProfileId));
+    let cancelled = false;
+    void loadRuntimeChatStore(promptProfileId).then((store) => {
+      if (cancelled) {
+        return;
+      }
+      loadedRuntimeProfileIdRef.current = promptProfileId;
+      runtimeChatStoreLoadedRef.current = true;
+      runtimeChatStoreRef.current = store;
+      setRuntimeChatStore(store);
+      setRuntimeChatMessages(store.conversations[promptProfileId] ?? []);
+    }).catch((error) => {
+      onLog(`Runtime chat load failed: ${String(error)}`);
+    });
     setActiveRuntimeConversationId((current) => (
       current?.startsWith(`runtime_${promptProfileId}_`) ? current : `runtime_${promptProfileId}_current`
     ));
     setChatInput("");
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
-  }, [appMode, promptProfileId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [appMode, onLog, promptProfileId]);
 
   useEffect(() => {
     if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {

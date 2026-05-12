@@ -222,6 +222,7 @@ export type WorkspaceCliStatus = {
   gws: WorkspaceCliToolStatus;
   auth: {
     gcloudAccount?: string | null;
+    gwsClientConfigured: boolean;
     gwsAuthenticated: boolean;
     gwsStatus?: string | null;
     error?: string | null;

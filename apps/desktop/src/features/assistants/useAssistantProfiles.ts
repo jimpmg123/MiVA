@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
 import { upsertCloudAssistantProfile } from "../cloud/client";
-import { deleteRuntimeChatMessages } from "../chat/storage";
+import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
 import { buildLocalAssistantProfile } from "./profileFactory";
 import {
@@ -371,7 +371,7 @@ export function useAssistantProfiles({
 
     try {
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
-      deleteRuntimeChatMessages(profileId);
+      await deleteRuntimeChatMessagesForAssistant(profileId);
       setAssistantProfileStore(savedStore);
       setAssistantProfileSaveState("idle");
       onLog(`Deleted assistant profile: ${profile.name}.`);

@@ -7,7 +7,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use sysinfo::{Disks, System};
@@ -25,6 +26,9 @@ const ALLOWED_MODELS: [&str; 6] = [
     "phi3:mini",
 ];
 const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
+const CHAT_HISTORY_STORE_FILE: &str = "chat-history.json";
+
+struct LocalHelperProcess(Mutex<Option<Child>>);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +140,7 @@ struct WorkspaceCliToolStatus {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceAuthStatus {
     gcloud_account: Option<String>,
+    gws_client_configured: bool,
     gws_authenticated: bool,
     gws_status: Option<String>,
     error: Option<String>,
@@ -187,6 +192,76 @@ fn save_assistant_profile_store_inner(app: AppHandle, store: Value) -> Result<Va
     let content = serde_json::to_string_pretty(&store).map_err(|error| error.to_string())?;
     fs::write(path, content).map_err(|error| error.to_string())?;
     Ok(store)
+}
+
+fn timestamp_millis() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+fn empty_chat_history_store() -> Value {
+    json!({
+        "schemaVersion": 1,
+        "conversations": {},
+        "updatedAt": null
+    })
+}
+
+fn chat_history_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join(CHAT_HISTORY_STORE_FILE))
+}
+
+fn normalize_chat_history_store(store: Value) -> Value {
+    let conversations = store
+        .get("conversations")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    json!({
+        "schemaVersion": 1,
+        "conversations": conversations,
+        "updatedAt": store.get("updatedAt").and_then(Value::as_str)
+    })
+}
+
+fn load_chat_history_store_inner(app: AppHandle) -> Result<Value, String> {
+    let path = chat_history_store_path(&app)?;
+    if !path.exists() {
+        return Ok(empty_chat_history_store());
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    if content.trim().is_empty() {
+        return Ok(empty_chat_history_store());
+    }
+
+    let store = serde_json::from_str::<Value>(&content).map_err(|error| error.to_string())?;
+    Ok(normalize_chat_history_store(store))
+}
+
+fn save_chat_history_store_inner(app: AppHandle, store: Value) -> Result<Value, String> {
+    let path = chat_history_store_path(&app)?;
+    let normalized = normalize_chat_history_store(store);
+    let content = serde_json::to_string_pretty(&normalized).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())?;
+    Ok(normalized)
+}
+
+fn delete_runtime_chat_messages_inner(app: AppHandle, assistant_id: String) -> Result<Value, String> {
+    let mut store = load_chat_history_store_inner(app.clone())?;
+    if let Some(conversations) = store.get_mut("conversations").and_then(Value::as_object_mut) {
+        conversations.remove(&assistant_id);
+    }
+    store["updatedAt"] = Value::String(timestamp_millis());
+    save_chat_history_store_inner(app, store)
 }
 
 fn allowed_model(model: &str) -> bool {
@@ -473,11 +548,11 @@ fn gws_candidates() -> Vec<String> {
     if let Ok(value) = env::var("GWS_BIN") {
         candidates.push(value);
     }
-    candidates.push("gws".to_string());
-    candidates.push("gws.cmd".to_string());
     if let Ok(value) = env::var("APPDATA") {
         candidates.push(format!(r"{value}\npm\gws.cmd"));
     }
+    candidates.push("gws.cmd".to_string());
+    candidates.push("gws".to_string());
     candidates
 }
 
@@ -553,8 +628,15 @@ fn detect_workspace_auth(gcloud: &WorkspaceCliToolStatus, gws: &WorkspaceCliTool
         None => (false, None, None),
     };
 
+    let gws_client_configured = gws_status
+        .as_ref()
+        .and_then(|status| serde_json::from_str::<Value>(status).ok())
+        .and_then(|value| value.get("client_config_exists").and_then(Value::as_bool))
+        .unwrap_or(false);
+
     WorkspaceAuthStatus {
         gcloud_account,
+        gws_client_configured,
         gws_authenticated,
         gws_status,
         error,
@@ -654,7 +736,7 @@ fn start_gws_auth_inner(services: Vec<String>) -> Result<String, String> {
     }
 
     Command::new(command)
-        .args(["auth", "login", "-s", &selected_services.join(",")])
+        .args(["auth", "login", "--readonly", "-s", &selected_services.join(",")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -665,6 +747,50 @@ fn start_gws_auth_inner(services: Vec<String>) -> Result<String, String> {
         "Google Workspace auth started for {}. Complete the browser consent, then refresh status.",
         selected_services.join(", ")
     ))
+}
+
+fn is_local_helper_running() -> bool {
+    TcpStream::connect("127.0.0.1:43110").is_ok()
+}
+
+fn local_helper_dev_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|desktop_dir| desktop_dir.parent())
+        .map(|apps_dir| apps_dir.join("local-helper"))
+        .unwrap_or_else(|| PathBuf::from("..").join("local-helper"))
+}
+
+fn start_local_helper_process() -> Option<Child> {
+    if is_local_helper_running() {
+        return None;
+    }
+
+    let helper_dir = local_helper_dev_dir();
+    let package_json = helper_dir.join("package.json");
+    if !package_json.exists() {
+        eprintln!(
+            "Local helper package was not found at {}. Packaged sidecar startup is not configured yet.",
+            package_json.display()
+        );
+        return None;
+    }
+
+    let npm_command = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    match Command::new(npm_command)
+        .args(["run", "dev"])
+        .current_dir(helper_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => Some(child),
+        Err(error) => {
+            eprintln!("Failed to start local helper: {error}");
+            None
+        }
+    }
 }
 
 fn bytes_to_gb(bytes: u64) -> f64 {
@@ -1322,14 +1448,48 @@ async fn save_assistant_profile_store(app: AppHandle, store: Value) -> Result<Va
         .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn load_chat_history_store(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_chat_history_store_inner(app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn save_chat_history_store(app: AppHandle, store: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || save_chat_history_store_inner(app, store))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_runtime_chat_messages(app: AppHandle, assistant_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || delete_runtime_chat_messages_inner(app, assistant_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|_| {
+        .setup(|app| {
             start_desktop_bridge();
+            app.manage(LocalHelperProcess(Mutex::new(start_local_helper_process())));
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if let Some(state) = window.app_handle().try_state::<LocalHelperProcess>() {
+                    if let Ok(mut child) = state.0.lock() {
+                        if let Some(process) = child.as_mut() {
+                            let _ = process.kill();
+                        }
+                        *child = None;
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_ollama_status,
@@ -1347,7 +1507,10 @@ pub fn run() {
             start_gcloud_auth,
             start_gws_auth,
             load_assistant_profile_store,
-            save_assistant_profile_store
+            save_assistant_profile_store,
+            load_chat_history_store,
+            save_chat_history_store,
+            delete_runtime_chat_messages
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
