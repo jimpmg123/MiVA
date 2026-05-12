@@ -81,20 +81,16 @@ const runtimeChat = appMode === "runtime";
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
     const showAssistantRuntimePanel = runtimeChat;
     const chatShellClass = !showAssistantRuntimePanel
-      ? "relative mx-auto min-h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
+      ? "relative mx-auto h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
       : assistantPanelMinimized
       ? runtimeChat
         ? "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
-        : "relative mx-auto min-h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
+        : "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
       : runtimeChat
         ? "relative mx-auto grid h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible"
-        : "relative mx-auto grid min-h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
-    const chatSectionClass = runtimeChat
-      ? "flex min-h-0 flex-col overflow-hidden"
-      : "flex flex-col";
-    const chatMessagesClass = runtimeChat
-      ? "flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto pb-28 pr-1 pt-2"
-      : "flex flex-col gap-8 pb-8 pr-1 pt-2";
+        : "relative mx-auto grid h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
+    const chatSectionClass = "flex h-full min-h-0 flex-col overflow-hidden";
+    const chatMessagesClass = "flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain pb-6 pr-1 pt-2";
     const assistantCardClass = runtimeChat
       ? "sticky top-4 flex h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]"
       : "sticky top-2 flex max-h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]";
@@ -247,7 +243,7 @@ const runtimeChat = appMode === "runtime";
           <div ref={chatEndRef} className="h-1 shrink-0" />
         </div>
 
-        <div className="sticky bottom-0 z-10 bg-[#f8f9fa]/90 pb-2 pt-4 backdrop-blur">
+        <div className="relative z-10 shrink-0 border-t border-[#e1e3e4]/70 bg-[#f8f9fa]/95 pb-2 pt-4 backdrop-blur">
           {showJumpToLatest && (
             <button
               aria-label={t.jumpToLatest}

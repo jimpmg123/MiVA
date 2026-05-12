@@ -5,7 +5,6 @@ type MyAssistantCardProps = {
   profile: LocalAssistantProfile;
   active: boolean;
   syncState: AssistantProfileSyncState;
-  onSelect: () => void;
   onEdit: () => void;
   onRename: () => void;
   onSync: () => void;
@@ -48,7 +47,6 @@ export function MyAssistantCard({
   profile,
   active,
   syncState,
-  onSelect,
   onEdit,
   onRename,
   onSync,
@@ -136,7 +134,6 @@ export function MyAssistantCard({
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            <SecondaryButton onClick={onSelect}>{active ? "Selected" : "Select"}</SecondaryButton>
             <SecondaryButton onClick={onEdit}>Edit</SecondaryButton>
             <SecondaryButton disabled={syncState === "syncing"} onClick={onSync}>
               {syncState === "syncing" ? "Syncing..." : "Sync"}

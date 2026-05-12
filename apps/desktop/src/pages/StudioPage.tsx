@@ -205,14 +205,6 @@ export function StudioPage({
             applyLocalAssistantProfile(profile);
             setAppMode("runtime");
           }}
-          onSelect={(profile) => {
-            if (!onConfirmDiscardStudioChanges()) {
-              return;
-            }
-
-            setActiveLocalProfileId(profile.id);
-            applyLocalAssistantProfile(profile);
-          }}
           onSync={(profile) => void syncAssistantProfileToCloud(profile)}
           onSyncAll={() => void syncAllAssistantProfilesToCloud()}
           onAddAssistant={onAddAssistantStart}

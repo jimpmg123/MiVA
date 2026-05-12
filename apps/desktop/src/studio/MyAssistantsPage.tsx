@@ -7,7 +7,6 @@ type MyAssistantsPanelProps = {
   profiles: LocalAssistantProfile[];
   activeProfileId: string;
   syncState: AssistantProfileSyncState;
-  onSelect: (profile: LocalAssistantProfile) => void;
   onEdit: (profile: LocalAssistantProfile) => void;
   onSync: (profile: LocalAssistantProfile) => void;
   onSyncAll: () => void;
@@ -21,7 +20,6 @@ export function MyAssistantsPanel({
   profiles,
   activeProfileId,
   syncState,
-  onSelect,
   onEdit,
   onSync,
   onSyncAll,
@@ -105,7 +103,6 @@ export function MyAssistantsPanel({
             onEdit={() => onEdit(profile)}
             onRename={() => openRename(profile)}
             onRun={() => onRun(profile)}
-            onSelect={() => onSelect(profile)}
             onSync={() => onSync(profile)}
             profile={profile}
             syncState={syncState}
