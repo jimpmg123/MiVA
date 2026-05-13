@@ -3,9 +3,12 @@
   LocalAssistantProfile,
   PromptEditorMode,
   PromptSettings,
+  SummaryModelPolicy,
   WorkspaceToolPolicy,
 } from "../types";
+import { useState } from "react";
 import { Badge, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
+import { defaultPromptSettings } from "../features/assistants/profile";
 
 type PromptStudioPanelProps = {
   profile: LocalAssistantProfile;
@@ -34,6 +37,8 @@ export function PromptStudioPanel({
   onSaveLocal,
   onToolsForAiOpenChange,
 }: PromptStudioPanelProps) {
+  const [focusedSimplePromptKey, setFocusedSimplePromptKey] = useState<keyof PromptSettings["simple"] | null>(null);
+  const [focusedDeveloperPromptKey, setFocusedDeveloperPromptKey] = useState<string | null>(null);
   const updateSimplePrompt = (key: keyof PromptSettings["simple"], value: string) => {
     onPromptSettingsChange((current) => ({
       ...current,
@@ -43,7 +48,64 @@ export function PromptStudioPanel({
       },
     }));
   };
-  type BooleanToolConnectionKey = "googleWorkspaceCli" | "daisoCli";
+  const simplePromptInputClass = (key: keyof PromptSettings["simple"], className: string) => (
+    `${className} ${settings.simple[key] === defaultPromptSettings.simple[key] ? "text-[#8b9198]" : "text-[#191c1d]"}`
+  );
+  const getSimplePromptInputValue = (key: keyof PromptSettings["simple"]) => {
+    if (focusedSimplePromptKey === key && settings.simple[key] === defaultPromptSettings.simple[key]) {
+      return "";
+    }
+
+    return settings.simple[key];
+  };
+  const focusSimplePromptInput = (key: keyof PromptSettings["simple"]) => {
+    setFocusedSimplePromptKey(key);
+  };
+  const changeSimplePromptInput = (key: keyof PromptSettings["simple"], value: string) => {
+    const defaultValue = defaultPromptSettings.simple[key];
+    if (settings.simple[key] === defaultValue && value.startsWith(defaultValue)) {
+      updateSimplePrompt(key, value.slice(defaultValue.length));
+      return;
+    }
+
+    updateSimplePrompt(key, value);
+  };
+  const blurSimplePromptInput = (key: keyof PromptSettings["simple"], value: string) => {
+    setFocusedSimplePromptKey(null);
+    if (!value.trim()) {
+      updateSimplePrompt(key, defaultPromptSettings.simple[key]);
+    }
+  };
+  const defaultAwareInputClass = (currentValue: string, defaultValue: string, className: string) => (
+    `${className} ${currentValue === defaultValue ? "text-[#8b9198]" : "text-[#191c1d]"}`
+  );
+  const getDefaultAwareInputValue = (focusKey: string, currentValue: string, defaultValue: string) => {
+    if (focusedDeveloperPromptKey === focusKey && currentValue === defaultValue) {
+      return "";
+    }
+
+    return currentValue;
+  };
+  const changeDefaultAwareInput = (
+    currentValue: string,
+    defaultValue: string,
+    nextValue: string,
+    updateValue: (value: string) => void,
+  ) => {
+    if (currentValue === defaultValue && nextValue.startsWith(defaultValue)) {
+      updateValue(nextValue.slice(defaultValue.length));
+      return;
+    }
+
+    updateValue(nextValue);
+  };
+  const blurDefaultAwareInput = (defaultValue: string, value: string, updateValue: (nextValue: string) => void) => {
+    setFocusedDeveloperPromptKey(null);
+    if (!value.trim()) {
+      updateValue(defaultValue);
+    }
+  };
+type BooleanToolConnectionKey = "googleWorkspace" | "daisoCli";
 
   const updateToolConnection = (key: BooleanToolConnectionKey, enabled: boolean) => {
     onPromptSettingsChange((current) => ({
@@ -82,13 +144,13 @@ export function PromptStudioPanel({
     features: string[];
   }> = [
     {
-      id: "googleWorkspaceCli",
-      title: "Google Workspace CLI",
+      id: "googleWorkspace",
+      title: "Google Workspace",
       label: "Google apps",
       icon: "workspaces",
-      description: "Connects Google Calendar, Gmail, Drive, and Workspace tasks after OAuth and CLI setup are added.",
-      role: "Lets the assistant prepare schedules, emails, document actions, and workspace automation. Until the tool confirms completion, MiVA should explain the draft action instead of saying it is done.",
-      features: ["Calendar planning", "Gmail draft support", "Drive and Workspace actions"],
+      description: "Uses direct Google APIs to provide read-only Gmail, Drive, Docs, Calendar, and Sheets context after OAuth.",
+      role: "Lets the assistant answer with retrieved Workspace context. Until a write tool confirms completion, MiVA should explain the draft action instead of saying it is done.",
+      features: ["Calendar context", "Gmail summaries", "Drive and Docs context"],
     },
     {
       id: "daisoCli",
@@ -151,34 +213,41 @@ export function PromptStudioPanel({
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Assistant purpose</span>
             <textarea
-              className="min-h-[96px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={settings.simple.assistantPurpose}
-              onChange={(event) => updateSimplePrompt("assistantPurpose", event.target.value)}
+              className={simplePromptInputClass("assistantPurpose", "min-h-[96px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#35607f]")}
+              value={getSimplePromptInputValue("assistantPurpose")}
+              onFocus={() => focusSimplePromptInput("assistantPurpose")}
+              onBlur={(event) => blurSimplePromptInput("assistantPurpose", event.target.value)}
+              onChange={(event) => changeSimplePromptInput("assistantPurpose", event.target.value)}
             />
           </label>
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">What should this assistant do?</span>
             <textarea
-              className="min-h-[140px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
-              placeholder="Example: manage my schedule, remind me of deadlines, summarize study notes, help with emails."
-              value={settings.simple.desiredTasks}
-              onChange={(event) => updateSimplePrompt("desiredTasks", event.target.value)}
+              className={simplePromptInputClass("desiredTasks", "min-h-[140px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#35607f]")}
+              value={getSimplePromptInputValue("desiredTasks")}
+              onFocus={() => focusSimplePromptInput("desiredTasks")}
+              onBlur={(event) => blurSimplePromptInput("desiredTasks", event.target.value)}
+              onChange={(event) => changeSimplePromptInput("desiredTasks", event.target.value)}
             />
           </label>
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Preferred tone</span>
             <input
-              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={settings.simple.preferredTone}
-              onChange={(event) => updateSimplePrompt("preferredTone", event.target.value)}
+              className={simplePromptInputClass("preferredTone", "rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm outline-none focus:border-[#35607f]")}
+              value={getSimplePromptInputValue("preferredTone")}
+              onFocus={() => focusSimplePromptInput("preferredTone")}
+              onBlur={(event) => blurSimplePromptInput("preferredTone", event.target.value)}
+              onChange={(event) => changeSimplePromptInput("preferredTone", event.target.value)}
             />
           </label>
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Things to avoid</span>
             <textarea
-              className="min-h-[92px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={settings.simple.avoidances}
-              onChange={(event) => updateSimplePrompt("avoidances", event.target.value)}
+              className={simplePromptInputClass("avoidances", "min-h-[92px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#35607f]")}
+              value={getSimplePromptInputValue("avoidances")}
+              onFocus={() => focusSimplePromptInput("avoidances")}
+              onBlur={(event) => blurSimplePromptInput("avoidances", event.target.value)}
+              onChange={(event) => changeSimplePromptInput("avoidances", event.target.value)}
             />
           </label>
         </div>
@@ -321,17 +390,21 @@ export function PromptStudioPanel({
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Persona</span>
             <textarea
-              className="min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={settings.persona}
-              onChange={(event) => onPromptSettingsChange((current) => ({ ...current, persona: event.target.value }))}
+              className={defaultAwareInputClass(settings.persona, defaultPromptSettings.persona, "min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#35607f]")}
+              value={getDefaultAwareInputValue("persona", settings.persona, defaultPromptSettings.persona)}
+              onFocus={() => setFocusedDeveloperPromptKey("persona")}
+              onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.persona, event.target.value, (persona) => onPromptSettingsChange((current) => ({ ...current, persona })))}
+              onChange={(event) => changeDefaultAwareInput(settings.persona, defaultPromptSettings.persona, event.target.value, (persona) => onPromptSettingsChange((current) => ({ ...current, persona })))}
             />
           </label>
           <label className="grid gap-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Role goal</span>
             <textarea
-              className="min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 text-[#191c1d] outline-none focus:border-[#35607f]"
-              value={settings.roleGoal}
-              onChange={(event) => onPromptSettingsChange((current) => ({ ...current, roleGoal: event.target.value }))}
+              className={defaultAwareInputClass(settings.roleGoal, defaultPromptSettings.roleGoal, "min-h-[128px] resize-none rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#35607f]")}
+              value={getDefaultAwareInputValue("roleGoal", settings.roleGoal, defaultPromptSettings.roleGoal)}
+              onFocus={() => setFocusedDeveloperPromptKey("roleGoal")}
+              onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.roleGoal, event.target.value, (roleGoal) => onPromptSettingsChange((current) => ({ ...current, roleGoal })))}
+              onChange={(event) => changeDefaultAwareInput(settings.roleGoal, defaultPromptSettings.roleGoal, event.target.value, (roleGoal) => onPromptSettingsChange((current) => ({ ...current, roleGoal })))}
             />
           </label>
         </div>
@@ -352,9 +425,11 @@ export function PromptStudioPanel({
             {settings.responseRules.map((rule, index) => (
               <div className="flex gap-2" key={`response-${index}`}>
                 <input
-                  className="min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
-                  value={rule}
-                  onChange={(event) => updateListItem("responseRules", index, event.target.value)}
+                  className={defaultAwareInputClass(rule, defaultPromptSettings.responseRules[index] ?? "", "min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm outline-none focus:border-[#35607f]")}
+                  value={getDefaultAwareInputValue(`responseRules:${index}`, rule, defaultPromptSettings.responseRules[index] ?? "")}
+                  onFocus={() => setFocusedDeveloperPromptKey(`responseRules:${index}`)}
+                  onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.responseRules[index] ?? "", event.target.value, (value) => updateListItem("responseRules", index, value))}
+                  onChange={(event) => changeDefaultAwareInput(rule, defaultPromptSettings.responseRules[index] ?? "", event.target.value, (value) => updateListItem("responseRules", index, value))}
                 />
                 <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("responseRules", index)}>
                   <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -378,9 +453,11 @@ export function PromptStudioPanel({
             {settings.safetyRules.map((rule, index) => (
               <div className="flex gap-2" key={`safety-${index}`}>
                 <input
-                  className="min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
-                  value={rule}
-                  onChange={(event) => updateListItem("safetyRules", index, event.target.value)}
+                  className={defaultAwareInputClass(rule, defaultPromptSettings.safetyRules[index] ?? "", "min-w-0 flex-1 rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm outline-none focus:border-[#35607f]")}
+                  value={getDefaultAwareInputValue(`safetyRules:${index}`, rule, defaultPromptSettings.safetyRules[index] ?? "")}
+                  onFocus={() => setFocusedDeveloperPromptKey(`safetyRules:${index}`)}
+                  onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.safetyRules[index] ?? "", event.target.value, (value) => updateListItem("safetyRules", index, value))}
+                  onChange={(event) => changeDefaultAwareInput(rule, defaultPromptSettings.safetyRules[index] ?? "", event.target.value, (value) => updateListItem("safetyRules", index, value))}
                 />
                 <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("safetyRules", index)}>
                   <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -390,6 +467,115 @@ export function PromptStudioPanel({
           </div>
         </Panel>
       </div>
+
+      <Panel>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="font-heading text-xl font-bold text-[#191c1d]">Memory compaction</h3>
+            <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
+              By default, MiVA stores only details the user explicitly asks it to remember. If memory grows past the budget, it is compacted into a shorter summary.
+            </p>
+          </div>
+          <Badge tone={settings.summaryMemory.rollingSummary ? "action" : "neutral"}>
+            {settings.summaryMemory.rollingSummary ? "Enabled" : "Off"}
+          </Badge>
+        </div>
+
+        <div className="mt-6 grid gap-4 xl:grid-cols-4">
+          <label className="grid gap-2 rounded-xl bg-[#f3f4f5] p-3">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Memory updates</span>
+            <button
+              className={`flex h-11 w-24 items-center rounded-full p-1 transition ${
+                settings.summaryMemory.rollingSummary ? "justify-end bg-[#35607f]" : "justify-start bg-[#dfe3e6]"
+              }`}
+              onClick={() => onPromptSettingsChange((current) => ({
+                ...current,
+                summaryMemory: {
+                  ...current.summaryMemory,
+                  rollingSummary: !current.summaryMemory.rollingSummary,
+                },
+              }))}
+              type="button"
+            >
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-white text-[11px] font-bold text-[#35607f] shadow-sm">
+                {settings.summaryMemory.rollingSummary ? "On" : "Off"}
+              </span>
+            </button>
+          </label>
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Summary model</span>
+            <select
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+              value={settings.summaryMemory.modelPolicy}
+              onChange={(event) => onPromptSettingsChange((current) => ({
+                ...current,
+                summaryMemory: {
+                  ...current.summaryMemory,
+                  modelPolicy: event.target.value as SummaryModelPolicy,
+                },
+              }))}
+            >
+              <option value="sameModel">Same as assistant model</option>
+              <option value="localModel">Specific local model</option>
+              <option value="cloudModel">Specific cloud model</option>
+            </select>
+          </label>
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Provider</span>
+            <select
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f] disabled:opacity-55"
+              disabled={settings.summaryMemory.modelPolicy !== "cloudModel"}
+              value={settings.summaryMemory.provider}
+              onChange={(event) => onPromptSettingsChange((current) => ({
+                ...current,
+                summaryMemory: {
+                  ...current.summaryMemory,
+                  provider: event.target.value as PromptSettings["summaryMemory"]["provider"],
+                },
+              }))}
+            >
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </label>
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Compaction budget</span>
+            <input
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+              min={1000}
+              step={500}
+              type="number"
+              value={settings.summaryMemory.triggerTokenBudget}
+              onChange={(event) => onPromptSettingsChange((current) => ({
+                ...current,
+                summaryMemory: {
+                  ...current.summaryMemory,
+                  triggerTokenBudget: Number(event.target.value),
+                },
+              }))}
+            />
+          </label>
+        </div>
+
+        {settings.summaryMemory.modelPolicy !== "sameModel" ? (
+          <label className="mt-4 grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Summary model name</span>
+            <input
+              className="rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-sm text-[#191c1d] outline-none focus:border-[#35607f]"
+              placeholder={settings.summaryMemory.modelPolicy === "localModel" ? "Example: qwen3:4b" : "Example: gemini-2.5-flash"}
+              value={settings.summaryMemory.model}
+              onChange={(event) => onPromptSettingsChange((current) => ({
+                ...current,
+                summaryMemory: {
+                  ...current.summaryMemory,
+                  model: event.target.value,
+                },
+              }))}
+            />
+          </label>
+        ) : null}
+      </Panel>
 
       <Panel>
         <div className="flex items-start justify-between gap-4">

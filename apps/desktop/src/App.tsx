@@ -174,6 +174,7 @@ function App() {
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,
+    updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,
     confirmDiscardStudioChanges,
     startNewAssistantDraft,
@@ -217,8 +218,10 @@ function App() {
     onLog: log,
   });
   const runtimeChatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
-  const showChatIntroCard = (selectedProvider !== "ollama" || selectedModelInstalled) && !dismissedChatIntroKeys.includes(runtimeChatIntroKey);
-  const activeAssistantName = activeLocalProfile?.name || profileDetailsDraft.name || "MiVA Assistant";
+  const showChatIntroCard =
+    appMode === "runtime" &&
+    (selectedProvider !== "ollama" || selectedModelInstalled) &&
+    !dismissedChatIntroKeys.includes(runtimeChatIntroKey);
   const {
     activeChatMessages,
     activeConversationId,
@@ -228,7 +231,6 @@ function App() {
     chatIntroKey,
     chatMetrics,
     chatScrollRef,
-    currentAssistantConversations,
     handleChatScroll,
     scrollChatToLatest,
     sendMessage,
@@ -244,8 +246,6 @@ function App() {
     authSession,
     activeLocalProfile,
     promptProfileId,
-    activeModelLabel,
-    activeAssistantName,
     selectedProvider,
     selectedModel,
     selectedCloudModel,
@@ -260,6 +260,7 @@ function App() {
     onDismissedChatIntroKeysChange: setDismissedChatIntroKeys,
     buildCurrentLocalAssistantProfile,
     applyLocalAssistantProfile,
+    updateAssistantProfileRollingSummary,
     setActiveLocalProfileId,
     setAppMode,
     setBusyAction,
@@ -325,7 +326,6 @@ function App() {
       activeConversationId={activeConversationId}
       assistantConversationGroups={assistantConversationGroups}
       authSession={authSession}
-      currentAssistantConversations={currentAssistantConversations}
       onClearCurrentChat={clearCurrentChat}
       onConversationSelect={selectRuntimeConversation}
       onNewChatForAssistant={startRuntimeChatForAssistant}

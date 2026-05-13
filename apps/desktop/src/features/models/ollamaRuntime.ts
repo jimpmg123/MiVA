@@ -1,5 +1,5 @@
 import { invokeCommand } from "../../app/tauri";
-import type { HardwareInfo, LocalAssistantProfile, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
+import type { ChatMessage, HardwareInfo, LocalAssistantProfile, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
 
 export function getOllamaStatus() {
   return invokeCommand<OllamaStatus>("get_ollama_status");
@@ -40,6 +40,8 @@ export function runChatOnce(input: {
   locale: string;
   apiKey: string | null;
   profile: LocalAssistantProfile;
+  messages?: Pick<ChatMessage, "role" | "content">[];
+  memorySummary?: string | null;
 }) {
   return invokeCommand<string>("chat_once", input);
 }

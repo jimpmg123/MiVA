@@ -22,7 +22,7 @@ function getProfileSettings(profile) {
 }
 
 function workspaceEnabled(settings) {
-  return settings?.toolConnections?.googleWorkspaceCli === true;
+  return settings?.toolConnections?.googleWorkspace === true || settings?.toolConnections?.googleWorkspaceCli === true;
 }
 
 function selectedWorkspaceServices(settings) {
@@ -303,7 +303,7 @@ async function buildDocsContext(command) {
 export async function buildWorkspaceContext({ prompt, profile }) {
   const settings = getProfileSettings(profile);
   if (!workspaceEnabled(settings)) {
-    console.info("[workspace] skipped: workspace cli disabled for this assistant");
+    console.info("[workspace] skipped: workspace integration disabled for this assistant");
     return null;
   }
 
@@ -315,11 +315,11 @@ export async function buildWorkspaceContext({ prompt, profile }) {
 
   const gwsCommand = await findGwsCommand();
   if (!gwsCommand) {
-    console.warn("[workspace] gws command not found");
-    return "Google Workspace context was requested, but the gws CLI is not installed or was not found. Do not claim Workspace data was checked.";
+    console.warn("[workspace] direct Google API context is not configured yet");
+    return "Google Workspace context was requested, but MiVA direct Google API retrieval is not configured in this local helper yet. Do not claim Workspace data was checked.";
   }
 
-  console.info(`[workspace] using ${gwsCommand.label} for services: ${services.join(", ")}`);
+  console.info(`[workspace] using deprecated gws fallback ${gwsCommand.label} for services: ${services.join(", ")}`);
   const blocks = [];
   for (const service of services) {
     const args = commandForService(service);

@@ -7,7 +7,6 @@ type RuntimeNavigationProps = {
   activeAssistantId: string;
   authSession: AuthSession | null;
   assistantConversationGroups: RuntimeAssistantConversationGroup[];
-  currentAssistantConversations: RuntimeConversationNavItem[];
   activeConversationId: string | null;
   t: Record<string, string>;
   onClearCurrentChat: () => void;
@@ -38,16 +37,13 @@ export function RuntimeNavigation({
   activeConversationId,
   assistantConversationGroups,
   authSession,
-  currentAssistantConversations,
   t,
   onClearCurrentChat,
   onConversationSelect,
   onNewChatForAssistant,
   onOpenAuth,
 }: RuntimeNavigationProps) {
-  const [recentExpanded, setRecentExpanded] = useState(false);
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<string[]>([]);
-  const visibleRecentConversations = recentExpanded ? currentAssistantConversations : currentAssistantConversations.slice(0, 3);
 
   function toggleAssistant(assistantId: string) {
     setExpandedAssistantIds((current) => (
@@ -83,38 +79,6 @@ export function RuntimeNavigation({
 
       <div className="flex-1 overflow-y-auto px-4 py-5">
         <section>
-          <div className="flex items-center justify-between gap-2 px-3">
-            <h2 className="text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">{t.recentConversations}</h2>
-            {currentAssistantConversations.length > 3 && (
-              <button
-                aria-label={recentExpanded ? "Collapse recent conversations" : "Expand recent conversations"}
-                className="grid h-6 w-6 place-items-center rounded-full text-[#72787e] transition hover:bg-[#e7e8e9] hover:text-[#191c1d]"
-                onClick={() => setRecentExpanded((value) => !value)}
-                type="button"
-              >
-                <span className={`material-symbols-outlined text-[17px] transition-transform duration-300 ${recentExpanded ? "rotate-180" : "rotate-0"}`}>
-                  {recentExpanded ? "remove" : "add"}
-                </span>
-              </button>
-            )}
-          </div>
-          <div className="mt-3 grid gap-1">
-            {visibleRecentConversations.length ? (
-              visibleRecentConversations.map((conversation) => (
-                <ConversationButton
-                  active={conversation.id === activeConversationId}
-                  conversation={conversation}
-                  key={conversation.id}
-                  onSelect={onConversationSelect}
-                />
-              ))
-            ) : (
-              <p className="rounded-xl px-3 py-3 text-sm text-[#72787e]">No conversations yet.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="mt-8">
           <h2 className="px-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">By assistant</h2>
           <div className="mt-3 grid gap-2">
             {assistantConversationGroups.map((group) => {

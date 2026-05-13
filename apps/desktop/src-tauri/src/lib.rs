@@ -205,6 +205,7 @@ fn empty_chat_history_store() -> Value {
     json!({
         "schemaVersion": 1,
         "conversations": {},
+        "summaries": {},
         "updatedAt": null
     })
 }
@@ -224,10 +225,16 @@ fn normalize_chat_history_store(store: Value) -> Value {
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let summaries = store
+        .get("summaries")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
 
     json!({
         "schemaVersion": 1,
         "conversations": conversations,
+        "summaries": summaries,
         "updatedAt": store.get("updatedAt").and_then(Value::as_str)
     })
 }
@@ -259,6 +266,9 @@ fn delete_runtime_chat_messages_inner(app: AppHandle, assistant_id: String) -> R
     let mut store = load_chat_history_store_inner(app.clone())?;
     if let Some(conversations) = store.get_mut("conversations").and_then(Value::as_object_mut) {
         conversations.remove(&assistant_id);
+    }
+    if let Some(summaries) = store.get_mut("summaries").and_then(Value::as_object_mut) {
+        summaries.remove(&assistant_id);
     }
     store["updatedAt"] = Value::String(timestamp_millis());
     save_chat_history_store_inner(app, store)
@@ -1177,6 +1187,8 @@ fn chat_via_local_helper(
     locale: String,
     api_key: Option<String>,
     profile: Option<Value>,
+    messages: Option<Value>,
+    memory_summary: Option<String>,
 ) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
@@ -1197,6 +1209,14 @@ fn chat_via_local_helper(
 
     if let Some(profile) = profile {
         body["profile"] = profile;
+    }
+
+    if let Some(messages) = messages {
+        body["messages"] = messages;
+    }
+
+    if let Some(memory_summary) = memory_summary.filter(|value| !value.trim().is_empty()) {
+        body["memorySummary"] = json!(memory_summary);
     }
 
     let response = client
@@ -1231,6 +1251,8 @@ fn chat_once_inner(
     locale: String,
     api_key: Option<String>,
     profile: Option<Value>,
+    messages: Option<Value>,
+    memory_summary: Option<String>,
 ) -> Result<String, String> {
     let normalized_provider = if provider.trim().is_empty() {
         "ollama".to_string()
@@ -1245,6 +1267,8 @@ fn chat_once_inner(
         locale.clone(),
         api_key,
         profile,
+        messages,
+        memory_summary,
     ) {
         Ok(answer) => Ok(answer),
         Err(error) if normalized_provider == "ollama" => {
@@ -1365,9 +1389,11 @@ async fn chat_once(
     locale: String,
     api_key: Option<String>,
     profile: Option<Value>,
+    messages: Option<Value>,
+    memory_summary: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        chat_once_inner(provider, model, prompt, locale, api_key, profile)
+        chat_once_inner(provider, model, prompt, locale, api_key, profile, messages, memory_summary)
     })
     .await
     .map_err(|error| error.to_string())?

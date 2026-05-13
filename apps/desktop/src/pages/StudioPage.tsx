@@ -41,8 +41,8 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
     ["Voice test", "Preview latency and quality before enabling runtime voice.", "graphic_eq"],
   ],
   googleWorkspace: [
-    ["Google Workspace CLI", "Calendar, Gmail, and Drive integration settings will live here.", "workspaces"],
-    ["OAuth status", "Account connection and scopes will be shown here after login exists.", "verified_user"],
+    ["Google Workspace", "Calendar, Gmail, Drive, Docs, and Sheets context settings live here.", "workspaces"],
+    ["OAuth connection", "Account connection and granted scopes are handled through MiVA Google login.", "verified_user"],
     ["Tool permissions", "Users will decide what the assistant can read or change.", "rule"],
   ],
   tools: [
@@ -53,7 +53,7 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
 };
 
 const studioSectionDescription: Partial<Record<StudioSection, string>> = {
-  googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products, set permission levels, and let MiVA handle the local CLI setup flow.",
+  googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products and set permission levels for direct Google API context.",
 };
 
 type StudioPageProps = {

@@ -51,6 +51,7 @@ function buildProfileInstructions(profile, provider) {
   }
 
   const instructions = [];
+  instructions.push("Preserve meaningful line breaks from the user's message when referring to or rewriting user-provided text. If your answer is more than a few sentences, use natural line breaks so it is easy to read.");
   for (const key of ["useCase", "answerStyle", "priority", "languageUse", "localMode"]) {
     const value = profile[key];
     const instruction = profileInstructionMap[key]?.[value];
@@ -96,15 +97,16 @@ function buildProfileInstructions(profile, provider) {
       ? promptSettings.toolConnections
       : null;
     if (toolConnections) {
-      const googleWorkspaceCli = toolConnections.googleWorkspaceCli === true;
+      const googleWorkspace = toolConnections.googleWorkspace === true || toolConnections.googleWorkspaceCli === true;
       const daisoCli = toolConnections.daisoCli === true;
 
-      instructions.push(`Google Workspace CLI tool access: ${googleWorkspaceCli ? "on" : "off"}.`);
-      if (googleWorkspaceCli) {
-        instructions.push("When Google Workspace CLI is available, read-only context from Gmail, Calendar, Drive, Docs, or Sheets may be provided in the system prompt. You may use that provided context to answer the user.");
+      instructions.push(`Google Workspace direct API context: ${googleWorkspace ? "on" : "off"}.`);
+      if (googleWorkspace) {
+        instructions.push("When Google Workspace context is provided, it was retrieved by MiVA using the user's approved read-only Google permissions. Use that retrieved context to answer the user.");
+        instructions.push("Do not claim you lack access if the needed Gmail, Calendar, Drive, Docs, or Sheets information is included in the provided Workspace context.");
         instructions.push("Workspace write actions such as sending email, creating calendar events, editing files, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion.");
       } else {
-        instructions.push("Google Workspace CLI is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.");
+        instructions.push("Google Workspace context is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.");
       }
 
       instructions.push(`Daiso CLI tool access: ${daisoCli ? "on" : "off"}.`);

@@ -25,6 +25,7 @@ export type StudioSection = "myAssistants" | "overview" | "models" | "prompts" |
 export type ProviderId = "ollama" | "openai" | "gemini";
 export type CloudProviderId = Exclude<ProviderId, "ollama">;
 export type ProviderMode = "local" | "cloud";
+export type SummaryModelPolicy = "sameModel" | "localModel" | "cloudModel";
 export type CalendarActionMode = "draftOnly" | "confirmBeforeAction" | "connectedActions";
 export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
 export type WorkspaceServiceId = "drive" | "gmail" | "calendar" | "docs" | "sheets";
@@ -79,7 +80,7 @@ export type PromptSettings = {
     avoidances: string;
   };
   toolConnections: {
-    googleWorkspaceCli: boolean;
+    googleWorkspace: boolean;
     googleWorkspaceServices: WorkspaceServiceId[];
     daisoCli: boolean;
   };
@@ -96,6 +97,13 @@ export type PromptSettings = {
     calendar: WorkspaceToolPolicy;
     gmail: WorkspaceToolPolicy;
     drive: WorkspaceToolPolicy;
+  };
+  summaryMemory: {
+    rollingSummary: boolean;
+    modelPolicy: SummaryModelPolicy;
+    provider: ProviderId;
+    model: string;
+    triggerTokenBudget: number;
   };
   coding: {
     capability: CodingCapability;
@@ -182,6 +190,15 @@ export type ChatMessage = {
   latencyMs?: number;
 };
 
+export type RuntimeMemorySummary = {
+  content: string;
+  updatedAt: string;
+  provider: ProviderId;
+  model: string;
+  sourceMessageCount: number;
+  estimatedTokens: number;
+};
+
 export type ChatMetrics = {
   provider: ProviderId;
   model: string;
@@ -207,26 +224,6 @@ export type RuntimeRequirement = {
 
 export type RuntimeRequirements = {
   python: RuntimeRequirement;
-};
-
-export type WorkspaceCliToolStatus = {
-  installed: boolean;
-  command?: string | null;
-  version?: string | null;
-  error?: string | null;
-};
-
-export type WorkspaceCliStatus = {
-  npm: WorkspaceCliToolStatus;
-  gcloud: WorkspaceCliToolStatus;
-  gws: WorkspaceCliToolStatus;
-  auth: {
-    gcloudAccount?: string | null;
-    gwsClientConfigured: boolean;
-    gwsAuthenticated: boolean;
-    gwsStatus?: string | null;
-    error?: string | null;
-  };
 };
 
 export type ProfileDetailsDraft = {
@@ -294,6 +291,14 @@ export type LocalAssistantProfile = {
     externalApis: { enabled: boolean; providerIds: string[] };
     memory: {
       syncMode: MemorySyncMode;
+      rollingSummary: {
+        content: string | null;
+        updatedAt: string | null;
+        provider: ProviderId | null;
+        model: string | null;
+        sourceMessageCount: number;
+        estimatedTokens: number;
+      };
       snapshotPolicy: {
         firstConversations: number;
         recentConversations: number;

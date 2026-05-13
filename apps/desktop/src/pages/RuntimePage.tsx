@@ -1,4 +1,5 @@
 ﻿import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useEffect, useRef } from "react";
 import type { AppMode, ChatMessage, ChatMetrics, OllamaStatus, ProviderId, ProviderMode } from "../types";
 import { Badge, PrimaryButton } from "../components/ui";
 import { formatChatLatency } from "../utils";
@@ -62,6 +63,7 @@ export function RuntimePage({
   setChatInput,
   setDismissedChatIntroKeys,
 }: RuntimePageProps) {
+const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 const runtimeChat = appMode === "runtime";
     const greeting =
       selectedProvider === "ollama"
@@ -79,6 +81,17 @@ const runtimeChat = appMode === "runtime";
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
+
+    useEffect(() => {
+      const element = chatInputRef.current;
+      if (!element) {
+        return;
+      }
+
+      element.style.height = "auto";
+      element.style.height = `${Math.min(element.scrollHeight, 144)}px`;
+    }, [chatInput]);
+
     const showAssistantRuntimePanel = runtimeChat;
     const chatShellClass = !showAssistantRuntimePanel
       ? "relative mx-auto h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
@@ -98,13 +111,8 @@ const runtimeChat = appMode === "runtime";
     return (
       <div className={chatShellClass}>
         <section className={chatSectionClass}>
-        <div
-          className={chatMessagesClass}
-          ref={chatScrollRef}
-          onScroll={handleChatScroll}
-        >
           {appMode === "setup" && (
-            <section className="relative overflow-hidden rounded-3xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_18px_48px_rgba(53,96,127,0.10)]">
+            <section className="relative z-20 mb-4 shrink-0 overflow-hidden rounded-3xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_18px_48px_rgba(53,96,127,0.10)]">
               <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#cae6ff]/60 blur-3xl" />
               <div className="relative z-10 flex items-center justify-between gap-6">
                 <div className="flex items-start gap-4">
@@ -137,7 +145,11 @@ const runtimeChat = appMode === "runtime";
               </div>
             </section>
           )}
-
+        <div
+          className={chatMessagesClass}
+          ref={chatScrollRef}
+          onScroll={handleChatScroll}
+        >
           {showChatIntroCard && (
             <section className="relative rounded-2xl border border-[#c2c7ce] bg-white p-6 shadow-sm">
               <button
@@ -178,7 +190,7 @@ const runtimeChat = appMode === "runtime";
               <span className="material-symbols-outlined text-[18px] text-[#1c4b69]">bolt</span>
             </div>
             <div className="rounded-2xl rounded-bl-none border border-[#c2c7ce] bg-white p-4 shadow-[0_8px_24px_rgba(53,96,127,0.08)]">
-              <p className="text-sm leading-6 text-[#191c1d]">{greeting}</p>
+              <p className="whitespace-pre-wrap break-words text-sm leading-6 text-[#191c1d]">{greeting}</p>
               <span className="mt-2 block text-right text-[10px] text-[#72787e]">{t.justNow}</span>
             </div>
           </div>
@@ -194,7 +206,7 @@ const runtimeChat = appMode === "runtime";
                 </div>
               )}
               <div
-                className={`rounded-2xl border p-4 text-sm leading-6 shadow-[0_8px_24px_rgba(53,96,127,0.08)] ${
+                className={`whitespace-pre-wrap break-words rounded-2xl border p-4 text-sm leading-6 shadow-[0_8px_24px_rgba(53,96,127,0.08)] ${
                   message.role === "user"
                     ? "rounded-br-none border-[#35607f] bg-[#35607f] text-white"
                     : "rounded-bl-none border-[#c2c7ce] bg-white text-[#191c1d]"
@@ -267,12 +279,17 @@ const runtimeChat = appMode === "runtime";
               <span className="material-symbols-outlined">attach_file</span>
             </button>
             <textarea
-              className="min-h-11 flex-1 resize-none border-none bg-transparent py-3 text-sm text-[#191c1d] outline-none placeholder:text-[#72787e]"
+              className="max-h-[9rem] min-h-11 flex-1 resize-none overflow-y-auto border-none bg-transparent py-3 text-sm leading-6 text-[#191c1d] outline-none placeholder:text-[#72787e]"
               disabled={chatUnavailable}
               placeholder={busyAction === "chat" ? t.generatingResponse : t.messagePlaceholder}
+              ref={chatInputRef}
               rows={1}
               value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
+              onChange={(event) => {
+                event.currentTarget.style.height = "auto";
+                event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
+                setChatInput(event.target.value);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();

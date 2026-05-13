@@ -137,3 +137,31 @@ export async function upsertCloudAssistantProfile(input: {
     throw error;
   }
 }
+
+export function listCloudAssistantProfiles(input: {
+  authSession: AuthSession | null;
+}) {
+  return fetchCloudJson<{ profiles: Array<{ id: string }> }>("/assistant-profiles", {
+    headers: getCloudHeaders(input.authSession),
+  });
+}
+
+export async function deleteCloudAssistantProfile(input: {
+  authSession: AuthSession | null;
+  profileId: string;
+}) {
+  const response = await fetch(`${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(input.profileId)}`, {
+    method: "DELETE",
+    headers: getCloudHeaders(input.authSession),
+  });
+
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+  }
+
+  if (response.status === 404) {
+    return { ok: true };
+  }
+
+  return response.json() as Promise<{ ok: boolean }>;
+}

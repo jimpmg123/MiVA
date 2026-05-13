@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
-import { upsertCloudAssistantProfile } from "../cloud/client";
+import { deleteCloudAssistantProfile, listCloudAssistantProfiles, upsertCloudAssistantProfile } from "../cloud/client";
 import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
 import { buildLocalAssistantProfile } from "./profileFactory";
@@ -30,6 +30,7 @@ import type {
   PromptSettings,
   ProviderId,
   ProviderMode,
+  RuntimeMemorySummary,
   StepId,
   StudioSection,
   SurveyState,
@@ -419,6 +420,42 @@ export function useAssistantProfiles({
     }
   }
 
+  async function updateAssistantProfileRollingSummary(profileId: string, summary: RuntimeMemorySummary) {
+    const profile = assistantProfileStore.profiles.find((item) => item.id === profileId);
+    if (!profile) {
+      return;
+    }
+
+    const updatedProfile: LocalAssistantProfile = {
+      ...profile,
+      updatedAt: summary.updatedAt,
+      capabilities: {
+        ...profile.capabilities,
+        memory: {
+          ...profile.capabilities.memory,
+          syncMode: "summaryMemory",
+          rollingSummary: {
+            content: summary.content,
+            updatedAt: summary.updatedAt,
+            provider: summary.provider,
+            model: summary.model,
+            sourceMessageCount: summary.sourceMessageCount,
+            estimatedTokens: summary.estimatedTokens,
+          },
+        },
+      },
+    };
+    const nextStore = upsertAssistantProfileStore(assistantProfileStore, updatedProfile);
+    const savedStore = await saveLocalAssistantProfileStore(nextStore);
+    setAssistantProfileStore(savedStore);
+
+    if (authSession && updatedProfile.sync.cloudEnabled) {
+      const syncedProfile = await syncLocalAssistantProfileToCloud(updatedProfile);
+      const syncedStore = upsertAssistantProfileStore(savedStore, syncedProfile);
+      setAssistantProfileStore(await saveLocalAssistantProfileStore(syncedStore));
+    }
+  }
+
   async function syncLocalAssistantProfileToCloud(profile: LocalAssistantProfile) {
     const response = await upsertCloudAssistantProfile({ authSession, profile });
     const cloudProfileId = response.profile?.id ?? profile.sync.cloudProfileId ?? profile.id;
@@ -447,6 +484,14 @@ export function useAssistantProfiles({
     try {
       const profiles = assistantProfileStore.profiles;
 
+      setAssistantProfileSyncMessage("Reconciling deleted assistant profiles...");
+      const localCloudProfileIds = new Set(profiles.map((profile) => profile.sync.cloudProfileId ?? profile.id));
+      const cloudProfiles = await listCloudAssistantProfiles({ authSession });
+      const deletedCloudProfiles = cloudProfiles.profiles.filter((profile) => !localCloudProfileIds.has(profile.id));
+      for (const profile of deletedCloudProfiles) {
+        await deleteCloudAssistantProfile({ authSession, profileId: profile.id });
+      }
+
       setAssistantProfileSyncMessage(`Syncing ${profiles.length} assistant profile${profiles.length === 1 ? "" : "s"}...`);
       const syncedProfiles: LocalAssistantProfile[] = [];
       for (const profile of profiles) {
@@ -472,7 +517,10 @@ export function useAssistantProfiles({
         }
       }
       setAssistantProfileSyncState("synced");
-      setAssistantProfileSyncMessage(`Synced ${syncedProfiles.length} assistant profile${syncedProfiles.length === 1 ? "" : "s"} to the web console.`);
+      const deleteMessage = deletedCloudProfiles.length > 0
+        ? ` Removed ${deletedCloudProfiles.length} deleted assistant profile${deletedCloudProfiles.length === 1 ? "" : "s"} from the web console.`
+        : "";
+      setAssistantProfileSyncMessage(`Synced ${syncedProfiles.length} assistant profile${syncedProfiles.length === 1 ? "" : "s"} to the web console.${deleteMessage}`);
     } catch (error) {
       const rawMessage = String(error);
       if (rawMessage.includes("An assistant with this name already exists.")) {
@@ -650,6 +698,7 @@ export function useAssistantProfiles({
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
     syncAssistantProfileToCloud,
+    updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,
     confirmDiscardStudioChanges,
     startNewAssistantDraft,

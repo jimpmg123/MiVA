@@ -24,7 +24,7 @@ export const defaultPromptSettings: PromptSettings = {
     avoidances: defaultSimpleAvoidance,
   },
   toolConnections: {
-    googleWorkspaceCli: false,
+    googleWorkspace: false,
     googleWorkspaceServices: ["drive", "gmail", "calendar"],
     daisoCli: false,
   },
@@ -32,6 +32,7 @@ export const defaultPromptSettings: PromptSettings = {
   roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
   responseRules: [
     "Start with the direct answer, then add context only when it helps.",
+    "Use natural line breaks for readability when an answer is more than a few sentences.",
     "Ask a short clarifying question when the request is ambiguous.",
     "Keep local/private data assumptions explicit.",
   ],
@@ -45,6 +46,13 @@ export const defaultPromptSettings: PromptSettings = {
     calendar: "disabled",
     gmail: "disabled",
     drive: "disabled",
+  },
+  summaryMemory: {
+    rollingSummary: true,
+    modelPolicy: "sameModel",
+    provider: "ollama",
+    model: "",
+    triggerTokenBudget: 2000,
   },
   coding: {
     capability: "chatOnly",
@@ -147,6 +155,9 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
   const coding = source.coding && typeof source.coding === "object"
     ? source.coding as Partial<PromptSettings["coding"]>
     : {};
+  const summaryMemory = source.summaryMemory && typeof source.summaryMemory === "object"
+    ? source.summaryMemory as Partial<PromptSettings["summaryMemory"]>
+    : {};
 
   const scheduleMode: CalendarActionMode =
     scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
@@ -173,6 +184,16 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       ? value
       : defaultPromptSettings.coding.accessMode
   );
+  const normalizeSummaryModelPolicy = (value: unknown) => (
+    value === "localModel" || value === "cloudModel" || value === "sameModel"
+      ? value
+      : defaultPromptSettings.summaryMemory.modelPolicy
+  );
+  const normalizeSummaryProvider = (value: unknown) => (
+    value === "openai" || value === "gemini" || value === "ollama"
+      ? value
+      : defaultPromptSettings.summaryMemory.provider
+  );
 
   return {
     simple: {
@@ -192,9 +213,11 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
         : defaultPromptSettings.simple.avoidances,
     },
     toolConnections: {
-      googleWorkspaceCli: typeof toolConnections.googleWorkspaceCli === "boolean"
-        ? toolConnections.googleWorkspaceCli
-        : defaultPromptSettings.toolConnections.googleWorkspaceCli,
+      googleWorkspace: typeof toolConnections.googleWorkspace === "boolean"
+        ? toolConnections.googleWorkspace
+        : typeof (toolConnections as { googleWorkspaceCli?: unknown }).googleWorkspaceCli === "boolean"
+          ? Boolean((toolConnections as { googleWorkspaceCli?: unknown }).googleWorkspaceCli)
+          : defaultPromptSettings.toolConnections.googleWorkspace,
       googleWorkspaceServices: normalizeWorkspaceServices(toolConnections.googleWorkspaceServices),
       daisoCli: typeof toolConnections.daisoCli === "boolean"
         ? toolConnections.daisoCli
@@ -221,6 +244,17 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       calendar: normalizeWorkspacePolicy(workspaceRules.calendar),
       gmail: normalizeWorkspacePolicy(workspaceRules.gmail),
       drive: normalizeWorkspacePolicy(workspaceRules.drive),
+    },
+    summaryMemory: {
+      rollingSummary: typeof summaryMemory.rollingSummary === "boolean"
+        ? summaryMemory.rollingSummary
+        : defaultPromptSettings.summaryMemory.rollingSummary,
+      modelPolicy: normalizeSummaryModelPolicy(summaryMemory.modelPolicy),
+      provider: normalizeSummaryProvider(summaryMemory.provider),
+      model: typeof summaryMemory.model === "string" ? summaryMemory.model.trim() : defaultPromptSettings.summaryMemory.model,
+      triggerTokenBudget: Number.isFinite(Number(summaryMemory.triggerTokenBudget))
+        ? Math.max(1000, Math.round(Number(summaryMemory.triggerTokenBudget)))
+        : defaultPromptSettings.summaryMemory.triggerTokenBudget,
     },
     coding: {
       capability: normalizeCodingCapability(coding.capability),
@@ -253,6 +287,24 @@ export function normalizeMemoryCapability(
 ): LocalAssistantProfile["capabilities"]["memory"] {
   return {
     syncMode: value?.syncMode === "summaryMemory" ? "summaryMemory" : syncMode,
+    rollingSummary: {
+      content: typeof value?.rollingSummary?.content === "string" && value.rollingSummary.content.trim()
+        ? value.rollingSummary.content.trim()
+        : null,
+      updatedAt: typeof value?.rollingSummary?.updatedAt === "string" ? value.rollingSummary.updatedAt : null,
+      provider: value?.rollingSummary?.provider === "openai" || value?.rollingSummary?.provider === "gemini" || value?.rollingSummary?.provider === "ollama"
+        ? value.rollingSummary.provider
+        : null,
+      model: typeof value?.rollingSummary?.model === "string" && value.rollingSummary.model.trim()
+        ? value.rollingSummary.model.trim()
+        : null,
+      sourceMessageCount: Number.isFinite(Number(value?.rollingSummary?.sourceMessageCount))
+        ? Math.max(0, Math.round(Number(value?.rollingSummary?.sourceMessageCount)))
+        : 0,
+      estimatedTokens: Number.isFinite(Number(value?.rollingSummary?.estimatedTokens))
+        ? Math.max(0, Math.round(Number(value?.rollingSummary?.estimatedTokens)))
+        : 0,
+    },
     snapshotPolicy: {
       firstConversations: Number.isFinite(Number(value?.snapshotPolicy?.firstConversations))
         ? Math.max(0, Math.round(Number(value?.snapshotPolicy?.firstConversations)))
@@ -276,7 +328,7 @@ export function normalizeProfileCapabilities(
     ? value.coding
     : codingSettingsToCapability(settings);
 
-  const workspaceEnabled = settings.toolConnections.googleWorkspaceCli;
+  const workspaceEnabled = settings.toolConnections.googleWorkspace;
   const workspaceScopes = workspaceServicesToScopes(settings.toolConnections.googleWorkspaceServices);
 
   return {

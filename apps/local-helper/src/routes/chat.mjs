@@ -89,6 +89,16 @@ export async function handleChat(req, res, origin) {
     prompt: body.prompt,
     profile: body.profile,
   });
+  if (typeof body.memorySummary === "string" && body.memorySummary.trim()) {
+    messages.splice(1, 0, {
+      role: "system",
+      content: [
+        "Rolling summary memory for this assistant:",
+        body.memorySummary.trim(),
+        "Use this summary only as background context. The user's latest message has priority."
+      ].join("\n")
+    });
+  }
   if (workspaceContext) {
     messages.splice(1, 0, {
       role: "system",
