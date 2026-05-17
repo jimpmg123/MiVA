@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5173",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; vite build"
+    "check": "npm run typecheck && npm run build"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
