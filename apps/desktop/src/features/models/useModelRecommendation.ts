@@ -5,6 +5,7 @@ import { recommendCloudModel, recommendModel } from "../../utils";
 import { getCloudModelById, getModelByName } from "./catalog";
 
 type UseModelRecommendationOptions = {
+  autoApplyRecommendations: boolean;
   hardware: HardwareInfo | null;
   signedIn: boolean;
   survey: SurveyState;
@@ -14,6 +15,7 @@ type UseModelRecommendationOptions = {
 };
 
 export function useModelRecommendation({
+  autoApplyRecommendations,
   hardware,
   signedIn,
   survey,
@@ -30,10 +32,18 @@ export function useModelRecommendation({
     (survey.localMode === "hybrid" && (survey.priority === "quality" || survey.useCase === "work"));
 
   useEffect(() => {
+    if (!autoApplyRecommendations) {
+      return;
+    }
+
     setSelectedModel(recommendedModel);
-  }, [recommendedModel, setSelectedModel]);
+  }, [autoApplyRecommendations, recommendedModel, setSelectedModel]);
 
   useEffect(() => {
+    if (!autoApplyRecommendations) {
+      return;
+    }
+
     if (cloudRecommended && signedIn) {
       const cloudModel = getCloudModelById(recommendedCloudModel);
       setSelectedCloudModel(cloudModel.id);
@@ -42,7 +52,7 @@ export function useModelRecommendation({
     }
 
     setSelectedProvider("ollama");
-  }, [cloudRecommended, recommendedCloudModel, setSelectedCloudModel, setSelectedProvider, signedIn]);
+  }, [autoApplyRecommendations, cloudRecommended, recommendedCloudModel, setSelectedCloudModel, setSelectedProvider, signedIn]);
 
   return {
     cloudRecommended,

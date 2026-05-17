@@ -138,6 +138,7 @@ function App() {
     recommendedModel,
     recommendedModelInfo,
   } = useModelRecommendation({
+    autoApplyRecommendations: appMode === "setup",
     hardware,
     signedIn,
     survey,

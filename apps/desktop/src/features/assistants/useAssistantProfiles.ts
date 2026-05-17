@@ -154,9 +154,18 @@ export function useAssistantProfiles({
       futureFeatures: Array.isArray(profile.survey?.futureFeatures) ? profile.survey.futureFeatures : profile.futureFeatures ?? [],
       memorySyncMode: profile.survey?.memorySyncMode ?? profile.capabilities?.memory?.syncMode ?? "profileOnly",
     });
-    setSelectedProvider(profile.provider ?? "ollama");
-    setSelectedModel(profile.recommendation?.selectedModel ?? (profile.provider === "ollama" ? profile.model : selectedModel));
-    setSelectedCloudModel(profile.recommendation?.selectedCloudModel ?? (profile.provider !== "ollama" ? profile.model : selectedCloudModel));
+    const provider = profile.provider ?? "ollama";
+    const savedModel = profile.model?.trim();
+    const savedLocalModel = provider === "ollama"
+      ? savedModel || profile.recommendation?.selectedModel || selectedModel
+      : profile.recommendation?.selectedModel || selectedModel;
+    const savedCloudModel = provider !== "ollama"
+      ? savedModel || profile.recommendation?.selectedCloudModel || selectedCloudModel
+      : profile.recommendation?.selectedCloudModel || selectedCloudModel;
+
+    setSelectedProvider(provider);
+    setSelectedModel(savedLocalModel);
+    setSelectedCloudModel(savedCloudModel);
     setPromptSettingsDraft(normalizePromptSettings(profile.prompt?.settings));
   }
 
