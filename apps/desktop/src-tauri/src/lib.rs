@@ -127,34 +127,6 @@ struct RuntimeRequirements {
     python: RuntimeRequirement,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceCliToolStatus {
-    installed: bool,
-    command: Option<String>,
-    version: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceAuthStatus {
-    gcloud_account: Option<String>,
-    gws_client_configured: bool,
-    gws_authenticated: bool,
-    gws_status: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceCliStatus {
-    npm: WorkspaceCliToolStatus,
-    gcloud: WorkspaceCliToolStatus,
-    gws: WorkspaceCliToolStatus,
-    auth: WorkspaceAuthStatus,
-}
-
 fn empty_assistant_profile_store() -> Value {
     json!({
         "schemaVersion": 1,
@@ -527,236 +499,6 @@ fn install_python_inner(target_dir: Option<String>) -> Result<String, String> {
     ]);
 
     run_command_to_string(command)
-}
-
-fn npm_candidates() -> Vec<String> {
-    let mut candidates = vec!["npm.cmd".to_string(), "npm".to_string()];
-    if let Ok(value) = env::var("APPDATA") {
-        candidates.push(format!(r"{value}\npm\npm.cmd"));
-    }
-    candidates
-}
-
-fn gcloud_candidates() -> Vec<String> {
-    let mut candidates = Vec::new();
-    if let Ok(value) = env::var("GCLOUD_BIN") {
-        candidates.push(value);
-    }
-    candidates.push("gcloud".to_string());
-    candidates.push("gcloud.cmd".to_string());
-    if let Ok(value) = env::var("LOCALAPPDATA") {
-        candidates.push(format!(r"{value}\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"));
-    }
-    if let Ok(value) = env::var("PROGRAMFILES") {
-        candidates.push(format!(r"{value}\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"));
-    }
-    candidates
-}
-
-fn gws_candidates() -> Vec<String> {
-    let mut candidates = Vec::new();
-    if let Ok(value) = env::var("GWS_BIN") {
-        candidates.push(value);
-    }
-    if let Ok(value) = env::var("APPDATA") {
-        candidates.push(format!(r"{value}\npm\gws.cmd"));
-    }
-    candidates.push("gws.cmd".to_string());
-    candidates.push("gws".to_string());
-    candidates
-}
-
-fn detect_cli_tool(candidates: Vec<String>, version_args: &[&str]) -> WorkspaceCliToolStatus {
-    let mut last_error = None;
-
-    for candidate in candidates {
-        match Command::new(&candidate).args(version_args).output() {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let version = if stdout.is_empty() { stderr } else { stdout };
-                return WorkspaceCliToolStatus {
-                    installed: true,
-                    command: Some(candidate),
-                    version: if version.is_empty() { None } else { Some(version) },
-                    error: None,
-                };
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                last_error = Some(if stderr.is_empty() {
-                    format!("{candidate} exited with {}", output.status)
-                } else {
-                    stderr
-                });
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-            }
-        }
-    }
-
-    WorkspaceCliToolStatus {
-        installed: false,
-        command: None,
-        version: None,
-        error: last_error,
-    }
-}
-
-fn detect_workspace_auth(gcloud: &WorkspaceCliToolStatus, gws: &WorkspaceCliToolStatus) -> WorkspaceAuthStatus {
-    let gcloud_account = gcloud.command.as_ref().and_then(|command| {
-        let output = Command::new(command)
-            .args(["auth", "list", "--filter=status:ACTIVE", "--format=value(account)"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let account = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if account.is_empty() {
-            None
-        } else {
-            Some(account)
-        }
-    });
-
-    let (gws_authenticated, gws_status, error) = match &gws.command {
-        Some(command) => match Command::new(command).args(["auth", "status"]).output() {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let combined = [stdout, stderr]
-                    .into_iter()
-                    .filter(|part| !part.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                (output.status.success(), if combined.is_empty() { None } else { Some(combined) }, None)
-            }
-            Err(error) => (false, None, Some(error.to_string())),
-        },
-        None => (false, None, None),
-    };
-
-    let gws_client_configured = gws_status
-        .as_ref()
-        .and_then(|status| serde_json::from_str::<Value>(status).ok())
-        .and_then(|value| value.get("client_config_exists").and_then(Value::as_bool))
-        .unwrap_or(false);
-
-    WorkspaceAuthStatus {
-        gcloud_account,
-        gws_client_configured,
-        gws_authenticated,
-        gws_status,
-        error,
-    }
-}
-
-fn get_workspace_cli_status_inner() -> WorkspaceCliStatus {
-    let npm = detect_cli_tool(npm_candidates(), &["--version"]);
-    let gcloud = detect_cli_tool(gcloud_candidates(), &["--version"]);
-    let gws = detect_cli_tool(gws_candidates(), &["--version"]);
-    let auth = detect_workspace_auth(&gcloud, &gws);
-
-    WorkspaceCliStatus {
-        npm,
-        gcloud,
-        gws,
-        auth,
-    }
-}
-
-fn install_gcloud_cli_inner() -> Result<String, String> {
-    let current = detect_cli_tool(gcloud_candidates(), &["--version"]);
-    if current.installed {
-        return Ok("Google Cloud CLI is already installed.".to_string());
-    }
-
-    Command::new("winget")
-        .args([
-            "install",
-            "--id",
-            "Google.CloudSDK",
-            "--source",
-            "winget",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "Google Cloud CLI installer could not be started on this system. Try installing Google Cloud CLI manually from https://cloud.google.com/sdk/docs/install, then refresh status.".to_string())?;
-
-    Ok("Google Cloud CLI installer started. Complete any installer prompts, then refresh status.".to_string())
-}
-
-fn install_gws_cli_inner() -> Result<String, String> {
-    let current = detect_cli_tool(gws_candidates(), &["--version"]);
-    if current.installed {
-        return Ok("Google Workspace CLI is already installed.".to_string());
-    }
-
-    let npm = detect_cli_tool(npm_candidates(), &["--version"]);
-    let npm_command = npm.command.ok_or_else(|| "npm is required to install @googleworkspace/cli.".to_string())?;
-
-    let mut command = Command::new(npm_command);
-    command.args(["install", "-g", "@googleworkspace/cli"]);
-    run_command_to_string(command)
-        .map(|_| "Google Workspace CLI installation finished. Refresh status before continuing.".to_string())
-        .map_err(|_| "Google Workspace CLI installation failed. Check that Node.js/npm is available, then try again.".to_string())
-}
-
-fn start_gcloud_auth_inner() -> Result<String, String> {
-    let status = detect_cli_tool(gcloud_candidates(), &["--version"]);
-    let command = status.command.ok_or_else(|| "Google Cloud CLI is not installed.".to_string())?;
-
-    Command::new(command)
-        .args(["auth", "login", "--update-adc"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-
-    Ok("Google Cloud auth started. Complete the browser sign-in, then refresh status.".to_string())
-}
-
-fn normalize_workspace_services(services: Vec<String>) -> Vec<String> {
-    let allowed = ["drive", "gmail", "calendar", "docs", "sheets"];
-    let mut normalized = Vec::new();
-
-    for service in services {
-        let value = service.trim().to_ascii_lowercase();
-        if allowed.contains(&value.as_str()) && !normalized.contains(&value) {
-            normalized.push(value);
-        }
-    }
-
-    normalized
-}
-
-fn start_gws_auth_inner(services: Vec<String>) -> Result<String, String> {
-    let gws = detect_cli_tool(gws_candidates(), &["--version"]);
-    let command = gws.command.ok_or_else(|| "Google Workspace CLI is not installed.".to_string())?;
-    let selected_services = normalize_workspace_services(services);
-    if selected_services.is_empty() {
-        return Err("Select at least one Google Workspace product before starting auth.".to_string());
-    }
-
-    Command::new(command)
-        .args(["auth", "login", "--readonly", "-s", &selected_services.join(",")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-
-    Ok(format!(
-        "Google Workspace auth started for {}. Complete the browser consent, then refresh status.",
-        selected_services.join(", ")
-    ))
 }
 
 fn is_local_helper_running() -> bool {
@@ -1186,6 +928,7 @@ fn chat_via_local_helper(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    auth_token: Option<String>,
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
@@ -1205,6 +948,10 @@ fn chat_via_local_helper(
 
     if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
         body["apiKey"] = json!(api_key);
+    }
+
+    if let Some(auth_token) = auth_token.filter(|token| !token.trim().is_empty()) {
+        body["authToken"] = json!(auth_token);
     }
 
     if let Some(profile) = profile {
@@ -1250,6 +997,7 @@ fn chat_once_inner(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    auth_token: Option<String>,
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
@@ -1266,6 +1014,7 @@ fn chat_once_inner(
         prompt.clone(),
         locale.clone(),
         api_key,
+        auth_token,
         profile,
         messages,
         memory_summary,
@@ -1388,12 +1137,13 @@ async fn chat_once(
     prompt: String,
     locale: String,
     api_key: Option<String>,
+    auth_token: Option<String>,
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        chat_once_inner(provider, model, prompt, locale, api_key, profile, messages, memory_summary)
+        chat_once_inner(provider, model, prompt, locale, api_key, auth_token, profile, messages, memory_summary)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1421,41 +1171,6 @@ async fn get_default_python_install_dir() -> Result<String, String> {
 #[tauri::command]
 async fn install_python(target_dir: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || install_python_inner(target_dir))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn get_workspace_cli_status() -> Result<WorkspaceCliStatus, String> {
-    tauri::async_runtime::spawn_blocking(get_workspace_cli_status_inner)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn install_gcloud_cli() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(install_gcloud_cli_inner)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn install_gws_cli() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(install_gws_cli_inner)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn start_gcloud_auth() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(start_gcloud_auth_inner)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn start_gws_auth(services: Vec<String>) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || start_gws_auth_inner(services))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -1527,11 +1242,6 @@ pub fn run() {
             get_runtime_requirements,
             get_default_python_install_dir,
             install_python,
-            get_workspace_cli_status,
-            install_gcloud_cli,
-            install_gws_cli,
-            start_gcloud_auth,
-            start_gws_auth,
             load_assistant_profile_store,
             save_assistant_profile_store,
             load_chat_history_store,

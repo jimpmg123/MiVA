@@ -88,6 +88,7 @@ export async function handleChat(req, res, origin) {
   const workspaceContext = await buildWorkspaceContext({
     prompt: body.prompt,
     profile: body.profile,
+    authToken: typeof body.authToken === "string" ? body.authToken : "",
   });
   if (typeof body.memorySummary === "string" && body.memorySummary.trim()) {
     messages.splice(1, 0, {

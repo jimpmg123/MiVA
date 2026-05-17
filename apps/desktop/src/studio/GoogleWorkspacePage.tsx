@@ -105,7 +105,7 @@ export function GoogleWorkspacePanel({
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Workspace integration</p>
             <h3 className="mt-2 font-heading text-xl font-bold text-[#191c1d]">Connect Google Workspace</h3>
             <p className="mt-2 max-w-[760px] text-sm leading-6 text-[#42474d]">
-              Choose which Google products this assistant can use as read-only context. MiVA will use the connected Google account and direct Google APIs, without installing gcloud or Google Workspace CLI on the device.
+              Choose which Google products this assistant can use as read-only context. MiVA will use the connected Google account and direct Google APIs for Gmail, Drive, Docs, Calendar, and Sheets.
             </p>
           </div>
           <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "Enabled" : "Disabled"}</Badge>

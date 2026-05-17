@@ -10,6 +10,7 @@ import { DevicesService } from "./devices.service.js";
 import { PrismaService } from "./prisma.service.js";
 import { SeedService } from "./seed.service.js";
 import { UsageService } from "./usage.service.js";
+import { WorkspaceService } from "./workspace.service.js";
 
 @Module({
   controllers: [ApiController],
@@ -24,6 +25,7 @@ import { UsageService } from "./usage.service.js";
     AssistantProfilesService,
     UsageService,
     AdminService,
+    WorkspaceService,
   ],
 })
 export class AppModule {}

@@ -278,6 +278,24 @@ export async function loginWithGoogleCredential(credential: string) {
   });
 }
 
+export async function saveGoogleWorkspaceToken(input: {
+  accessToken: string;
+  scope?: string;
+  expiresIn?: number;
+}) {
+  return fetchJson<{ ok: boolean }>(`${CLOUD_API_URL}/workspace/google/token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      accessToken: input.accessToken,
+      scope: input.scope,
+      expiresIn: input.expiresIn,
+    }),
+  });
+}
+
 export async function completeDesktopDeviceLogin(deviceCode: string, token: string) {
   return fetchJson<{ status: string }>(`${CLOUD_API_URL}/auth/device/complete`, {
     method: "POST",

@@ -39,6 +39,7 @@ export function runChatOnce(input: {
   prompt: string;
   locale: string;
   apiKey: string | null;
+  authToken?: string | null;
   profile: LocalAssistantProfile;
   messages?: Pick<ChatMessage, "role" | "content">[];
   memorySummary?: string | null;

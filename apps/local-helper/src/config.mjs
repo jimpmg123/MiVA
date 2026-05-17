@@ -28,6 +28,10 @@ function loadEnvFile() {
 loadEnvFile();
 
 export const HELPER_PORT = Number(process.env.MIVA_HELPER_PORT || 43110);
+export const CLOUD_API_URL = process.env.MIVA_CLOUD_API_URL || "http://127.0.0.1:4000";
+export const VOICE_WORKER_HOST = process.env.MIVA_VOICE_WORKER_HOST || "127.0.0.1";
+export const VOICE_WORKER_PORT = Number(process.env.MIVA_VOICE_WORKER_PORT || 43120);
+export const VOICE_WORKER_BASE_URL = `http://${VOICE_WORKER_HOST}:${VOICE_WORKER_PORT}`;
 export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 export const OPENAI_DEFAULT_MODEL = process.env.OPENAI_DEFAULT_MODEL || "gpt-4o-mini";
 export const GEMINI_DEFAULT_MODEL = process.env.GEMINI_DEFAULT_MODEL || "gemini-2.5-flash";
@@ -41,6 +45,8 @@ export const modelCatalog = lightweightModels;
 export const allowedModels = new Set(modelCatalog.map((model) => model.ollamaName));
 
 export const allowedOrigins = new Set([
+  "http://localhost:1420",
+  "http://127.0.0.1:1420",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   `http://localhost:${HELPER_PORT}`,

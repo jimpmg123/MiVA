@@ -38,6 +38,7 @@ import {
   loginWithGoogleCredential,
   recordUsageEvent,
   saveApiKey,
+  saveGoogleWorkspaceToken,
   testApiKey,
 } from './services/mivaApi';
 import type {
@@ -69,6 +70,15 @@ declare global {
             },
           ) => void;
         };
+        oauth2?: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: { access_token?: string; scope?: string; expires_in?: number; error?: string }) => void;
+          }) => {
+            requestAccessToken: (options?: { prompt?: string }) => void;
+          };
+        };
       };
     };
   }
@@ -87,6 +97,13 @@ const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
 const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
 const DEFAULT_MODEL_ID = 'qwen3:4b';
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+const GOOGLE_WORKSPACE_SCOPE = [
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/documents.readonly',
+  'https://www.googleapis.com/auth/spreadsheets.readonly',
+].join(' ');
 
 interface OllamaStatus {
   installed?: boolean;
@@ -2098,6 +2115,27 @@ export default function App() {
       };
       window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
       setAuth(nextAuth);
+
+      if (GOOGLE_CLIENT_ID && window.google?.accounts?.oauth2 && response.user.role !== 'admin') {
+        await new Promise<void>((resolve) => {
+          const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
+            client_id: GOOGLE_CLIENT_ID,
+            scope: GOOGLE_WORKSPACE_SCOPE,
+            callback: (tokenResponse) => {
+              if (tokenResponse.access_token) {
+                void saveGoogleWorkspaceToken({
+                  accessToken: tokenResponse.access_token,
+                  scope: tokenResponse.scope,
+                  expiresIn: tokenResponse.expires_in,
+                }).finally(resolve);
+                return;
+              }
+              resolve();
+            },
+          });
+          tokenClient?.requestAccessToken({ prompt: 'consent' });
+        });
+      }
 
       if (desktopLoginRequest) {
         await completeDesktopDeviceLogin(desktopLoginRequest.deviceCode, response.token);

@@ -312,6 +312,7 @@ export function useRuntimeChat({
       prompt: summaryPrompt,
       locale: activeLocale,
       apiKey: getApiKeyForProvider(summaryModel.provider) || null,
+      authToken: authSession?.token ?? null,
       profile: input.assistantProfile,
     });
     const nextSummary: RuntimeMemorySummary = {
@@ -396,6 +397,7 @@ export function useRuntimeChat({
         prompt,
         locale: activeLocale,
         apiKey: apiKey || null,
+        authToken: authSession?.token ?? null,
         profile: assistantProfile,
         messages: recentContextMessages,
         memorySummary,

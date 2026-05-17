@@ -8,6 +8,7 @@ import { DevicesService } from "./devices.service.js";
 import { RequestLike } from "./api.shared.js";
 import { SeedService } from "./seed.service.js";
 import { UsageService } from "./usage.service.js";
+import { WorkspaceService } from "./workspace.service.js";
 
 @Injectable()
 export class MivaApiService {
@@ -20,6 +21,7 @@ export class MivaApiService {
     @Inject(AssistantProfilesService) private readonly assistantProfiles: AssistantProfilesService,
     @Inject(UsageService) private readonly usage: UsageService,
     @Inject(AdminService) private readonly admin: AdminService,
+    @Inject(WorkspaceService) private readonly workspace: WorkspaceService,
   ) {}
 
   ensureDevData() {
@@ -116,5 +118,17 @@ export class MivaApiService {
 
   getAdminStats() {
     return this.admin.getAdminStats();
+  }
+
+  saveGoogleWorkspaceToken(req: RequestLike, payload: any) {
+    return this.workspace.saveGoogleToken(req, payload);
+  }
+
+  getGoogleWorkspaceStatus(req: RequestLike) {
+    return this.workspace.getGoogleStatus(req);
+  }
+
+  getGoogleWorkspaceContext(req: RequestLike, payload: any) {
+    return this.workspace.buildContext(req, payload);
   }
 }

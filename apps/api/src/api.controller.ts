@@ -119,4 +119,19 @@ export class ApiController {
   getAdminStats() {
     return this.api.getAdminStats();
   }
+
+  @Get("workspace/google/status")
+  getGoogleWorkspaceStatus(@Req() req: Request) {
+    return this.api.getGoogleWorkspaceStatus(req);
+  }
+
+  @Post("workspace/google/token")
+  saveGoogleWorkspaceToken(@Req() req: Request, @Body() body: unknown) {
+    return this.api.saveGoogleWorkspaceToken(req, body);
+  }
+
+  @Post("workspace/context")
+  getGoogleWorkspaceContext(@Req() req: Request, @Body() body: unknown) {
+    return this.api.getGoogleWorkspaceContext(req, body);
+  }
 }

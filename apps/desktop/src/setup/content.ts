@@ -151,7 +151,7 @@ export const copy = {
     characterFeature: "AI character screen",
     characterFeatureBody: "Show a virtual character on screen.",
     googleFeature: "Google Calendar / Gmail",
-    googleFeatureBody: "Future Google Workspace CLI integration.",
+    googleFeatureBody: "Use Google Workspace as assistant context.",
     filesFeature: "Read documents/files",
     filesFeatureBody: "Use local files as assistant context.",
     toolsFeature: "External tools",
