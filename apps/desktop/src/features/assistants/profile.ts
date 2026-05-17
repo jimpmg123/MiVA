@@ -7,6 +7,8 @@
   MemorySyncMode,
   ProfileDetailsDraft,
   PromptSettings,
+  SttProviderId,
+  TtsProviderId,
   WorkspaceServiceId,
   WorkspaceToolPolicy,
 } from "../../types";
@@ -60,6 +62,26 @@ export const defaultPromptSettings: PromptSettings = {
     localExperimental: false,
     accessMode: "readOnly",
     workspaceAllowlistRequired: false,
+  },
+  voice: {
+    enabled: false,
+    stt: {
+      enabled: false,
+      provider: "browser",
+      recordingMode: "toggleRecording",
+      language: "auto",
+    },
+    tts: {
+      enabled: false,
+      provider: "browser",
+      voiceId: "default",
+      speakingRate: 1,
+      autoSpeak: false,
+    },
+    runtime: {
+      interruptOnUserSpeech: true,
+      showTranscripts: true,
+    },
   },
   safetyRules: [
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
@@ -158,6 +180,18 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
   const summaryMemory = source.summaryMemory && typeof source.summaryMemory === "object"
     ? source.summaryMemory as Partial<PromptSettings["summaryMemory"]>
     : {};
+  const voice = source.voice && typeof source.voice === "object"
+    ? source.voice as Partial<PromptSettings["voice"]>
+    : {};
+  const stt = voice.stt && typeof voice.stt === "object"
+    ? voice.stt as Partial<PromptSettings["voice"]["stt"]>
+    : {};
+  const tts = voice.tts && typeof voice.tts === "object"
+    ? voice.tts as Partial<PromptSettings["voice"]["tts"]>
+    : {};
+  const voiceRuntime = voice.runtime && typeof voice.runtime === "object"
+    ? voice.runtime as Partial<PromptSettings["voice"]["runtime"]>
+    : {};
 
   const scheduleMode: CalendarActionMode =
     scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
@@ -194,7 +228,16 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       ? value
       : defaultPromptSettings.summaryMemory.provider
   );
-
+  const normalizeSttProvider = (value: unknown): SttProviderId => (
+    value === "disabled" || value === "browser" || value === "localWhisper" || value === "cloud"
+      ? value
+      : defaultPromptSettings.voice.stt.provider
+  );
+  const normalizeTtsProvider = (value: unknown): TtsProviderId => (
+    value === "disabled" || value === "browser" || value === "localVoice" || value === "cloud"
+      ? value
+      : defaultPromptSettings.voice.tts.provider
+  );
   return {
     simple: {
       assistantPurpose: typeof simple.assistantPurpose === "string" && simple.assistantPurpose.trim()
@@ -215,9 +258,7 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
     toolConnections: {
       googleWorkspace: typeof toolConnections.googleWorkspace === "boolean"
         ? toolConnections.googleWorkspace
-        : typeof (toolConnections as { googleWorkspaceCli?: unknown }).googleWorkspaceCli === "boolean"
-          ? Boolean((toolConnections as { googleWorkspaceCli?: unknown }).googleWorkspaceCli)
-          : defaultPromptSettings.toolConnections.googleWorkspace,
+        : defaultPromptSettings.toolConnections.googleWorkspace,
       googleWorkspaceServices: normalizeWorkspaceServices(toolConnections.googleWorkspaceServices),
       daisoCli: typeof toolConnections.daisoCli === "boolean"
         ? toolConnections.daisoCli
@@ -266,6 +307,36 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       workspaceAllowlistRequired: typeof coding.workspaceAllowlistRequired === "boolean"
         ? coding.workspaceAllowlistRequired
         : defaultPromptSettings.coding.workspaceAllowlistRequired,
+    },
+    voice: {
+      enabled: typeof voice.enabled === "boolean" ? voice.enabled : defaultPromptSettings.voice.enabled,
+      stt: {
+        enabled: typeof stt.enabled === "boolean" ? stt.enabled : defaultPromptSettings.voice.stt.enabled,
+        provider: normalizeSttProvider(stt.provider),
+        recordingMode: "toggleRecording",
+        language: typeof stt.language === "string" && stt.language.trim()
+          ? stt.language.trim()
+          : defaultPromptSettings.voice.stt.language,
+      },
+      tts: {
+        enabled: typeof tts.enabled === "boolean" ? tts.enabled : defaultPromptSettings.voice.tts.enabled,
+        provider: normalizeTtsProvider(tts.provider),
+        voiceId: typeof tts.voiceId === "string" && tts.voiceId.trim()
+          ? tts.voiceId.trim()
+          : defaultPromptSettings.voice.tts.voiceId,
+        speakingRate: Number.isFinite(Number(tts.speakingRate))
+          ? Math.min(2, Math.max(0.5, Number(tts.speakingRate)))
+          : defaultPromptSettings.voice.tts.speakingRate,
+        autoSpeak: typeof tts.autoSpeak === "boolean" ? tts.autoSpeak : defaultPromptSettings.voice.tts.autoSpeak,
+      },
+      runtime: {
+        interruptOnUserSpeech: typeof voiceRuntime.interruptOnUserSpeech === "boolean"
+          ? voiceRuntime.interruptOnUserSpeech
+          : defaultPromptSettings.voice.runtime.interruptOnUserSpeech,
+        showTranscripts: typeof voiceRuntime.showTranscripts === "boolean"
+          ? voiceRuntime.showTranscripts
+          : defaultPromptSettings.voice.runtime.showTranscripts,
+      },
     },
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
   };
@@ -332,7 +403,11 @@ export function normalizeProfileCapabilities(
   const workspaceScopes = workspaceServicesToScopes(settings.toolConnections.googleWorkspaceServices);
 
   return {
-    voice: value?.voice ?? { enabled: false, sttProvider: null, ttsProvider: null },
+    voice: {
+      enabled: settings.voice.enabled,
+      sttProvider: settings.voice.stt.enabled ? settings.voice.stt.provider : null,
+      ttsProvider: settings.voice.tts.enabled ? settings.voice.tts.provider : null,
+    },
     character: value?.character ?? { enabled: false, renderer: null, characterId: null },
     googleWorkspace: {
       accountId: value?.googleWorkspace?.accountId ?? null,

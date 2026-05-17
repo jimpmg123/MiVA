@@ -8,6 +8,7 @@ import { GoogleWorkspacePanel } from "../studio/GoogleWorkspacePage";
 import { PromptStudioPanel } from "../studio/PromptsPage";
 import { StudioOverviewPanel } from "../studio/OverviewPage";
 import { StudioToolsPanel } from "../studio/ToolsPage";
+import { VoiceStudioPanel } from "../studio/VoicePage";
 
 const placeholderCards: Record<StudioSection, Array<[string, string, string]>> = {
   myAssistants: [
@@ -53,6 +54,7 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
 };
 
 const studioSectionDescription: Partial<Record<StudioSection, string>> = {
+  tts: "Prepare voice input and spoken output for this assistant. STT, TTS, and runtime voice behavior can be configured here.",
   googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products and set permission levels for direct Google API context.",
 };
 
@@ -326,6 +328,17 @@ export function StudioPage({
       );
     };
 
+    const renderVoiceStudio = () => {
+      const profile = buildCurrentLocalAssistantProfile();
+
+      return (
+        <VoiceStudioPanel
+          settings={profile.prompt.settings}
+          onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
+        />
+      );
+    };
+
     const renderModelStudio = () => (
       <ModelsPanel
         activeLocale={activeLocale}
@@ -377,6 +390,8 @@ export function StudioPage({
           renderModelStudio()
         ) : studioSection === "prompts" ? (
           renderPromptStudio()
+        ) : studioSection === "tts" ? (
+          renderVoiceStudio()
         ) : studioSection === "googleWorkspace" ? (
           renderGoogleWorkspaceStudio()
         ) : studioSection === "tools" ? (

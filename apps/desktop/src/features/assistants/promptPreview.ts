@@ -34,6 +34,10 @@ export function buildSystemPromptPreview(
     promptSettings.coding.providerPolicy === "cloudRequired"
       ? "- Code editing and Claw Code must use a cloud API model unless the user explicitly enables advanced local experimental mode."
       : "- Local models may be used only within the selected read-only or limited coding policy.",
+    "Voice policy:",
+    `- Voice workspace: ${promptSettings.voice.enabled ? "enabled" : "disabled"}.`,
+    `- STT provider: ${promptSettings.voice.stt.enabled ? promptSettings.voice.stt.provider : "disabled"}; recording mode: ${promptSettings.voice.stt.recordingMode}; show transcripts: ${promptSettings.voice.runtime.showTranscripts ? "yes" : "no"}.`,
+    `- TTS provider: ${promptSettings.voice.tts.enabled ? promptSettings.voice.tts.provider : "disabled"}; auto-speak: ${promptSettings.voice.tts.autoSpeak ? "yes" : "no"}.`,
     `Persona: ${promptSettings.persona}`,
     `Role goal: ${promptSettings.roleGoal}`,
     `Use case: ${profile.useCase ?? "daily"}.`,

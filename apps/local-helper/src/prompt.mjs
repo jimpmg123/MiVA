@@ -97,7 +97,7 @@ function buildProfileInstructions(profile, provider) {
       ? promptSettings.toolConnections
       : null;
     if (toolConnections) {
-      const googleWorkspace = toolConnections.googleWorkspace === true || toolConnections.googleWorkspaceCli === true;
+      const googleWorkspace = toolConnections.googleWorkspace === true;
       const daisoCli = toolConnections.daisoCli === true;
 
       instructions.push(`Google Workspace direct API context: ${googleWorkspace ? "on" : "off"}.`);
@@ -143,6 +143,24 @@ function buildProfileInstructions(profile, provider) {
 
       if (workspaceAllowlistRequired) {
         instructions.push("Workspace safety: repository actions require an explicit allowed workspace folder before reading, editing, or running commands.");
+      }
+    }
+
+    const voice = promptSettings.voice && typeof promptSettings.voice === "object"
+      ? promptSettings.voice
+      : null;
+    if (voice) {
+      const stt = voice.stt && typeof voice.stt === "object" ? voice.stt : {};
+      const tts = voice.tts && typeof voice.tts === "object" ? voice.tts : {};
+      const runtime = voice.runtime && typeof voice.runtime === "object" ? voice.runtime : {};
+      instructions.push(`Voice workspace: ${voice.enabled === true ? "enabled" : "disabled"}.`);
+      instructions.push(`Speech-to-text provider: ${stt.enabled === true ? stt.provider || "unknown" : "disabled"}. Recording mode: ${stt.recordingMode || "toggleRecording"}. Show transcripts: ${runtime.showTranscripts === false ? "no" : "yes"}.`);
+      instructions.push(`Text-to-speech provider: ${tts.enabled === true ? tts.provider || "unknown" : "disabled"}. Auto-speak: ${tts.autoSpeak === true ? "yes" : "no"}.`);
+      if (voice.enabled === true) {
+        instructions.push("Voice policy: keep spoken responses concise and easy to read aloud. Do not claim microphone or audio output is active unless the runtime confirms it.");
+      }
+      if (runtime.showTranscripts === true) {
+        instructions.push("Voice transcript policy: preserve transcript wording when the user asks to review or correct spoken input.");
       }
     }
 

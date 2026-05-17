@@ -32,6 +32,9 @@ export type WorkspaceServiceId = "drive" | "gmail" | "calendar" | "docs" | "shee
 export type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
 export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
 export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
+export type SttProviderId = "disabled" | "browser" | "localWhisper" | "cloud";
+export type TtsProviderId = "disabled" | "browser" | "localVoice" | "cloud";
+export type VoiceRecordingMode = "toggleRecording";
 export type AuthRole = "user" | "admin";
 export type PromptEditorMode = "simple" | "developer";
 export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error" | "admin-web-only";
@@ -112,6 +115,26 @@ export type PromptSettings = {
     accessMode: CodingAccessMode;
     workspaceAllowlistRequired: boolean;
   };
+  voice: {
+    enabled: boolean;
+    stt: {
+      enabled: boolean;
+      provider: SttProviderId;
+      recordingMode: VoiceRecordingMode;
+      language: string;
+    };
+    tts: {
+      enabled: boolean;
+      provider: TtsProviderId;
+      voiceId: string;
+      speakingRate: number;
+      autoSpeak: boolean;
+    };
+    runtime: {
+      interruptOnUserSpeech: boolean;
+      showTranscripts: boolean;
+    };
+  };
   safetyRules: string[];
 };
 
@@ -133,6 +156,43 @@ export type ModelDownloadProgress = {
   total?: number | null;
   percent?: number | null;
   done: boolean;
+  error?: string | null;
+};
+
+export type VoiceWorkerStatus = {
+  running: boolean;
+  ok?: boolean;
+  service?: string;
+  version?: string;
+  baseUrl: string;
+  workerScript?: string;
+  python?: {
+    version: string;
+    executable: string;
+    platform: string;
+  };
+  engines?: {
+    stt?: {
+      installed: boolean;
+      activeProvider: string | null;
+      availableProviders: string[];
+    };
+    tts?: {
+      installed: boolean;
+      activeProvider: string | null;
+      availableProviders: string[];
+    };
+    multimodalVoice?: {
+      installed: boolean;
+      activeProvider: string | null;
+      availableProviders: string[];
+    };
+  };
+  capabilities?: {
+    transcribe: boolean;
+    synthesize: boolean;
+    lipSync: boolean;
+  };
   error?: string | null;
 };
 
@@ -274,7 +334,7 @@ export type LocalAssistantProfile = {
     };
   };
   capabilities: {
-    voice: { enabled: boolean; sttProvider: string | null; ttsProvider: string | null };
+    voice: { enabled: boolean; sttProvider: SttProviderId | null; ttsProvider: TtsProviderId | null };
     character: { enabled: boolean; renderer: string | null; characterId: string | null };
     googleWorkspace: { enabled: boolean; accountId: string | null; scopes: string[] };
     files: { enabled: boolean; allowedRoots: string[] };

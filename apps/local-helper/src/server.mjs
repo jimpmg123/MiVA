@@ -9,6 +9,7 @@ import {
   handleOllamaInstall,
   handleOllamaStart
 } from "./routes/ollama.mjs";
+import { handleVoiceStart, handleVoiceStatus } from "./routes/voice.mjs";
 import { sendJson, serveStatic, writeCorsHeaders } from "./utils/http.mjs";
 
 const server = http.createServer(async (req, res) => {
@@ -54,6 +55,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/models") {
       await handleModels(req, res, origin);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/voice/status") {
+      await handleVoiceStatus(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/voice/start") {
+      await handleVoiceStart(req, res, origin);
       return;
     }
 

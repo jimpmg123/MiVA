@@ -5,6 +5,7 @@
   "description": "Local-first personal AI assistant workspace.",
   "scripts": {
     "dev:helper": "node apps/local-helper/src/server.mjs",
+    "dev:voice": "python apps/voice-worker/server.py",
     "dev:web": "node apps/web/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173",
     "dev:api": "npm.cmd --prefix apps/api run dev",
     "check": "node scripts/check.mjs"
