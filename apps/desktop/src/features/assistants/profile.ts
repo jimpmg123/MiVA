@@ -74,7 +74,7 @@ export const defaultPromptSettings: PromptSettings = {
     tts: {
       enabled: false,
       provider: "browser",
-      voiceId: "default",
+      voiceId: "af_heart",
       speakingRate: 1,
       autoSpeak: false,
     },

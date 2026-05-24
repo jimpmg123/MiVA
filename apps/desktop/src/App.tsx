@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import type { Locale } from "./i18n";
 import { AppShell } from "./app/AppShell";
@@ -66,6 +66,7 @@ function App() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
+  const [runtimeTtsEnabled, setRuntimeTtsEnabled] = useState(false);
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [profileDetailsDraft, setProfileDetailsDraft] = useState<ProfileDetailsDraft>(() => defaultProfileDetails);
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
@@ -218,6 +219,17 @@ function App() {
     status,
     onLog: log,
   });
+  const activeVoiceSettings = activeLocalProfile?.prompt.settings.voice ?? promptSettingsDraft.voice;
+  const activeTtsSettings = activeVoiceSettings.tts;
+  const runtimeTtsAvailable =
+    activeVoiceSettings.enabled &&
+    activeTtsSettings.enabled &&
+    activeTtsSettings.provider !== "disabled";
+
+  useEffect(() => {
+    setRuntimeTtsEnabled(runtimeTtsAvailable && activeTtsSettings.autoSpeak);
+  }, [promptProfileId, runtimeTtsAvailable, activeTtsSettings.autoSpeak]);
+
   const runtimeChatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
   const showChatIntroCard =
     appMode === "runtime" &&
@@ -237,9 +249,12 @@ function App() {
     sendMessage,
     setChatInput,
     showJumpToLatest,
+    stopRuntimeTts,
     startRuntimeChatForAssistant,
     selectRuntimeConversation,
     clearCurrentChat,
+    ttsError,
+    ttsPlaybackState,
   } = useRuntimeChat({
     activeLocale: ACTIVE_LOCALE,
     appMode,
@@ -267,6 +282,8 @@ function App() {
     setBusyAction,
     ensureOllamaReadyForChat,
     recordRuntimeUsageEvent,
+    runtimeTtsEnabled: runtimeTtsAvailable && runtimeTtsEnabled,
+    runtimeTtsSettings: runtimeTtsAvailable ? activeTtsSettings : null,
     onLog: log,
   });
   const {
@@ -389,7 +406,11 @@ function App() {
       showChatIntroCard={showChatIntroCard}
       showJumpToLatest={showJumpToLatest}
       status={status}
+      runtimeTtsAvailable={runtimeTtsAvailable}
+      runtimeTtsEnabled={runtimeTtsEnabled}
       t={t}
+      ttsError={ttsError}
+      ttsPlaybackState={ttsPlaybackState}
       handleChatScroll={handleChatScroll}
       saveSetupAssistantProfile={saveSetupAssistantProfile}
       scrollChatToLatest={scrollChatToLatest}
@@ -398,6 +419,8 @@ function App() {
       setAssistantPanelMinimized={setAssistantPanelMinimized}
       setChatInput={setChatInput}
       setDismissedChatIntroKeys={setDismissedChatIntroKeys}
+      setRuntimeTtsEnabled={setRuntimeTtsEnabled}
+      stopRuntimeTts={stopRuntimeTts}
     />
   );
   const renderAuth = () => (

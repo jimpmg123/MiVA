@@ -30,3 +30,30 @@ export async function startVoiceWorker() {
   });
   return result.status;
 }
+
+export type VoiceSynthesisRequest = {
+  text: string;
+  provider: "kokoro";
+  voiceId: string;
+  speakingRate: number;
+  language?: string;
+};
+
+export type VoiceSynthesisResult = {
+  ok: boolean;
+  provider: string;
+  voiceId: string;
+  langCode?: string;
+  sampleRate: number;
+  mimeType: string;
+  audioBase64: string;
+  textChars: number;
+  durationMs?: number;
+};
+
+export function synthesizeVoice(request: VoiceSynthesisRequest) {
+  return readJson<VoiceSynthesisResult>("/voice/tts", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}

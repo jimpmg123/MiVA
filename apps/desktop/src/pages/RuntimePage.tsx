@@ -23,7 +23,11 @@ type RuntimePageProps = {
   showChatIntroCard: boolean;
   showJumpToLatest: boolean;
   status: OllamaStatus | null;
+  runtimeTtsAvailable: boolean;
+  runtimeTtsEnabled: boolean;
   t: Record<string, string>;
+  ttsError: string | null;
+  ttsPlaybackState: "idle" | "starting" | "speaking" | "error";
   saveSetupAssistantProfile: () => Promise<boolean> | boolean;
   handleChatScroll: () => void;
   scrollChatToLatest: (behavior?: ScrollBehavior) => void;
@@ -32,6 +36,8 @@ type RuntimePageProps = {
   setAssistantPanelMinimized: Dispatch<SetStateAction<boolean>>;
   setChatInput: Dispatch<SetStateAction<string>>;
   setDismissedChatIntroKeys: Dispatch<SetStateAction<string[]>>;
+  setRuntimeTtsEnabled: Dispatch<SetStateAction<boolean>>;
+  stopRuntimeTts: () => void;
 };
 
 export function RuntimePage({
@@ -53,7 +59,11 @@ export function RuntimePage({
   showChatIntroCard,
   showJumpToLatest,
   status,
+  runtimeTtsAvailable,
+  runtimeTtsEnabled,
   t,
+  ttsError,
+  ttsPlaybackState,
   saveSetupAssistantProfile,
   handleChatScroll,
   scrollChatToLatest,
@@ -62,9 +72,12 @@ export function RuntimePage({
   setAssistantPanelMinimized,
   setChatInput,
   setDismissedChatIntroKeys,
+  setRuntimeTtsEnabled,
+  stopRuntimeTts,
 }: RuntimePageProps) {
 const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 const runtimeChat = appMode === "runtime";
+const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
     const greeting =
       selectedProvider === "ollama"
         ? t.chatGreeting.replace("{model}", activeModelLabel)
@@ -81,6 +94,9 @@ const runtimeChat = appMode === "runtime";
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
+    const ttsMetric = `TTS: ${
+      !runtimeTtsEnabled ? "Off" : ttsPlaybackState === "speaking" || ttsPlaybackState === "starting" ? "Speaking" : "On"
+    }`;
 
     useEffect(() => {
       const element = chatInputRef.current;
@@ -299,6 +315,30 @@ const runtimeChat = appMode === "runtime";
                 }
               }}
             />
+            {showRuntimeTtsControl && (
+              <button
+                aria-pressed={runtimeTtsEnabled}
+                className={`grid h-10 w-10 place-items-center rounded-xl transition ${
+                  runtimeTtsEnabled
+                    ? "bg-[#cae6ff] text-[#35607f] hover:bg-[#b7dcfb]"
+                    : "bg-[#f3f4f5] text-[#72787e] hover:text-[#35607f]"
+                }`}
+                title={runtimeTtsEnabled ? "Turn off runtime TTS" : "Turn on runtime TTS"}
+                type="button"
+                onClick={() => {
+                  setRuntimeTtsEnabled((current) => {
+                    if (current) {
+                      stopRuntimeTts();
+                    }
+                    return !current;
+                  });
+                }}
+              >
+                <span className={`material-symbols-outlined text-[22px] ${ttsPlaybackState === "speaking" ? "animate-pulse" : ""}`}>
+                  {runtimeTtsEnabled ? "volume_up" : "volume_off"}
+                </span>
+              </button>
+            )}
             <button className="p-2 text-[#72787e] transition hover:text-[#4a654e]" type="button">
               <span className="material-symbols-outlined">mic</span>
             </button>
@@ -312,6 +352,11 @@ const runtimeChat = appMode === "runtime";
               </span>
             </button>
           </form>
+          {ttsError && showRuntimeTtsControl && (
+            <p className="mt-2 rounded-xl bg-[#ffdad6] px-4 py-2 text-xs font-semibold text-[#93000a]">
+              TTS failed: {ttsError}
+            </p>
+          )}
 
           <div className="mt-3 flex justify-center gap-6">
             <div className="flex items-center gap-1.5">
@@ -326,6 +371,12 @@ const runtimeChat = appMode === "runtime";
               <span className="h-1.5 w-1.5 rounded-full bg-[#555d63]" />
               <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatProviderMetric}</span>
             </div>
+            {showRuntimeTtsControl && (
+              <div className="flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${runtimeTtsEnabled ? "bg-[#4a654e]" : "bg-[#72787e]"}`} />
+                <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{ttsMetric}</span>
+              </div>
+            )}
           </div>
         </div>
         </section>

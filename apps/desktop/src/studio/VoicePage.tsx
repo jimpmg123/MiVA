@@ -58,9 +58,9 @@ const ttsOptions: Array<ProviderOption<TtsProviderId>> = [
   },
   {
     id: "localVoice",
-    title: "Local voice model",
-    body: "Future local TTS path for offline voice output and character speech.",
-    badge: "Planned",
+    title: "Kokoro local voice",
+    body: "Use the optional Python voice worker for local Kokoro speech output.",
+    badge: "Local",
     icon: "graphic_eq",
   },
   {
@@ -211,7 +211,7 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
           {[
             ["Endpoint", workerStatus?.baseUrl ?? "http://127.0.0.1:43120"],
             ["Python", workerStatus?.python?.version ?? "Not detected"],
-            ["Engines", workerStatus?.running ? "Placeholder runtime" : "Worker offline"],
+            ["Engines", workerStatus?.engines?.tts?.installed ? "Kokoro TTS ready" : workerStatus?.running ? "Kokoro not installed" : "Worker offline"],
           ].map(([label, value]) => (
             <div className="rounded-xl bg-[#f3f4f5] p-4" key={label}>
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">{label}</p>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
 import { runChatOnce } from "../models/ollamaRuntime";
+import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
   emptyRuntimeChatStore,
   loadRuntimeChatStore,
@@ -15,12 +16,14 @@ import type {
   ChatMessage,
   ChatMetrics,
   LocalAssistantProfile,
+  PromptSettings,
   ProviderId,
   RuntimeMemorySummary,
 } from "../../types";
 
 const RECENT_CONTEXT_MESSAGE_LIMIT = 8;
 const MEMORY_COMPACTION_FALLBACK_BUDGET = 2000;
+type TtsPlaybackState = "idle" | "starting" | "speaking" | "error";
 
 function estimateTokensFromText(value: string) {
   return Math.ceil(value.length / 3);
@@ -45,6 +48,16 @@ function hasExplicitMemoryRequest(value: string) {
     "다음에도 참고",
     "앞으로 참고",
   ].some((marker) => normalized.includes(marker));
+}
+
+function cleanSpeechText(value: string) {
+  return value
+    .replace(/```[\s\S]*?```/g, "Code block omitted.")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/[`*_#>]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 4000);
 }
 
 type RuntimeUsageEventInput = {
@@ -84,6 +97,8 @@ type UseRuntimeChatOptions = {
   setBusyAction: Dispatch<SetStateAction<string | null>>;
   ensureOllamaReadyForChat: (model: string) => Promise<boolean>;
   recordRuntimeUsageEvent: (event: RuntimeUsageEventInput) => Promise<void>;
+  runtimeTtsEnabled: boolean;
+  runtimeTtsSettings: PromptSettings["voice"]["tts"] | null;
   onLog: (message: string) => void;
 };
 
@@ -114,6 +129,8 @@ export function useRuntimeChat({
   setBusyAction,
   ensureOllamaReadyForChat,
   recordRuntimeUsageEvent,
+  runtimeTtsEnabled,
+  runtimeTtsSettings,
   onLog,
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
@@ -123,8 +140,11 @@ export function useRuntimeChat({
   const [activeRuntimeConversationId, setActiveRuntimeConversationId] = useState<string | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [ttsPlaybackState, setTtsPlaybackState] = useState<TtsPlaybackState>("idle");
+  const [ttsError, setTtsError] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const shouldAutoScrollChatRef = useRef(true);
   const loadedRuntimeProfileIdRef = useRef(promptProfileId);
   const runtimeChatStoreRef = useRef(emptyRuntimeChatStore);
@@ -262,6 +282,98 @@ export function useRuntimeChat({
     }
 
     return "";
+  }
+
+  function stopRuntimeTts() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
+    setTtsPlaybackState("idle");
+  }
+
+  async function speakWithBrowserVoice(text: string, settings: PromptSettings["voice"]["tts"]) {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      throw new Error("Browser speech synthesis is not available in this runtime.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = settings.speakingRate;
+      utterance.onend = () => resolve();
+      utterance.onerror = (event) => reject(new Error(event.error || "Browser speech failed."));
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  async function speakWithLocalVoice(text: string, settings: PromptSettings["voice"]["tts"]) {
+    const result = await synthesizeVoice({
+      text,
+      provider: "kokoro",
+      voiceId: settings.voiceId || "af_heart",
+      speakingRate: settings.speakingRate,
+      language: activeLocale,
+    });
+    await new Promise<void>((resolve, reject) => {
+      const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+      audioRef.current = audio;
+      audio.onended = () => {
+        audioRef.current = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        audioRef.current = null;
+        reject(new Error("Audio playback failed."));
+      };
+      void audio.play().catch((error) => {
+        audioRef.current = null;
+        reject(error);
+      });
+    });
+  }
+
+  async function speakAssistantAnswer(answer: string) {
+    const settings = runtimeTtsSettings;
+    if (appMode !== "runtime" || !runtimeTtsEnabled || !settings?.enabled || settings.provider === "disabled") {
+      return;
+    }
+
+    const text = cleanSpeechText(answer);
+    if (!text) {
+      return;
+    }
+
+    stopRuntimeTts();
+    setTtsError(null);
+    setTtsPlaybackState("starting");
+
+    try {
+      if (settings.provider === "browser") {
+        setTtsPlaybackState("speaking");
+        await speakWithBrowserVoice(text, settings);
+      } else if (settings.provider === "localVoice") {
+        const startingMessage = settings.voiceId ? `Starting Kokoro TTS (${settings.voiceId}).` : "Starting Kokoro TTS.";
+        onLog(startingMessage);
+        setTtsPlaybackState("speaking");
+        await speakWithLocalVoice(text, settings);
+      } else {
+        throw new Error("Cloud TTS is not connected yet.");
+      }
+
+      setTtsPlaybackState("idle");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTtsPlaybackState("error");
+      setTtsError(message);
+      onLog(`TTS failed: ${message}`);
+    }
   }
 
   async function updateRollingSummaryIfNeeded(input: {
@@ -441,6 +553,9 @@ export function useRuntimeChat({
         onLog(`Rolling summary update failed: ${String(summaryError)}`);
       });
       onLog("Chat response received.");
+      if (chatMode === "runtime") {
+        void speakAssistantAnswer(answer);
+      }
       if (chatMode === "runtime" && authSession) {
         void recordRuntimeUsageEvent({
           assistantProfileId: assistantProfile.sync.cloudProfileId ?? assistantProfile.id,
@@ -549,6 +664,12 @@ export function useRuntimeChat({
     return () => window.cancelAnimationFrame(frame);
   }, [appMode, activeStep, activeChatMessages.length, busyAction, showChatIntroCard, selectedProvider, selectedModel, selectedCloudModel]);
 
+  useEffect(() => {
+    if (!runtimeTtsEnabled || appMode !== "runtime") {
+      stopRuntimeTts();
+    }
+  }, [appMode, runtimeTtsEnabled, promptProfileId]);
+
   return {
     activeChatMessages,
     activeConversationId: currentConversationId,
@@ -564,8 +685,11 @@ export function useRuntimeChat({
     setChatInput,
     setDismissedChatIntroKeys: onDismissedChatIntroKeysChange,
     showJumpToLatest,
+    stopRuntimeTts,
     startRuntimeChatForAssistant,
     selectRuntimeConversation,
     clearCurrentChat,
+    ttsError,
+    ttsPlaybackState,
   };
 }

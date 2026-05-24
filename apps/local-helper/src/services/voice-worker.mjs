@@ -38,6 +38,31 @@ async function fetchJson(url, timeoutMs = 2500) {
   }
 }
 
+async function postJson(url, payload, timeoutMs = 180000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(payload ?? {})
+    });
+    const data = await response.json().catch(() => null);
+    return {
+      ok: response.ok,
+      status: response.status,
+      data
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function getVoiceWorkerStatus() {
   try {
     const response = await fetchJson(`${VOICE_WORKER_BASE_URL}/voice/status`);
@@ -120,3 +145,13 @@ export async function startVoiceWorker() {
   throw new Error(`Unable to start MiVA Voice Worker. ${lastError || "No Python command worked."}`);
 }
 
+export async function synthesizeVoice(payload) {
+  await startVoiceWorker();
+  const response = await postJson(`${VOICE_WORKER_BASE_URL}/voice/tts`, payload);
+  if (!response.ok || !response.data?.ok) {
+    const message = response.data?.message || response.data?.error || `Voice worker returned HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return response.data;
+}

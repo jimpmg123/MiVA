@@ -21,7 +21,7 @@ apps/desktop       Tauri + React desktop app for setup, studio, and runtime chat
 apps/local-helper  Local Node.js helper API for Ollama, model downloads, chat routing, and voice worker bridge
 apps/api           NestJS backend API for auth, sync, usage events, Workspace context, and admin data
 apps/web           React web console for login, synced assistant review, and admin analytics
-apps/voice-worker  Optional Python voice worker skeleton for future STT/TTS support
+apps/voice-worker  Optional Python voice worker for local Kokoro TTS and future STT support
 packages/shared    Shared model catalog and constants
 docs               Architecture, data design, and project documentation
 ```
@@ -183,10 +183,17 @@ http://localhost:11434
 
 ### 9. Optional voice worker
 
-The voice worker is a future STT/TTS extension point. It is not required for the main app.
+The voice worker is the local STT/TTS extension point. It is not required for the main app, but local TTS uses it when an assistant enables Kokoro voice output.
 
 ```bash
 npm run dev:voice
+```
+
+Install optional Kokoro TTS dependencies:
+
+```bash
+cd apps/voice-worker
+python -m pip install -r requirements.txt
 ```
 
 Default voice worker URL:
