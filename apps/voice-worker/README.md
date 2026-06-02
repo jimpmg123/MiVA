@@ -3,6 +3,7 @@
 Optional local Python runtime for voice features.
 
 The worker provides health/status endpoints and the first local TTS path through Kokoro.
+Japanese Kokoro voices use the Japanese pipeline and require `pyopenjtalk`, `misaki[ja]`, and `fugashi[unidic-lite]`.
 
 Planned engines:
 

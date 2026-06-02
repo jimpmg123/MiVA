@@ -1,6 +1,7 @@
-import { GEMINI_DEFAULT_MODEL, OPENAI_DEFAULT_MODEL } from "../config.mjs";
+import { GEMINI_DEFAULT_MODEL, GROQ_DEFAULT_MODEL, OPENAI_DEFAULT_MODEL } from "../config.mjs";
 import { buildSystemPrompt, getLastUserMessage, normalizeChatMessages } from "../prompt.mjs";
 import { getGeminiAnswerWithFallback } from "../services/gemini.mjs";
+import { getGroqAnswer } from "../services/groq.mjs";
 import {
   getAllowedModelNames,
   getInstalledModels,
@@ -12,7 +13,7 @@ import {
 } from "../services/ollama.mjs";
 import { getOpenAiAnswer } from "../services/openai.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
-import { buildWorkspaceContext } from "../services/workspace.mjs";
+import { buildWorkspaceActionContext, buildWorkspaceContext } from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import { sendOllamaUnavailable } from "./ollama.mjs";
 
@@ -65,13 +66,15 @@ export async function handleChat(req, res, origin) {
         ? OPENAI_DEFAULT_MODEL
         : provider === "gemini"
           ? GEMINI_DEFAULT_MODEL
+          : provider === "groq"
+            ? GROQ_DEFAULT_MODEL
           : "llama3.2:3b";
   const locale = body.locale === "en" ? "en" : "ko";
 
-  if (!["ollama", "openai", "gemini"].includes(provider)) {
+  if (!["ollama", "openai", "gemini", "groq"].includes(provider)) {
     sendJson(res, 400, {
       error: "PROVIDER_NOT_ALLOWED",
-      allowedProviders: ["ollama", "openai", "gemini"]
+      allowedProviders: ["ollama", "openai", "gemini", "groq"]
     }, origin);
     return;
   }
@@ -84,12 +87,55 @@ export async function handleChat(req, res, origin) {
     }, origin);
     return;
   }
+  const workspacePrompt = [
+    ...messages
+      .filter((message) => message.role === "user")
+      .slice(-3)
+      .map((message) => message.content),
+    typeof body.prompt === "string" ? body.prompt : "",
+  ].join("\n\n");
+
+  const apiKey = provider === "ollama" ? "" : getProviderApiKey(provider, body.apiKey);
+  if (provider !== "ollama" && !apiKey) {
+    sendProviderMissingKey(res, origin, provider);
+    return;
+  }
 
   const workspaceContext = await buildWorkspaceContext({
-    prompt: body.prompt,
+    prompt: workspacePrompt,
     profile: body.profile,
     authToken: typeof body.authToken === "string" ? body.authToken : "",
   });
+  const workspaceActionContext = await buildWorkspaceActionContext({
+    prompt: workspacePrompt,
+    profile: body.profile,
+    authToken: typeof body.authToken === "string" ? body.authToken : "",
+    provider,
+    model,
+    apiKey,
+    locale,
+    workspaceContext,
+  });
+  if (
+    typeof workspaceActionContext === "string" &&
+    (
+      workspaceActionContext.includes("needs Google consent") ||
+      workspaceActionContext.includes("not signed in") ||
+      workspaceActionContext.includes("write action failed") ||
+      workspaceActionContext.includes("draft-only schedule mode") ||
+      workspaceActionContext.includes("needs user confirmation") ||
+      workspaceActionContext.includes("Should I run this?") ||
+      workspaceActionContext.includes("실행할까요?")
+    )
+  ) {
+    sendJson(res, 200, {
+      ok: true,
+      provider,
+      model,
+      answer: workspaceActionContext
+    }, origin);
+    return;
+  }
   if (typeof body.memorySummary === "string" && body.memorySummary.trim()) {
     messages.splice(1, 0, {
       role: "system",
@@ -104,6 +150,12 @@ export async function handleChat(req, res, origin) {
     messages.splice(1, 0, {
       role: "system",
       content: workspaceContext,
+    });
+  }
+  if (workspaceActionContext) {
+    messages.splice(1, 0, {
+      role: "system",
+      content: workspaceActionContext,
     });
   }
 
@@ -147,18 +199,14 @@ export async function handleChat(req, res, origin) {
     return;
   }
 
-  const apiKey = getProviderApiKey(provider, body.apiKey);
-  if (!apiKey) {
-    sendProviderMissingKey(res, origin, provider);
-    return;
-  }
-
   let answer;
   let responseModel = model;
   let fallback = null;
 
   if (provider === "openai") {
     answer = await getOpenAiAnswer({ model, messages, apiKey });
+  } else if (provider === "groq") {
+    answer = await getGroqAnswer({ model, messages, apiKey });
   } else {
     const geminiResult = await getGeminiAnswerWithFallback({ model, messages, systemPrompt, apiKey });
     answer = geminiResult.answer;

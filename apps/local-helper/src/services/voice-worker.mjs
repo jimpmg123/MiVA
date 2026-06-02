@@ -63,6 +63,55 @@ async function postJson(url, payload, timeoutMs = 180000) {
   }
 }
 
+function tailLog(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .slice(-80)
+    .join("\n")
+    .trim();
+}
+
+function runProcess(command, args, timeoutMs = 600000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`${command} timed out after ${Math.round(timeoutMs / 1000)}s.`));
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      resolve({
+        ok: code === 0,
+        code,
+        command,
+        args,
+        stdout: tailLog(stdout),
+        stderr: tailLog(stderr),
+      });
+    });
+  });
+}
+
 export async function getVoiceWorkerStatus() {
   try {
     const response = await fetchJson(`${VOICE_WORKER_BASE_URL}/voice/status`);
@@ -143,6 +192,55 @@ export async function startVoiceWorker() {
   }
 
   throw new Error(`Unable to start MiVA Voice Worker. ${lastError || "No Python command worked."}`);
+}
+
+export async function installKokoroDependencies() {
+  let status = null;
+  try {
+    const startResult = await startVoiceWorker();
+    status = startResult.status;
+  } catch {
+    status = await getVoiceWorkerStatus();
+  }
+
+  const packages = ["kokoro>=0.9.4", "soundfile", "numpy", "pyopenjtalk", "misaki[ja]", "fugashi[unidic-lite]"];
+  const candidates = status?.python?.executable
+    ? [{ command: status.python.executable, argsPrefix: [] }]
+    : pythonCandidates();
+
+  let lastResult = null;
+  for (const candidate of candidates) {
+    const args = [...candidate.argsPrefix, "-m", "pip", "install", ...packages];
+    try {
+      const result = await runProcess(candidate.command, args);
+      lastResult = result;
+      if (result.ok) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return {
+          ok: true,
+          message: "Kokoro TTS dependencies installed for the active Python runtime.",
+          packages,
+          command: candidate.command,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          status: await getVoiceWorkerStatus(),
+        };
+      }
+    } catch (error) {
+      lastResult = {
+        ok: false,
+        command: candidate.command,
+        args,
+        stderr: String(error?.message || error),
+      };
+    }
+  }
+
+  throw new Error(
+    `Unable to install Kokoro TTS dependencies. ${
+      lastResult?.stderr || lastResult?.stdout || "No Python command worked."
+    }`
+  );
 }
 
 export async function synthesizeVoice(payload) {

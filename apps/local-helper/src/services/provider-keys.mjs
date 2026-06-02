@@ -11,5 +11,9 @@ export function getProviderApiKey(provider, overrideKey) {
     return process.env.GEMINI_API_KEY || "";
   }
 
+  if (provider === "groq") {
+    return process.env.GROQ_API_KEY || "";
+  }
+
   return "";
 }

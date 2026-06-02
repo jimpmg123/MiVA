@@ -13,7 +13,7 @@ const profileInstructionMap = {
     study: "User need: study and writing. Prioritize summaries, drafts, explanations, examples, and clear structure.",
     work: "User need: work support. Prioritize email, documents, decisions, light analysis, and professional tone.",
     fast: "User need: fast casual chat. Answer quickly and avoid unnecessary background.",
-    character: "User need: character assistant. Keep a friendly assistant persona while staying useful and concise."
+    character: "User need: character-ready assistant. Keep normal assistant behavior; visual character settings are configured separately in Studio."
   },
   answerStyle: {
     short: "Answer style: short. Prefer brief answers, compact bullets, and direct recommendations.",
@@ -37,7 +37,7 @@ const profileInstructionMap = {
   },
   futureFeatures: {
     voice: "Future interest: voice chat. When relevant, consider speech-friendly, concise responses.",
-    character: "Future interest: virtual character. Keep responses suitable for a visible assistant character.",
+    character: "Future interest: virtual character. Do not claim a visible character is active unless Studio character settings are enabled for this assistant.",
     googleWorkspace: "Future interest: Google Workspace. Calendar, Gmail, Drive, and Google Workspace automation may be added later.",
     files: "Future interest: local files. When relevant, ask for files or context before making claims about documents.",
     tools: "Future interest: tools and MCP. Tool use may be added later, but do not claim tools are available unless explicitly provided.",
@@ -100,9 +100,10 @@ function buildProfileInstructions(profile, provider) {
       const googleWorkspace = toolConnections.googleWorkspace === true;
       const daisoCli = toolConnections.daisoCli === true;
 
-      instructions.push(`Google Workspace direct API context: ${googleWorkspace ? "on" : "off"}.`);
+      instructions.push(`Google Workspace profile setting: ${googleWorkspace ? "enabled" : "disabled"}.`);
       if (googleWorkspace) {
-        instructions.push("When Google Workspace context is provided, it was retrieved by MiVA using the user's approved read-only Google permissions. Use that retrieved context to answer the user.");
+        instructions.push("Google Workspace access is usable only when a later Workspace context or Workspace action result is included in this prompt. Do not assume access from the profile setting alone.");
+        instructions.push("When Google Workspace context is provided, it was retrieved by MiVA using the user's approved Google permissions. Use that retrieved context to answer the user.");
         instructions.push("Do not claim you lack access if the needed Gmail, Calendar, Drive, Docs, or Sheets information is included in the provided Workspace context.");
         instructions.push("Workspace write actions such as sending email, creating calendar events, editing files, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion.");
       } else {
@@ -156,11 +157,46 @@ function buildProfileInstructions(profile, provider) {
       instructions.push(`Voice workspace: ${voice.enabled === true ? "enabled" : "disabled"}.`);
       instructions.push(`Speech-to-text provider: ${stt.enabled === true ? stt.provider || "unknown" : "disabled"}. Recording mode: ${stt.recordingMode || "toggleRecording"}. Show transcripts: ${runtime.showTranscripts === false ? "no" : "yes"}.`);
       instructions.push(`Text-to-speech provider: ${tts.enabled === true ? tts.provider || "unknown" : "disabled"}. Auto-speak: ${tts.autoSpeak === true ? "yes" : "no"}.`);
+      if (tts.enabled === true && tts.provider && tts.provider !== "disabled") {
+        instructions.push("Runtime TTS is connected for this assistant. Your answer may be spoken aloud by MiVA after generation.");
+        instructions.push("TTS response style: use natural spoken wording, short paragraphs, and readable punctuation. Avoid large tables, dense lists, and long code blocks unless the user explicitly asks for them.");
+        instructions.push("Do not announce that TTS is enabled unless the user asks about voice output.");
+      }
       if (voice.enabled === true) {
         instructions.push("Voice policy: keep spoken responses concise and easy to read aloud. Do not claim microphone or audio output is active unless the runtime confirms it.");
       }
       if (runtime.showTranscripts === true) {
         instructions.push("Voice transcript policy: preserve transcript wording when the user asks to review or correct spoken input.");
+      }
+    }
+
+    const character = promptSettings.character && typeof promptSettings.character === "object"
+      ? promptSettings.character
+      : null;
+    if (character) {
+      const characterEnabled = character.enabled === true;
+      instructions.push(`Character workspace: ${characterEnabled ? "enabled" : "disabled"}.`);
+      if (characterEnabled) {
+        if (typeof character.displayName === "string" && character.displayName.trim()) {
+          instructions.push(`Character display name: ${character.displayName.trim()}.`);
+        }
+        if (typeof character.personality === "string" && character.personality.trim()) {
+          instructions.push(`Character personality: ${character.personality.trim()}`);
+        }
+        if (typeof character.userAddress === "string" && character.userAddress.trim()) {
+          instructions.push(`User address style: ${character.userAddress.trim()}`);
+        }
+        if (typeof character.speakingStyle === "string" && character.speakingStyle.trim()) {
+          instructions.push(`Character speaking style: ${character.speakingStyle.trim()}`);
+        }
+        instructions.push(`Character renderer setting: ${character.renderer || "placeholder"}. Runtime visible: ${character.showInRuntime === false ? "no" : "yes"}.`);
+        if (character.reactionMode === "aiCues") {
+          instructions.push("Character reaction policy: lightweight reaction cues are allowed for future runtime mapping, but do not claim that Live2D motion or visual rendering happened unless the app explicitly confirms it.");
+        } else {
+          instructions.push("Character reaction policy: use app status only. Do not invent visual expressions, motions, or character actions.");
+        }
+      } else {
+        instructions.push("Character policy: no visible character behavior is active. Do not roleplay visual character actions.");
       }
     }
 
@@ -211,7 +247,7 @@ function buildProfileInstructions(profile, provider) {
       if (googleWorkspacePolicy === "disabled") {
         instructions.push("Google Workspace tools are not connected. Do not say you can read Gmail, Drive, or Calendar yet.");
       } else {
-        instructions.push("Google Workspace read-only lookup is allowed when Workspace context is present in this prompt. Do not ask for extra permission just to read already-provided Gmail, Calendar, Drive, Docs, or Sheets context.");
+        instructions.push("Google Workspace lookup is allowed when Workspace context is present in this prompt. Do not ask for extra permission just to read already-provided Gmail, Calendar, Drive, Docs, or Sheets context. Write actions are allowed only when a Workspace action result confirms completion.");
       }
     }
 

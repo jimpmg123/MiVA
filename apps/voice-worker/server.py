@@ -19,6 +19,55 @@ DEFAULT_PORT = 43120
 MAX_TTS_TEXT_CHARS = 4000
 KOKORO_SAMPLE_RATE = 24000
 DEFAULT_KOKORO_VOICE = "af_heart"
+KOKORO_VOICES = [
+    {"id": "af_heart", "label": "Heart", "language": "American English", "gender": "Female"},
+    {"id": "af_bella", "label": "Bella", "language": "American English", "gender": "Female"},
+    {"id": "af_nicole", "label": "Nicole", "language": "American English", "gender": "Female"},
+    {"id": "af_nova", "label": "Nova", "language": "American English", "gender": "Female"},
+    {"id": "af_sarah", "label": "Sarah", "language": "American English", "gender": "Female"},
+    {"id": "af_sky", "label": "Sky", "language": "American English", "gender": "Female"},
+    {"id": "am_adam", "label": "Adam", "language": "American English", "gender": "Male"},
+    {"id": "am_echo", "label": "Echo", "language": "American English", "gender": "Male"},
+    {"id": "am_eric", "label": "Eric", "language": "American English", "gender": "Male"},
+    {"id": "am_liam", "label": "Liam", "language": "American English", "gender": "Male"},
+    {"id": "am_puck", "label": "Puck", "language": "American English", "gender": "Male"},
+    {"id": "bf_alice", "label": "Alice", "language": "British English", "gender": "Female"},
+    {"id": "bf_emma", "label": "Emma", "language": "British English", "gender": "Female"},
+    {"id": "bf_lily", "label": "Lily", "language": "British English", "gender": "Female"},
+    {"id": "bm_daniel", "label": "Daniel", "language": "British English", "gender": "Male"},
+    {"id": "bm_george", "label": "George", "language": "British English", "gender": "Male"},
+    {"id": "bm_lewis", "label": "Lewis", "language": "British English", "gender": "Male"},
+    {"id": "jf_alpha", "label": "Alpha", "language": "Japanese", "gender": "Female"},
+    {"id": "jf_gongitsune", "label": "Gongitsune", "language": "Japanese", "gender": "Female"},
+    {"id": "jm_kumo", "label": "Kumo", "language": "Japanese", "gender": "Male"},
+    {"id": "zf_xiaobei", "label": "Xiaobei", "language": "Mandarin Chinese", "gender": "Female"},
+    {"id": "zf_xiaoxiao", "label": "Xiaoxiao", "language": "Mandarin Chinese", "gender": "Female"},
+    {"id": "zm_yunjian", "label": "Yunjian", "language": "Mandarin Chinese", "gender": "Male"},
+    {"id": "zm_yunxi", "label": "Yunxi", "language": "Mandarin Chinese", "gender": "Male"},
+]
+KOKORO_VOICE_IDS = {voice["id"] for voice in KOKORO_VOICES}
+KOKORO_VOICE_ALIASES = {
+    "default": DEFAULT_KOKORO_VOICE,
+    "kokoro-default": DEFAULT_KOKORO_VOICE,
+    "heart": DEFAULT_KOKORO_VOICE,
+    "bella": "af_bella",
+    "nicole": "af_nicole",
+    "niko": "af_nicole",
+    "nova": "af_nova",
+    "sarah": "af_sarah",
+    "sky": "af_sky",
+    "adam": "am_adam",
+    "echo": "am_echo",
+    "eric": "am_eric",
+    "liam": "am_liam",
+    "puck": "am_puck",
+    "alice": "bf_alice",
+    "emma": "bf_emma",
+    "lily": "bf_lily",
+    "daniel": "bm_daniel",
+    "george": "bm_george",
+    "lewis": "bm_lewis",
+}
 
 _kokoro_lock = threading.Lock()
 _kokoro_pipelines: dict[str, Any] = {}
@@ -41,10 +90,14 @@ def kokoro_ready() -> bool:
     return package_available("kokoro") and package_available("soundfile") and package_available("numpy")
 
 
+def kokoro_japanese_ready() -> bool:
+    return package_available("pyopenjtalk") and package_available("misaki")
+
+
 def kokoro_setup_message() -> str:
     return (
         "Kokoro TTS is not installed for this Python runtime. "
-        "Install it with: python -m pip install \"kokoro>=0.9.4\" soundfile numpy. "
+        "Install it with: python -m pip install \"kokoro>=0.9.4\" soundfile numpy pyopenjtalk \"misaki[ja]\" \"fugashi[unidic-lite]\". "
         "Some languages may also require espeak-ng."
     )
 
@@ -53,6 +106,11 @@ def worker_status() -> dict[str, Any]:
     kokoro_installed = package_available("kokoro")
     soundfile_installed = package_available("soundfile")
     numpy_installed = package_available("numpy")
+    pyopenjtalk_installed = package_available("pyopenjtalk")
+    misaki_installed = package_available("misaki")
+    fugashi_installed = package_available("fugashi")
+    unidic_lite_installed = package_available("unidic_lite")
+    jaconv_installed = package_available("jaconv")
     espeak_available = shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
     tts_installed = kokoro_installed and soundfile_installed and numpy_installed
 
@@ -75,10 +133,18 @@ def worker_status() -> dict[str, Any]:
                 "installed": tts_installed,
                 "activeProvider": "kokoro" if tts_installed else None,
                 "availableProviders": ["kokoro", "qwen-voice"],
+                "defaultVoice": DEFAULT_KOKORO_VOICE,
+                "voices": KOKORO_VOICES,
                 "dependencies": {
                     "kokoro": kokoro_installed,
                     "soundfile": soundfile_installed,
                     "numpy": numpy_installed,
+                    "pyopenjtalk": pyopenjtalk_installed,
+                    "misaki": misaki_installed,
+                    "fugashi": fugashi_installed,
+                    "unidicLite": unidic_lite_installed,
+                    "jaconv": jaconv_installed,
+                    "japanese": pyopenjtalk_installed and misaki_installed,
                     "espeak": espeak_available,
                 },
             },
@@ -94,7 +160,7 @@ def worker_status() -> dict[str, Any]:
             "lipSync": False,
         },
         "setup": {
-            "kokoro": "python -m pip install \"kokoro>=0.9.4\" soundfile numpy",
+            "kokoro": "python -m pip install \"kokoro>=0.9.4\" soundfile numpy pyopenjtalk \"misaki[ja]\" \"fugashi[unidic-lite]\"",
             "note": "Kokoro models are optional and are only needed when local TTS is enabled.",
         },
     }
@@ -131,6 +197,28 @@ def normalize_kokoro_language(value: str | None) -> str:
     return normalized if normalized in {"a", "b", "e", "f", "h", "i", "j", "p", "z"} else "a"
 
 
+def infer_kokoro_language_from_voice(voice_id: str) -> str | None:
+    prefix = voice_id.split("_", 1)[0].lower()
+    if prefix in {"af", "am"}:
+        return "a"
+    if prefix in {"bf", "bm"}:
+        return "b"
+    if prefix in {"jf", "jm"}:
+        return "j"
+    if prefix in {"zf", "zm"}:
+        return "z"
+    return None
+
+
+def normalize_kokoro_voice_id(value: str | None) -> tuple[str, str]:
+    requested = str(value or DEFAULT_KOKORO_VOICE).strip() or DEFAULT_KOKORO_VOICE
+    normalized = requested[:-3] if requested.endswith(".pt") else requested
+    normalized = KOKORO_VOICE_ALIASES.get(normalized.lower(), normalized)
+    if normalized not in KOKORO_VOICE_IDS:
+        return DEFAULT_KOKORO_VOICE, requested
+    return normalized, requested
+
+
 def get_kokoro_pipeline(lang_code: str) -> Any:
     with _kokoro_lock:
         if lang_code in _kokoro_pipelines:
@@ -138,9 +226,46 @@ def get_kokoro_pipeline(lang_code: str) -> Any:
 
         from kokoro import KPipeline
 
-        pipeline = KPipeline(lang_code=lang_code)
+        if lang_code == "j":
+            from misaki import ja
+
+            original_jag2p = ja.JAG2P
+
+            def pyopenjtalk_jag2p(*args: Any, **kwargs: Any) -> Any:
+                kwargs["version"] = "pyopenjtalk"
+                return original_jag2p(*args, **kwargs)
+
+            ja.JAG2P = pyopenjtalk_jag2p
+            try:
+                pipeline = KPipeline(lang_code=lang_code)
+            finally:
+                ja.JAG2P = original_jag2p
+
+            pipeline.g2p = original_jag2p(version="pyopenjtalk")
+        else:
+            pipeline = KPipeline(lang_code=lang_code)
         _kokoro_pipelines[lang_code] = pipeline
         return pipeline
+
+
+def collect_kokoro_chunks(
+    pipeline: Any,
+    text: str,
+    voice_id: str,
+    speed_value: float,
+) -> list[Any]:
+    try:
+        generator = pipeline(text, voice=voice_id, speed=speed_value)
+    except TypeError:
+        generator = pipeline(text, voice=voice_id)
+
+    import numpy as np
+
+    chunks = []
+    for _, _, audio in generator:
+        if audio is not None:
+            chunks.append(np.asarray(audio))
+    return chunks
 
 
 def synthesize_kokoro(payload: dict[str, Any]) -> dict[str, Any]:
@@ -171,10 +296,19 @@ def synthesize_kokoro(payload: dict[str, Any]) -> dict[str, Any]:
             "message": f"Unsupported TTS provider: {provider}",
         }
 
-    voice_id = str(payload.get("voiceId") or DEFAULT_KOKORO_VOICE).strip() or DEFAULT_KOKORO_VOICE
-    if voice_id.lower() in {"default", "kokoro-default"}:
-        voice_id = DEFAULT_KOKORO_VOICE
-    lang_code = normalize_kokoro_language(payload.get("langCode") or payload.get("language"))
+    voice_id, requested_voice_id = normalize_kokoro_voice_id(payload.get("voiceId"))
+    lang_code = infer_kokoro_language_from_voice(voice_id) or normalize_kokoro_language(payload.get("langCode") or payload.get("language"))
+    if lang_code == "j" and not kokoro_japanese_ready():
+        return {
+            "ok": False,
+            "error": "KOKORO_JAPANESE_DEPS_MISSING",
+            "message": (
+                "Japanese Kokoro voices require pyopenjtalk, misaki[ja], and fugashi[unidic-lite]. "
+                "Install them from the Studio voice setup screen."
+            ),
+            "status": worker_status(),
+        }
+
     speed = payload.get("speakingRate", payload.get("speed", 1.0))
     try:
         speed_value = max(0.5, min(2.0, float(speed)))
@@ -184,18 +318,18 @@ def synthesize_kokoro(payload: dict[str, Any]) -> dict[str, Any]:
     started_at = time.perf_counter()
     pipeline = get_kokoro_pipeline(lang_code)
 
-    try:
-        generator = pipeline(text, voice=voice_id, speed=speed_value)
-    except TypeError:
-        generator = pipeline(text, voice=voice_id)
-
     import numpy as np
     import soundfile as sf
 
-    chunks = []
-    for _, _, audio in generator:
-        if audio is not None:
-            chunks.append(np.asarray(audio))
+    fallback_reason = None
+    try:
+        chunks = collect_kokoro_chunks(pipeline, text, voice_id, speed_value)
+    except Exception as error:
+        if voice_id == DEFAULT_KOKORO_VOICE:
+            raise
+        fallback_reason = str(error)
+        voice_id = DEFAULT_KOKORO_VOICE
+        chunks = collect_kokoro_chunks(pipeline, text, voice_id, speed_value)
 
     if not chunks:
         return {
@@ -212,6 +346,9 @@ def synthesize_kokoro(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "provider": "kokoro",
         "voiceId": voice_id,
+        "requestedVoiceId": requested_voice_id,
+        "voiceFallback": requested_voice_id != voice_id or fallback_reason is not None,
+        "voiceFallbackReason": fallback_reason,
         "langCode": lang_code,
         "sampleRate": KOKORO_SAMPLE_RATE,
         "mimeType": "audio/wav",

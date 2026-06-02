@@ -1,12 +1,33 @@
 import { GEMINI_DEFAULT_MODEL, GEMINI_FALLBACK_MODELS } from "../config.mjs";
 
 function toGeminiContents(messages) {
-  return messages
-    .filter((message) => message.role !== "system")
-    .map((message) => ({
+  const contents = [];
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      contents.push({
+        role: "user",
+        parts: [{
+          text: [
+            "MiVA runtime context follows. Use it as authoritative context for the user's request.",
+            message.content,
+          ].join("\n\n"),
+        }],
+      });
+      contents.push({
+        role: "model",
+        parts: [{ text: "Understood. I will use this MiVA runtime context when answering." }],
+      });
+      continue;
+    }
+
+    contents.push({
       role: message.role === "assistant" ? "model" : "user",
       parts: [{ text: message.content }]
-    }));
+    });
+  }
+
+  return contents;
 }
 
 class ProviderHttpError extends Error {
