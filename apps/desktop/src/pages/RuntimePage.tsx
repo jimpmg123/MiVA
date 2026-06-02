@@ -97,6 +97,7 @@ const slashMenu = useChatSlashMenu({
 });
 const runtimeChat = appMode === "runtime";
 const showRuntimeTtsControl = runtimeChat;
+const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
     const characterAsset = getCharacterAsset(characterSettings.characterId);
     const characterRuntimeEnabled = runtimeChat && characterSettings.enabled && characterSettings.showInRuntime;
     const characterActivity = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting"
@@ -207,7 +208,7 @@ const showRuntimeTtsControl = runtimeChat;
           ref={chatScrollRef}
           onScroll={handleChatScroll}
         >
-          {showChatIntroCard && (
+          {shouldShowChatIntroCard && (
             <section className="relative rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] p-6 shadow-sm">
               <button
                 aria-label={t.close}

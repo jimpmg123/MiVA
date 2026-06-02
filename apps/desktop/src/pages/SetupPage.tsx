@@ -42,7 +42,7 @@ export function SetupPage({
   else content = settingsStep;
 
   return (
-    <div key={activeStep} className="miva-step-enter">
+    <div key={activeStep} className={`miva-step-enter ${activeStep === "chat" ? "h-full min-h-0" : ""}`}>
       {content}
     </div>
   );

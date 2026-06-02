@@ -265,7 +265,12 @@ export function useRuntimeChat({
   }
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
-    chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    const element = chatScrollRef.current;
+    if (element) {
+      element.scrollTo({ top: element.scrollHeight, behavior });
+    } else {
+      chatEndRef.current?.scrollIntoView({ behavior, block: "nearest" });
+    }
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
   }
