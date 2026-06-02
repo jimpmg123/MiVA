@@ -62,6 +62,38 @@ Current decision:
 
 Current MiVA desktop implementation converts the Stitch "Serene Utility" reference into React/Tauri screens instead of copying `code.html`.
 
+## 3.1 Reference Filtering Policy
+
+External design references may only influence MiVA when they match the product direction in this file.
+
+Absorb:
+
+- calm local-management surfaces
+- light glass-card treatment for shell, sidebars, modals, and status panels
+- subtle ambient shadows
+- readable dashboard-like status tiles
+- clear running/ready/error state treatment
+- rounded but functional cards and controls
+- status glow only for live/running indicators
+
+Discard:
+
+- cinematic dark themes as a global app direction
+- neon/pink gradients for normal productivity actions
+- poster/feed/mobile entertainment layouts
+- borderless "no-line" section rules that reduce utility clarity
+- dense admin-console information architecture
+- developer jargon where setup guidance should be user-facing
+- copied Stitch code, Tailwind CDN output, or sample app structure
+
+Implementation rule:
+
+```text
+External reference -> compatible MiVA principle -> MiVA tokens / common UI classes -> existing React screens
+```
+
+Current accepted reference influence is limited to subtle local-management polish: softer background, slightly stronger calm blue, light glass surfaces, and clearer status cards.
+
 ## 4. App Design Direction
 
 Phase 1 UI should feel like a setup assistant, not a developer console.

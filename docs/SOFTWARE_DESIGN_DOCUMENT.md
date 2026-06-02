@@ -1,6 +1,6 @@
 # MiVA Software Design Document
 
-Last updated: 2026-05-07
+Last updated: 2026-06-01
 
 ## 1. Project Overview
 
@@ -14,14 +14,15 @@ The project uses a hybrid local-cloud architecture:
 
 ## 2. Current Implementation Scope
 
-The current repository is an MVP workspace, not the final production backend.
+The current repository is an MVP workspace with working desktop, web, local-helper, voice-worker, and NestJS cloud API services.
 
 ```text
 apps/
   desktop/        Tauri + React desktop app
-  local-helper/   Node.js local bridge for Ollama, provider calls, and local chat
+  local-helper/   Node.js local bridge for Ollama, provider calls, Workspace context, voice, and local chat
   web/            React/Vite web dashboard
-  api/            temporary Node.js API skeleton
+  api/            NestJS cloud API backed by Prisma and PostgreSQL
+  voice-worker/   Optional Python voice worker for local Kokoro TTS
 packages/
   shared/         shared model catalog and constants
 infra/
@@ -57,7 +58,8 @@ flowchart LR
   Desktop --> LocalHelper
   LocalHelper --> Ollama["Ollama Runtime"]
   Ollama --> LocalModels["Local LLM Models"]
-  LocalHelper --> CloudModels["OpenAI / Gemini APIs"]
+  LocalHelper --> CloudModels["OpenAI / Gemini / Groq APIs"]
+  LocalHelper --> VoiceWorker["Optional Python Voice Worker"]
   LocalHelper --> LocalTools["MCP / Workspace CLI / Local Tools"]
 ```
 
@@ -81,7 +83,9 @@ Cloud API server
 - User/device/assistant profile persistence
 - Google OAuth and Workspace integration
 - Usage/admin statistics
-- Future billing and synchronization
+- Provider credential metadata
+- Workspace context/action gateway
+- Future billing and report/export APIs
 
 Data/infrastructure layer
 - PostgreSQL for durable application data
@@ -90,9 +94,10 @@ Data/infrastructure layer
 
 External services
 - Google OAuth / Workspace APIs
-- OpenAI/Gemini cloud models
+- OpenAI/Gemini/Groq cloud models
 - Ollama for local model runtime
 - MCP or CLI tools through local helper only
+- Optional Kokoro voice worker for local TTS
 ```
 
 ## 4. System Architecture / Deployment
@@ -121,6 +126,8 @@ User Desktop
   -> MiVA Desktop App
   -> MiVA Local Helper
   -> Ollama / Local Models
+  -> OpenAI / Gemini / Groq when configured
+  -> Optional local Python voice worker
   -> Optional local tools and MCP servers
 ```
 
@@ -147,8 +154,9 @@ Supabase is used as the managed PostgreSQL database provider only. The MiVA back
 | --- | --- | --- |
 | Web frontend | React, Vite, TypeScript, Tailwind CSS | Browser dashboard and web console |
 | Desktop app | Tauri v2, React, TypeScript, Tailwind CSS | Local setup, runtime, hardware, model control |
-| Local helper | Node.js HTTP server | Local bridge to Ollama and provider APIs |
+| Local helper | Node.js HTTP server | Local bridge to Ollama, provider APIs, Workspace context, and voice worker |
 | API server | NestJS, TypeScript | Cloud auth, assistant sync, usage reporting, admin APIs |
+| Voice worker | Python, FastAPI-style local HTTP service | Optional local Kokoro TTS runtime |
 | Local model runtime | Ollama | Local LLM model download and inference |
 | Shared package | JavaScript module | Shared model catalog and constants |
 | Version control | Git / GitHub | Source control and collaboration |
@@ -164,6 +172,7 @@ Supabase is used as the managed PostgreSQL database provider only. The MiVA back
 | ORM | Prisma | Typed schema, migrations, and database access |
 | Background jobs | Redis + BullMQ later | Long-running sync/indexing jobs when needed |
 | OAuth | Google OAuth 2.0 | Google login and Workspace authorization |
+| Cloud model APIs | OpenAI, Gemini, Groq | Optional non-local runtime providers |
 | Frontend deployment | Vercel | Hosts the public MiVA web dashboard |
 | Backend deployment | Railway | Runs the long-running NestJS API service |
 | Database hosting | Supabase PostgreSQL | Managed PostgreSQL database used through Prisma |
@@ -261,7 +270,6 @@ assistant_profiles
   model
   prompt_settings_json
   is_default
-  status
   created_at
   updated_at
 
@@ -369,8 +377,8 @@ See `docs/LOCAL_DATA_STORE.md` for the detailed local storage policy.
 | API Keys | Cloud provider key registration and test UI |
 | Usage | Usage summary and recent events |
 | Billing | Placeholder plan UI |
-| Integrations | Google Workspace, MCP, and external integration direction |
-| Voice / Character | Future voice/avatar configuration direction |
+| Integrations | Google Workspace connection and external integration direction |
+| Voice / Character | Voice/avatar configuration direction |
 | Admin | Admin analytics and top usage metrics |
 | Settings | General settings placeholder |
 
@@ -385,6 +393,8 @@ See `docs/LOCAL_DATA_STORE.md` for the detailed local storage policy.
 | Setup | Model Setup | Download and validate local model |
 | Runtime | Local Chat | Verify assistant works with local/cloud provider |
 | Runtime | Character Preview | Future visible assistant/avatar runtime |
+| Studio | Voice | Configure browser voice or local Kokoro TTS preferences |
+| Studio | Google Workspace | Configure Calendar/Gmail/Drive/Docs/Sheets policies |
 | Settings | Runtime Settings | Language, provider, local runtime information |
 
 ### Planned Web Modes
@@ -406,22 +416,33 @@ Web is not the default runtime chat surface. Launch Assistant and local model co
 
 ```text
 GET  /health
+GET  /me
 POST /auth/login
 POST /auth/google
 POST /auth/device/start
-GET  /auth/device/:code
+GET  /auth/device/:deviceCode
 POST /auth/device/complete
+GET  /catalog/models
+GET  /devices
+POST /devices
 GET  /assistant-profiles
 POST /assistant-profiles
-PATCH /assistant-profiles/:id
-DELETE /assistant-profiles/:id
+GET  /assistant-profiles/:profileId
+PATCH /assistant-profiles/:profileId
+DELETE /assistant-profiles/:profileId
 GET  /api-keys
 POST /api-keys
-POST /api-keys/:id/test
+POST /api-keys/:keyId/test
 GET  /usage/summary
 POST /usage/local-events
 POST /usage-events
 GET  /admin/stats
+GET  /workspace/google/status
+GET  /workspace/google/auth-url
+GET  /workspace/google/callback
+POST /workspace/google/token
+POST /workspace/context
+POST /workspace/actions
 ```
 
 Planned report/export endpoints:
@@ -443,6 +464,10 @@ GET  /catalog/models
 GET  /models
 POST /models/pull
 POST /chat
+GET  /voice/status
+POST /voice/start
+POST /voice/install-kokoro
+POST /voice/tts
 ```
 
 ### Planned Production API Modules
@@ -458,6 +483,7 @@ GoogleWorkspaceModule
 ToolPermissionsModule
 UsageModule
 AdminModule
+ReportModule later
 ```
 
 ## 10. UML Sequence Designs
@@ -572,15 +598,60 @@ sequenceDiagram
   participant DB as PostgreSQL
 
   User->>Web: Connect Google Workspace
-  Web->>API: GET /integrations/google/connect
+  Web->>API: GET /workspace/google/auth-url
   API-->>Web: Google OAuth URL
   Web->>Google: Redirect user for consent
   Google-->>API: OAuth callback with code
   API->>Google: Exchange code for tokens
   Google-->>API: Access and refresh tokens
   API->>DB: Store encrypted tokens and scopes
+  Web->>API: GET /workspace/google/status
   API-->>Web: Connection status
   Web-->>User: Show connected account and permissions
+```
+
+### Workspace Context in Runtime
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop Runtime
+  participant Helper as Local Helper
+  participant API as MiVA Cloud API
+  participant Google as Google Workspace APIs
+  participant Model as Ollama / OpenAI / Gemini / Groq
+
+  User->>Desktop: Ask Calendar/Gmail/Drive question
+  Desktop->>Helper: POST /chat with profile and auth token
+  Helper->>API: POST /workspace/context
+  API->>Google: Fetch bounded context using stored OAuth connection
+  Google-->>API: Workspace context
+  API-->>Helper: Context summary
+  Helper->>Model: Runtime prompt plus context
+  Model-->>Helper: Assistant response
+  Helper-->>Desktop: Answer
+  Desktop-->>User: Display answer
+```
+
+### Local Voice Output
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop
+  participant Helper as Local Helper
+  participant Voice as Python Voice Worker
+
+  User->>Desktop: Enable Kokoro TTS
+  Desktop->>Helper: GET /voice/status
+  Helper-->>Desktop: Worker status and voice list
+  Desktop->>Helper: POST /voice/start
+  Helper->>Voice: Start local worker
+  Voice-->>Helper: Ready
+  Desktop->>Helper: POST /voice/tts
+  Helper->>Voice: Synthesize text locally
+  Voice-->>Helper: Audio result
+  Helper-->>Desktop: Speech output result
 ```
 
 ## 11. Security and Privacy Design
@@ -593,6 +664,7 @@ sequenceDiagram
 - Local helper should bind to localhost and use CORS allowlists.
 - Production local-helper access should require signed local requests or a desktop-issued local session token.
 - Arbitrary shell execution must never be exposed through web requests.
+- Kokoro TTS audio generation is local and should not upload microphone/audio data to the cloud by default.
 
 ## 12. Development Roadmap
 
@@ -625,7 +697,7 @@ sequenceDiagram
 
 - Google Workspace OAuth
 - Calendar read/draft actions
-- Gmail/Drive support
+- Gmail/Drive/Docs/Sheets context support
 - MCP/tool permission model
 
 ### Phase 5: Voice and Character

@@ -1,6 +1,6 @@
 # MiVA Technical Stack and Service Architecture
 
-Last updated: 2026-04-29
+Last updated: 2026-06-01
 
 ## Purpose
 
@@ -18,9 +18,10 @@ The correct long-term structure is:
 ```txt
 apps/
   desktop/        Tauri + React desktop app
-  local-helper/   Node local bridge for Ollama, hardware, provider calls
+  local-helper/   Node local bridge for Ollama, provider calls, Workspace context, and voice
   web/            React web console
   api/            NestJS API for auth, sync, usage, and admin features
+  voice-worker/   Optional Python worker for local Kokoro TTS
 packages/
   shared/         shared lightweight model catalog
 docs/
@@ -41,8 +42,9 @@ flowchart LR
 
   Desktop --> LocalHelper["Local Helper / Local Bridge"]
   LocalHelper --> Ollama["Ollama / Local Models"]
-  LocalHelper --> LocalTools["Local Tools: Claw Code, MCP, Files, Voice"]
-  LocalHelper --> CloudProviders["OpenAI / Gemini / Other AI APIs"]
+  LocalHelper --> LocalTools["Local Tools: MCP, Files, Voice"]
+  LocalHelper --> CloudProviders["OpenAI / Gemini / Groq"]
+  LocalHelper --> VoiceWorker["Optional Python Voice Worker"]
 
   Web --> Api["MiVA Cloud API"]
   Api --> Db["PostgreSQL"]
@@ -209,20 +211,19 @@ Core tables later:
 
 ```txt
 users
+auth_sessions
 devices
-device_pairings
 assistant_profiles
 model_preferences
 provider_credentials
-integration_accounts
-google_workspace_connections
+workspace_connections
 tool_permissions
-chat_sessions
+usage_events
 ```
 
 Important security note:
 
-- Do not store personal OpenAI/Gemini keys in plaintext.
+- Do not store personal OpenAI/Gemini/Groq keys in plaintext.
 - For desktop-first usage, prefer local OS keychain storage.
 - If web-managed provider keys are needed later, store encrypted secrets on the server and design rotation/deletion from the start.
 

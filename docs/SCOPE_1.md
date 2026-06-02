@@ -1,6 +1,6 @@
 # MiVA Scope 1 Completion Target
 
-Last updated: 2026-05-04
+Last updated: 2026-06-01
 
 ## Goal
 
@@ -43,6 +43,7 @@ Required:
 - Cloud provider selection for development testing:
   - OpenAI
   - Gemini
+  - Groq
 - Provider key override fields stored locally.
 - Simple and developer prompt builders.
 - Coding capability policy for assistants:
@@ -88,34 +89,53 @@ Required:
 
 ## API Scope
 
-The API is still a temporary Node service for contract testing.
+The API now runs as a NestJS service backed by Prisma and Supabase PostgreSQL.
 
 Required:
 
 - `GET /health`
+- `GET /me`
+- `POST /auth/login`
+- `POST /auth/google`
+- `POST /auth/device/start`
+- `GET /auth/device/:deviceCode`
+- `POST /auth/device/complete`
+- `GET /catalog/models`
+- `GET /devices`
+- `POST /devices`
 - `GET /assistant-profiles`
 - `POST /assistant-profiles`
-- `PATCH /assistant-profiles/:id`
-- `DELETE /assistant-profiles/:id`
-- `POST /assistant-profiles/:id/finalize`
+- `GET /assistant-profiles/:profileId`
+- `PATCH /assistant-profiles/:profileId`
+- `DELETE /assistant-profiles/:profileId`
+- `GET /api-keys`
+- `POST /api-keys`
+- `POST /api-keys/:keyId/test`
+- `POST /usage-events`
+- `GET /usage/summary`
+- `POST /usage/local-events`
 - `GET /admin/stats`
-- Development auth endpoints.
-- Device auth scaffolding for later desktop/web login.
+- `GET /workspace/google/status`
+- `GET /workspace/google/auth-url`
+- `GET /workspace/google/callback`
+- `POST /workspace/google/token`
+- `POST /workspace/context`
+- `POST /workspace/actions`
 
-The API now runs as a NestJS service with Prisma and Supabase PostgreSQL. Some short-lived device-auth state can remain in memory during Scope 1, but durable account, device, assistant profile, and usage data should stay in PostgreSQL.
+Some short-lived device-auth and OAuth state can remain in memory during Scope 1, but durable account, device, assistant profile, Workspace connection, provider credential, and usage data should stay in PostgreSQL.
 
 ## Out Of Scope For Scope 1
 
-- Production Google OAuth.
+- Production hardening for Google OAuth.
 - Real payment processing.
 - Real billing enforcement.
 - Production database hardening.
-- Full backend module split beyond the current NestJS controller/service migration.
+- Advanced backend modules beyond the current NestJS service split.
 - Real installer release pipeline.
-- Real TTS.
+- Production-grade TTS.
 - Real STT.
 - Live2D character runtime.
-- Google Workspace actions.
+- Production-grade Google Workspace automation beyond the current bounded context/action MVP.
 - MCP server execution.
 - Automatic cloud sync.
 - Conflict resolution between web and desktop profiles.

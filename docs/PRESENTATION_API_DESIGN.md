@@ -1,8 +1,8 @@
 # MiVA API, Data, and Sequence Design
 
-Last updated: 2026-05-10
+Last updated: 2026-06-01
 
-This document is prepared for presentation and report material. It summarizes the current implemented APIs, the planned report APIs, the database choice, and two UML sequence diagrams based on main use cases.
+This document is prepared for presentation and report material. It summarizes the current implemented APIs, the planned report APIs, the database choice, and UML sequence diagrams based on main use cases.
 
 ## 1. API Architecture Overview
 
@@ -17,7 +17,7 @@ Cloud API
 
 Local Helper API
 - Runs only on the user's computer.
-- Controls Ollama, local model download, and local chat execution.
+- Controls Ollama, local model download, local chat execution, cloud-provider routing, Google Workspace runtime context, and the optional voice worker bridge.
 - Current dev URL: http://127.0.0.1:43110
 ```
 
@@ -32,10 +32,13 @@ flowchart LR
   Desktop --> Api
   Api --> Db["Supabase PostgreSQL"]
   Api --> Google["Google OAuth"]
+  Api --> Workspace["Google Workspace APIs"]
 
   Web -. "same-device localhost" .-> Helper["Local Helper API"]
   Desktop --> Helper
   Helper --> Ollama["Ollama Runtime"]
+  Helper --> CloudModels["OpenAI / Gemini / Groq"]
+  Helper --> VoiceWorker["Optional Voice Worker"]
   Ollama --> Models["Local Model Files"]
 ```
 
@@ -56,7 +59,7 @@ flowchart LR
 | POST | `/auth/login` | Web dev login | Local development email/password login. Not intended for production. | Implemented |
 | POST | `/auth/google` | Web | Verify Google ID token, upsert user, create MiVA session. | Implemented |
 | POST | `/auth/device/start` | Desktop/Web bridge | Start temporary device auth request. | Implemented in memory |
-| GET | `/auth/device/:code` | Desktop polling | Check device auth request status. | Implemented in memory |
+| GET | `/auth/device/:deviceCode` | Desktop polling | Check device auth request status. | Implemented in memory |
 | POST | `/auth/device/complete` | Web | Complete device login using an existing session token. | Implemented in memory |
 
 Production policy:
@@ -82,9 +85,9 @@ Device data is a summary only. MiVA does not upload full local hardware snapshot
 | --- | --- | --- | --- | --- |
 | GET | `/assistant-profiles` | Web, Desktop | List current user's synced assistant profiles. | Implemented |
 | POST | `/assistant-profiles` | Desktop | Create or upsert a synced assistant profile. | Implemented |
-| GET | `/assistant-profiles/:id` | Web, Desktop | Read one assistant profile. | Implemented |
-| PATCH | `/assistant-profiles/:id` | Desktop/API clients | Update one assistant profile. | Implemented |
-| DELETE | `/assistant-profiles/:id` | API clients | Delete one assistant profile. | Implemented |
+| GET | `/assistant-profiles/:profileId` | Web, Desktop | Read one assistant profile. | Implemented |
+| PATCH | `/assistant-profiles/:profileId` | Desktop/API clients | Update one assistant profile. | Implemented |
+| DELETE | `/assistant-profiles/:profileId` | API clients | Delete one assistant profile. | Implemented |
 
 Current product rule:
 
@@ -112,7 +115,7 @@ Local Helper API:
 | GET | `/catalog/models` | Web, Desktop | Return local model catalog. | Implemented |
 | GET | `/models` | Web, Desktop | Return Ollama state and catalog with installed flags. | Implemented |
 | POST | `/models/pull` | Web, Desktop | Download an allowed Ollama model and stream progress. | Implemented |
-| POST | `/chat` | Desktop runtime | Send a local chat request to Ollama or configured provider. | Implemented in local helper |
+| POST | `/chat` | Desktop runtime | Send a chat request to Ollama, OpenAI, Gemini, or Groq with optional Workspace context. | Implemented in local helper |
 
 Important boundary:
 
@@ -121,19 +124,61 @@ The Cloud API does not download model files.
 Local model files are downloaded through Local Helper and stored by Ollama on the user's computer.
 ```
 
+### Local Voice APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | Local Helper `/voice/status` | Desktop | Check whether the optional Python voice worker is installed/running and which voices are available. | Implemented |
+| POST | Local Helper `/voice/start` | Desktop | Start the optional local voice worker process. | Implemented |
+| POST | Local Helper `/voice/install-kokoro` | Desktop | Install Kokoro TTS dependencies for local speech output. | Implemented |
+| POST | Local Helper `/voice/tts` | Desktop runtime | Synthesize assistant speech through the local voice worker. | Implemented |
+
+Voice boundary:
+
+```text
+Voice output is local-first. Browser/OS speech can be used without the worker; Kokoro TTS uses the optional Python voice worker on the user's computer.
+```
+
 ### Provider Credential APIs
 
 | Method | Endpoint | Caller | Purpose | Current Status |
 | --- | --- | --- | --- | --- |
 | GET | `/api-keys` | Web | List configured provider credential metadata. | Implemented |
 | POST | `/api-keys` | Web | Save provider credential metadata/key material. | Implemented |
-| POST | `/api-keys/:id/test` | Web | Mark/test a provider credential. | Implemented |
+| POST | `/api-keys/:keyId/test` | Web | Mark/test a provider credential. | Implemented |
 
 Security note:
 
 ```text
 Production storage must encrypt provider keys at rest.
 For a university MVP, full encryption may be added later, but plaintext keys should not be used in production.
+```
+
+Supported cloud providers in the current local-helper runtime:
+
+```text
+OpenAI
+Gemini
+Groq
+```
+
+### Google Workspace APIs
+
+| Method | Endpoint | Caller | Purpose | Current Status |
+| --- | --- | --- | --- | --- |
+| GET | `/workspace/google/status` | Web, Desktop | Return the current user's Google Workspace connection state, account email, scopes, and expiry metadata. | Implemented |
+| GET | `/workspace/google/auth-url` | Web, Desktop | Create a short-lived OAuth state and return a Google authorization URL. | Implemented |
+| GET | `/workspace/google/callback` | Google OAuth redirect | Complete OAuth code exchange and store Workspace connection tokens. | Implemented |
+| POST | `/workspace/google/token` | Web fallback | Save a Google access token for the current user when using a token-based flow. | Implemented |
+| POST | `/workspace/context` | Local Helper | Fetch bounded Gmail, Drive, Docs, Sheets, or Calendar context for assistant prompts. | Implemented |
+| POST | `/workspace/actions` | Local Helper | Run approved Workspace actions such as draft/schedule-oriented operations. | Implemented |
+
+Workspace boundary:
+
+```text
+The Local Helper decides whether a prompt needs Workspace context/action based on the assistant profile and user prompt.
+The Cloud API owns OAuth tokens and talks to Google Workspace APIs.
+Assistant chat text is not stored in the cloud database as part of this flow.
 ```
 
 ### Usage and Admin APIs
@@ -317,7 +362,66 @@ The usage event stores provider/model/duration/success counters.
 It does not store the raw user message or assistant response by default.
 ```
 
-## 6. Current vs Planned API Summary
+## 6. UML Sequence Diagram 3: Google Workspace Context and Action
+
+Use case:
+
+```text
+User enables Google Workspace for an assistant, asks a Workspace-related question, and the runtime uses bounded Workspace context or an approved action.
+```
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop
+  participant Helper as Local Helper API
+  participant API as MiVA Cloud API
+  participant Google as Google Workspace APIs
+  participant Provider as Ollama / Cloud Model
+
+  User->>Desktop: Ask Workspace-related prompt
+  Desktop->>Helper: POST /chat with profile and auth token
+  Helper->>API: POST /workspace/context
+  API->>Google: Fetch allowed Calendar/Gmail/Drive/Docs/Sheets context
+  Google-->>API: Bounded context data
+  API-->>Helper: Return summarized context
+  Helper->>Provider: Send prompt plus Workspace context
+  Provider-->>Helper: Assistant answer
+  Helper-->>Desktop: Return answer
+  Desktop-->>User: Display response
+```
+
+If the prompt requests a write-like Workspace operation, Local Helper plans the action and calls `POST /workspace/actions`. The API server enforces the stored Google Workspace connection and returns a result or a user-confirmation message.
+
+## 7. UML Sequence Diagram 4: Optional Local Voice Output
+
+Use case:
+
+```text
+User enables Kokoro TTS for an assistant and MiVA speaks the assistant response locally.
+```
+
+```mermaid
+sequenceDiagram
+  actor User
+  participant Desktop as MiVA Desktop
+  participant Helper as Local Helper API
+  participant Voice as Python Voice Worker
+
+  User->>Desktop: Enable Kokoro TTS
+  Desktop->>Helper: GET /voice/status
+  Helper-->>Desktop: Worker and voice catalog status
+  Desktop->>Helper: POST /voice/start
+  Helper->>Voice: Start local worker process
+  Voice-->>Helper: Worker ready
+  User->>Desktop: Receive assistant answer
+  Desktop->>Helper: POST /voice/tts
+  Helper->>Voice: Synthesize speech locally
+  Voice-->>Helper: Audio result
+  Helper-->>Desktop: Return local speech output
+```
+
+## 8. Current vs Planned API Summary
 
 Current implementation:
 
@@ -327,23 +431,29 @@ GET  /me
 POST /auth/login
 POST /auth/google
 POST /auth/device/start
-GET  /auth/device/:code
+GET  /auth/device/:deviceCode
 POST /auth/device/complete
 GET  /catalog/models
 GET  /devices
 POST /devices
 GET  /api-keys
 POST /api-keys
-POST /api-keys/:id/test
+POST /api-keys/:keyId/test
 GET  /assistant-profiles
 POST /assistant-profiles
-GET  /assistant-profiles/:id
-PATCH /assistant-profiles/:id
-DELETE /assistant-profiles/:id
+GET  /assistant-profiles/:profileId
+PATCH /assistant-profiles/:profileId
+DELETE /assistant-profiles/:profileId
 POST /usage-events
 GET  /usage/summary
 POST /usage/local-events
 GET  /admin/stats
+GET  /workspace/google/status
+GET  /workspace/google/auth-url
+GET  /workspace/google/callback
+POST /workspace/google/token
+POST /workspace/context
+POST /workspace/actions
 ```
 
 Current Local Helper implementation:
@@ -357,6 +467,10 @@ GET  /catalog/models
 GET  /models
 POST /models/pull
 POST /chat
+GET  /voice/status
+POST /voice/start
+POST /voice/install-kokoro
+POST /voice/tts
 ```
 
 Planned report API:
@@ -367,7 +481,7 @@ POST /reports/pdf
 GET  /reports/:id
 ```
 
-## 7. Presentation Notes
+## 9. Presentation Notes
 
 Key talking points:
 
@@ -376,7 +490,9 @@ Key talking points:
 2. The cloud API manages identity, sync, settings, and admin statistics.
 3. Web is a console for setup/review/admin, not the default local chat runtime.
 4. Desktop and Local Helper handle Ollama, model downloads, and local chat.
-5. PostgreSQL stores structured settings and metrics, not private chat transcripts.
-6. Admin analytics use usage_events and assistant profile metadata.
-7. Report APIs are planned as a wrapper/export layer over current usage/admin APIs.
+5. Local Helper can route runtime chat to Ollama, OpenAI, Gemini, or Groq.
+6. Google Workspace access is mediated by the Cloud API OAuth connection and bounded context/action endpoints.
+7. PostgreSQL stores structured settings and metrics, not private chat transcripts.
+8. Admin analytics use usage_events and assistant profile metadata.
+9. Report APIs are planned as a wrapper/export layer over current usage/admin APIs.
 ```

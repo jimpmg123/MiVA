@@ -1,6 +1,6 @@
 # MiVA Server-Side Service Scope
 
-Last updated: 2026-04-29
+Last updated: 2026-06-01
 
 ## Purpose
 
@@ -124,7 +124,7 @@ Security note:
 
 - For MVP, provider API keys should stay in the desktop app/local-helper.
 - If the web service later stores provider keys, they must be encrypted, rotatable, and deletable.
-- Never store plaintext OpenAI/Gemini keys.
+- Never store plaintext OpenAI/Gemini/Groq keys.
 
 ### 5. Local Bridge Coordination
 
@@ -173,15 +173,15 @@ The server can support:
 - Gmail metadata or draft permissions later.
 - Drive file listing or selected file access later.
 
-Suggested endpoints:
+Current implemented endpoints:
 
 ```txt
-GET  /integrations/google/connect
-GET  /integrations/google/callback
-GET  /integrations/google/status
-DELETE /integrations/google
-GET  /integrations/google/calendar/events
-POST /integrations/google/calendar/events
+GET  /workspace/google/status
+GET  /workspace/google/auth-url
+GET  /workspace/google/callback
+POST /workspace/google/token
+POST /workspace/context
+POST /workspace/actions
 ```
 
 Rules:
@@ -321,14 +321,26 @@ Why:
 - PostgreSQL is the safest default for user, device, preference, OAuth, and usage data.
 - Redis/BullMQ should be added only when background jobs become real.
 
-## Initial Database Sketch
+## Current Database Sketch
 
 ```txt
 users
   id
   email
   display_name
+  google_subject
+  password_hash
+  role
   locale
+  last_login_at
+  created_at
+  updated_at
+
+auth_sessions
+  id
+  user_id
+  token_hash
+  expires_at
   created_at
   updated_at
 
@@ -339,26 +351,29 @@ devices
   os
   app_version
   last_seen_at
+  local_status
   created_at
-
-device_pairings
-  id
-  user_id
-  device_id
-  code_hash
-  expires_at
-  confirmed_at
+  updated_at
 
 assistant_profiles
   id
   user_id
   name
-  language_use
+  description
   use_case
   answer_style
   priority
+  language_use
   local_mode
+  provider
+  model
+  future_features
   is_default
+  source
+  prompt
+  capabilities
+  created_at
+  updated_at
 
 model_preferences
   id
@@ -369,13 +384,26 @@ model_preferences
   cloud_model
   fallback_policy
 
-integration_accounts
+provider_credentials
   id
   user_id
   provider
+  label
+  encrypted_key
+  masked_key
+  status
+  last_validated_at
+
+workspace_connections
+  id
+  user_id
+  provider
+  account_email
   encrypted_access_token
   encrypted_refresh_token
+  access_token_expires_at
   scopes
+  status
   connected_at
 
 tool_permissions
@@ -384,23 +412,60 @@ tool_permissions
   device_id
   tool_id
   permission_scope
+  risk_level
+  enabled
+  created_at
+
+usage_events
+  id
+  user_id
+  device_id
+  assistant_profile_id
+  mode
+  provider
+  model
+  event_type
+  input_chars
+  output_chars
+  duration_ms
+  success
+  metadata
   created_at
 ```
 
 ## MVP Server Scope
 
-Do this first:
+Current implemented core:
 
 ```txt
 GET  /health
+GET  /me
 POST /auth/login
-GET  /auth/me
-POST /devices/pairing/start
-POST /devices/pairing/confirm
+POST /auth/google
+POST /auth/device/start
+GET  /auth/device/:deviceCode
+POST /auth/device/complete
+GET  /catalog/models
 GET  /devices
-PATCH /assistant-profiles/default
-GET  /model-preferences
-PATCH /model-preferences
+POST /devices
+GET  /assistant-profiles
+POST /assistant-profiles
+GET  /assistant-profiles/:profileId
+PATCH /assistant-profiles/:profileId
+DELETE /assistant-profiles/:profileId
+GET  /api-keys
+POST /api-keys
+POST /api-keys/:keyId/test
+POST /usage-events
+GET  /usage/summary
+POST /usage/local-events
+GET  /admin/stats
+GET  /workspace/google/status
+GET  /workspace/google/auth-url
+GET  /workspace/google/callback
+POST /workspace/google/token
+POST /workspace/context
+POST /workspace/actions
 ```
 
 Do not do yet:
@@ -415,13 +480,13 @@ Do not do yet:
 
 1. Keep local-helper and desktop flow working.
 2. Split local-helper provider/prompt code before more integrations.
-3. Add NestJS API skeleton.
-4. Add PostgreSQL and Prisma.
-5. Add auth and user profile.
-6. Add device pairing.
-7. Connect web dashboard to server account/device data.
-8. Add assistant profile and model preferences.
-9. Add Google OAuth only after account/device flow is stable.
+3. NestJS API service is in place.
+4. PostgreSQL and Prisma are in place.
+5. Auth, Google login, and user profile resolution are in place.
+6. Device auth and device records are in place.
+7. Web dashboard is connected to server account/device/profile/admin data.
+8. Assistant profile persistence, provider credentials, usage events, and model catalog are in place.
+9. Google Workspace OAuth, context, and action endpoints are in place.
 
 ## Open Questions
 
