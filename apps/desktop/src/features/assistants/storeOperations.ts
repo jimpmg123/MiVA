@@ -31,6 +31,22 @@ export function addAssistantProfileStore(
   };
 }
 
+export function replaceAssistantProfileStoreByName(
+  currentStore: LocalAssistantProfileStore,
+  profile: LocalAssistantProfile,
+): LocalAssistantProfileStore {
+  const normalizedName = profile.name.trim().toLocaleLowerCase();
+  return {
+    schemaVersion: LOCAL_PROFILE_SCHEMA_VERSION,
+    activeProfileId: profile.id,
+    profiles: [
+      profile,
+      ...currentStore.profiles.filter((item) => item.name.trim().toLocaleLowerCase() !== normalizedName),
+    ],
+    updatedAt: profile.updatedAt,
+  };
+}
+
 export function removeAssistantProfileStore(
   currentStore: LocalAssistantProfileStore,
   profileId: string,

@@ -186,6 +186,42 @@ export const cloudModelCatalog: CloudModelInfo[] = [
     },
   },
   {
+    id: "llama-3.1-8b-instant",
+    provider: "groq",
+    label: "Llama 3.1 8B Instant",
+    category: "Fast cloud",
+    summary: {
+      ko: "Korean copy pending",
+      en: "A fast Groq-hosted Llama model for low-latency assistant testing.",
+    },
+    bestFor: {
+      ko: "Korean copy pending",
+      en: "Fast responses, lightweight Workspace follow-ups, low-latency chat",
+    },
+    status: {
+      ko: "Korean copy pending",
+      en: "API key required",
+    },
+  },
+  {
+    id: "llama-3.3-70b-versatile",
+    provider: "groq",
+    label: "Llama 3.3 70B Versatile",
+    category: "High-speed large model",
+    summary: {
+      ko: "Korean copy pending",
+      en: "A larger Groq-hosted Llama model for stronger general assistant quality.",
+    },
+    bestFor: {
+      ko: "Korean copy pending",
+      en: "Work support, writing, analysis, cloud coding experiments",
+    },
+    status: {
+      ko: "Korean copy pending",
+      en: "API key required",
+    },
+  },
+  {
     id: "custom-cloud",
     provider: "openai",
     label: "Custom API Model",
@@ -209,6 +245,7 @@ export const providerMeta: Record<ProviderId, { label: string; mode: ProviderMod
   ollama: { label: "Ollama", mode: "local", icon: "dns" },
   openai: { label: "OpenAI", mode: "cloud", icon: "cloud" },
   gemini: { label: "Gemini", mode: "cloud", icon: "auto_awesome" },
+  groq: { label: "Groq", mode: "cloud", icon: "bolt" },
 };
 
 export function getModelByName(name: string) {

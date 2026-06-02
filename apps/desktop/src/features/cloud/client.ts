@@ -4,6 +4,7 @@ import { providerMeta } from "../models/catalog";
 import type {
   AuthSession,
   CloudDeviceRecord,
+  GoogleWorkspaceStatus,
   DeviceAuthStart,
   DeviceAuthStatus,
   HardwareInfo,
@@ -40,6 +41,22 @@ export function startDeviceAuth() {
 
 export function getDeviceAuthStatus(deviceCode: string) {
   return fetchCloudJson<DeviceAuthStatus>(`/auth/device/${encodeURIComponent(deviceCode)}`);
+}
+
+export function getGoogleWorkspaceStatus(input: {
+  authSession: AuthSession | null;
+}) {
+  return fetchCloudJson<GoogleWorkspaceStatus>("/workspace/google/status", {
+    headers: getCloudHeaders(input.authSession),
+  });
+}
+
+export function getGoogleWorkspaceAuthUrl(input: {
+  authSession: AuthSession | null;
+}) {
+  return fetchCloudJson<{ url: string; expiresAt: string }>("/workspace/google/auth-url", {
+    headers: getCloudHeaders(input.authSession),
+  });
 }
 
 export async function registerDesktopDevice(input: {

@@ -4,6 +4,12 @@ import type { Locale } from "../../i18n";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
+  applySlashCommandProfile,
+  formatSlashUserMessage,
+  parseSlashCommand,
+} from "./slashCommands";
+import {
+  createRuntimeConversationId,
   emptyRuntimeChatStore,
   loadRuntimeChatStore,
   saveRuntimeChatMessages,
@@ -19,6 +25,7 @@ import type {
   PromptSettings,
   ProviderId,
   RuntimeMemorySummary,
+  GoogleWorkspaceStatus,
 } from "../../types";
 
 const RECENT_CONTEXT_MESSAGE_LIMIT = 8;
@@ -80,7 +87,7 @@ type UseRuntimeChatOptions = {
   selectedProvider: ProviderId;
   selectedModel: string;
   selectedCloudModel: string;
-  providerKeys: { openai: string; gemini: string };
+  providerKeys: { openai: string; gemini: string; groq: string };
   statusInstalled: boolean;
   busyAction: string | null;
   visibleAssistantProfiles: LocalAssistantProfile[];
@@ -99,6 +106,8 @@ type UseRuntimeChatOptions = {
   recordRuntimeUsageEvent: (event: RuntimeUsageEventInput) => Promise<void>;
   runtimeTtsEnabled: boolean;
   runtimeTtsSettings: PromptSettings["voice"]["tts"] | null;
+  refreshGoogleWorkspaceStatus: () => Promise<GoogleWorkspaceStatus | null>;
+  onWorkspaceAuthRequired: () => Promise<void>;
   onLog: (message: string) => void;
 };
 
@@ -131,6 +140,8 @@ export function useRuntimeChat({
   recordRuntimeUsageEvent,
   runtimeTtsEnabled,
   runtimeTtsSettings,
+  refreshGoogleWorkspaceStatus,
+  onWorkspaceAuthRequired,
   onLog,
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
@@ -151,7 +162,7 @@ export function useRuntimeChat({
   const runtimeChatStoreLoadedRef = useRef(false);
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
-  const currentConversationId = activeRuntimeConversationId ?? `runtime_${promptProfileId}_current`;
+  const currentConversationId = activeRuntimeConversationId ?? runtimeChatStore.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
   const runtimeAssistantProfiles = (() => {
     const profiles = new Map<string, LocalAssistantProfile>();
     visibleAssistantProfiles.forEach((profile) => profiles.set(profile.id, profile));
@@ -164,21 +175,42 @@ export function useRuntimeChat({
     return Array.from(profiles.values());
   })();
   const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => {
-    const messages = profile.id === promptProfileId ? runtimeChatMessages : runtimeChatStore.conversations[profile.id] ?? [];
-    const firstMessage = messages.find((message) => message.role === "user")?.content.trim();
-    const lastMessage = messages[messages.length - 1];
-    const conversations = messages.length
+    const storedConversations = Object.values(runtimeChatStore.conversations)
+      .filter((conversation) => conversation.assistantId === profile.id)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    const activeMessages = profile.id === promptProfileId ? runtimeChatMessages : [];
+    const activeStoredConversation = currentConversationId ? runtimeChatStore.conversations[currentConversationId] : null;
+    const activeUnsavedConversation = profile.id === promptProfileId && activeMessages.length && !activeStoredConversation
       ? [{
-          id: `runtime_${profile.id}_current`,
+          id: currentConversationId,
           assistantId: profile.id,
           assistantName: profile.name,
-          title: firstMessage ? firstMessage.slice(0, 48) : chatTitle,
-          preview: lastMessage?.content,
+          title: activeMessages.find((message) => message.role === "user")?.content.trim().slice(0, 48) || chatTitle,
+          messages: activeMessages,
+          createdAt: activeMessages[0]?.createdAt ?? new Date().toISOString(),
+          updatedAt: activeMessages[activeMessages.length - 1]?.createdAt ?? new Date().toISOString(),
           modelLabel: profile.modelLabel || profile.model,
-          messageCount: messages.length,
-          updatedAtLabel: lastMessage?.createdAt ? justNowLabel : "Ready",
         }]
       : [];
+    const conversations = [...activeUnsavedConversation, ...storedConversations]
+      .filter((conversation, index, list) => list.findIndex((item) => item.id === conversation.id) === index)
+      .map((conversation) => {
+        const messages = conversation.id === currentConversationId && profile.id === promptProfileId
+          ? runtimeChatMessages
+          : conversation.messages;
+        const lastMessage = messages[messages.length - 1];
+
+        return {
+          id: conversation.id,
+          assistantId: profile.id,
+          assistantName: profile.name,
+          title: conversation.title || chatTitle,
+          preview: lastMessage?.content,
+          modelLabel: conversation.modelLabel || profile.modelLabel || profile.model,
+          messageCount: messages.length,
+          updatedAtLabel: lastMessage?.createdAt ? justNowLabel : "Ready",
+        };
+      });
 
     return {
       assistantId: profile.id,
@@ -200,7 +232,7 @@ export function useRuntimeChat({
     updateChatMessages(appMode, () => []);
     setChatInput("");
     if (appMode === "runtime") {
-      setActiveRuntimeConversationId(`runtime_${promptProfileId}_${Date.now()}`);
+      setActiveRuntimeConversationId(createRuntimeConversationId(promptProfileId));
     }
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
@@ -214,16 +246,8 @@ export function useRuntimeChat({
     }
 
     setRuntimeChatMessages([]);
-    void saveRuntimeChatMessages(runtimeChatStoreRef.current, assistantId, [])
-      .then((store) => {
-        runtimeChatStoreRef.current = store;
-        setRuntimeChatStore(store);
-      })
-      .catch((error) => {
-        onLog(`Runtime chat save failed: ${String(error)}`);
-      });
     setChatInput("");
-    setActiveRuntimeConversationId(`runtime_${assistantId}_${Date.now()}`);
+    setActiveRuntimeConversationId(createRuntimeConversationId(assistantId));
     setAppMode("runtime");
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
@@ -235,7 +259,7 @@ export function useRuntimeChat({
       setActiveLocalProfileId(profile.id);
       applyLocalAssistantProfile(profile);
     }
-    setRuntimeChatMessages(runtimeChatStore.conversations[conversation.assistantId] ?? []);
+    setRuntimeChatMessages(runtimeChatStore.conversations[conversation.id]?.messages ?? []);
     setActiveRuntimeConversationId(conversation.id);
     setAppMode("runtime");
   }
@@ -281,6 +305,10 @@ export function useRuntimeChat({
       return providerKeys.gemini.trim();
     }
 
+    if (provider === "groq") {
+      return providerKeys.groq.trim();
+    }
+
     return "";
   }
 
@@ -306,6 +334,7 @@ export function useRuntimeChat({
     await new Promise<void>((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = settings.speakingRate;
+      utterance.volume = settings.volume;
       utterance.onend = () => resolve();
       utterance.onerror = (event) => reject(new Error(event.error || "Browser speech failed."));
       window.speechSynthesis.cancel();
@@ -323,6 +352,7 @@ export function useRuntimeChat({
     });
     await new Promise<void>((resolve, reject) => {
       const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+      audio.volume = settings.volume;
       audioRef.current = audio;
       audio.onended = () => {
         audioRef.current = null;
@@ -443,14 +473,22 @@ export function useRuntimeChat({
   }
 
   async function sendMessage() {
-    const prompt = chatInput.trim();
+    const rawInput = chatInput.trim();
+    const parsed = parseSlashCommand(rawInput);
+    const prompt = parsed?.prompt ?? rawInput;
+    const displayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput;
+    let assistantProfile = buildCurrentLocalAssistantProfile();
+    if (parsed) {
+      assistantProfile = applySlashCommandProfile(assistantProfile, parsed.command.id);
+    }
     const chatMode = appMode;
     const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const assistantProfile = buildCurrentLocalAssistantProfile();
     const apiKey = selectedProvider === "openai"
       ? providerKeys.openai.trim()
       : selectedProvider === "gemini"
         ? providerKeys.gemini.trim()
+        : selectedProvider === "groq"
+          ? providerKeys.groq.trim()
         : "";
     const localUnavailable = selectedProvider === "ollama" && !statusInstalled;
     const currentMessages = chatMode === "runtime" ? runtimeChatMessages : testChatMessages;
@@ -465,6 +503,33 @@ export function useRuntimeChat({
       return;
     }
 
+    const latestUserMessage = displayContent;
+
+    const workspaceEnabled = assistantProfile.prompt.settings.toolConnections.googleWorkspace;
+    const workspaceServices = assistantProfile.prompt.settings.toolConnections.googleWorkspaceServices;
+    if (chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
+      const workspaceStatus = await refreshGoogleWorkspaceStatus();
+      if (!workspaceStatus?.connected) {
+        await onWorkspaceAuthRequired();
+        const requestedAt = new Date().toISOString();
+        setChatInput("");
+        shouldAutoScrollChatRef.current = true;
+        setShowJumpToLatest(false);
+        updateChatMessages(chatMode, (current) => [
+          ...current,
+          { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+          {
+            role: "assistant",
+            content: "Google Workspace permission is required. Complete Google consent in the browser, then try again.",
+            createdAt: new Date().toISOString(),
+            provider: selectedProvider,
+            model: providerModel,
+          },
+        ]);
+        return;
+      }
+    }
+
     if (selectedProvider !== "ollama" && !authSession) {
       const requestedAt = new Date().toISOString();
       setChatInput("");
@@ -472,7 +537,7 @@ export function useRuntimeChat({
       setShowJumpToLatest(false);
       updateChatMessages(chatMode, (current) => [
         ...current,
-        { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
         {
           role: "assistant",
           content: "Sign in to use cloud models. Continue without signing in only supports local Ollama assistants.",
@@ -499,7 +564,7 @@ export function useRuntimeChat({
     const requestedAt = new Date().toISOString();
     updateChatMessages(chatMode, (current) => [
       ...current,
-      { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+      { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
     ]);
 
     try {
@@ -536,7 +601,7 @@ export function useRuntimeChat({
         assistantProfile,
         messages: [
           ...currentMessages,
-          { role: "user", content: prompt, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+          { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
           {
             role: "assistant",
             content: answer,
@@ -546,7 +611,7 @@ export function useRuntimeChat({
             latencyMs,
           },
         ],
-        latestUserMessage: prompt,
+        latestUserMessage,
         provider: selectedProvider,
         model: providerModel,
       }).catch((summaryError) => {
@@ -609,7 +674,12 @@ export function useRuntimeChat({
       return;
     }
 
-    void saveRuntimeChatMessages(runtimeChatStoreRef.current, promptProfileId, runtimeChatMessages)
+    const activeProfile = runtimeAssistantProfiles.find((profile) => profile.id === promptProfileId);
+    void saveRuntimeChatMessages(runtimeChatStoreRef.current, promptProfileId, runtimeChatMessages, {
+      conversationId: currentConversationId,
+      assistantName: activeProfile?.name,
+      modelLabel: activeProfile?.modelLabel || activeProfile?.model,
+    })
       .then((store) => {
         runtimeChatStoreRef.current = store;
         setRuntimeChatStore(store);
@@ -617,7 +687,7 @@ export function useRuntimeChat({
       .catch((error) => {
         onLog(`Runtime chat save failed: ${String(error)}`);
       });
-  }, [onLog, promptProfileId, runtimeChatMessages]);
+  }, [currentConversationId, onLog, promptProfileId, runtimeChatMessages]);
 
   useEffect(() => {
     if (appMode !== "runtime") {
@@ -633,12 +703,14 @@ export function useRuntimeChat({
       runtimeChatStoreLoadedRef.current = true;
       runtimeChatStoreRef.current = store;
       setRuntimeChatStore(store);
-      setRuntimeChatMessages(store.conversations[promptProfileId] ?? []);
+      const conversationId = store.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
+      setActiveRuntimeConversationId(conversationId);
+      setRuntimeChatMessages(store.conversations[conversationId]?.messages ?? []);
     }).catch((error) => {
       onLog(`Runtime chat load failed: ${String(error)}`);
     });
     setActiveRuntimeConversationId((current) => (
-      current?.startsWith(`runtime_${promptProfileId}_`) ? current : `runtime_${promptProfileId}_current`
+      current?.startsWith(`runtime_${promptProfileId}_`) ? current : createRuntimeConversationId(promptProfileId)
     ));
     setChatInput("");
     shouldAutoScrollChatRef.current = true;

@@ -22,7 +22,7 @@ export type MemorySyncMode = "profileOnly" | "summaryMemory";
 export type AppMode = "setup" | "studio" | "runtime" | "auth";
 export type SettingsSection = "general" | "aiModels" | "security" | "logs";
 export type StudioSection = "myAssistants" | "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
-export type ProviderId = "ollama" | "openai" | "gemini";
+export type ProviderId = "ollama" | "openai" | "gemini" | "groq";
 export type CloudProviderId = Exclude<ProviderId, "ollama">;
 export type ProviderMode = "local" | "cloud";
 export type SummaryModelPolicy = "sameModel" | "localModel" | "cloudModel";
@@ -35,6 +35,8 @@ export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
 export type SttProviderId = "disabled" | "browser" | "localWhisper" | "cloud";
 export type TtsProviderId = "disabled" | "browser" | "localVoice" | "cloud";
 export type VoiceRecordingMode = "toggleRecording";
+export type CharacterRendererId = "placeholder" | "live2d";
+export type CharacterReactionMode = "statusOnly" | "aiCues";
 export type AuthRole = "user" | "admin";
 export type PromptEditorMode = "simple" | "developer";
 export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error" | "admin-web-only";
@@ -73,6 +75,14 @@ export type CloudDeviceRecord = {
   appVersion?: string | null;
   status?: string;
   lastSeenAt?: string | null;
+};
+
+export type GoogleWorkspaceStatus = {
+  connected: boolean;
+  accountEmail: string | null;
+  scopes: string[];
+  status: "CONNECTED" | "DISCONNECTED" | "NEEDS_AUTH" | "ERROR";
+  connectedAt: string | null;
 };
 
 export type PromptSettings = {
@@ -128,12 +138,25 @@ export type PromptSettings = {
       provider: TtsProviderId;
       voiceId: string;
       speakingRate: number;
+      volume: number;
       autoSpeak: boolean;
     };
     runtime: {
       interruptOnUserSpeech: boolean;
       showTranscripts: boolean;
     };
+  };
+  character: {
+    enabled: boolean;
+    renderer: CharacterRendererId;
+    characterId: string;
+    displayName: string;
+    personality: string;
+    userAddress: string;
+    speakingStyle: string;
+    reactionMode: CharacterReactionMode;
+    live2dModelPath: string;
+    showInRuntime: boolean;
   };
   safetyRules: string[];
 };
@@ -181,6 +204,14 @@ export type VoiceWorkerStatus = {
       installed: boolean;
       activeProvider: string | null;
       availableProviders: string[];
+      defaultVoice?: string;
+      voices?: Array<{
+        id: string;
+        label: string;
+        language: string;
+        gender?: string;
+      }>;
+      dependencies?: Record<string, boolean>;
     };
     multimodalVoice?: {
       installed: boolean;
@@ -259,6 +290,17 @@ export type RuntimeMemorySummary = {
   estimatedTokens: number;
 };
 
+export type RuntimeStoredConversation = {
+  id: string;
+  assistantId: string;
+  assistantName?: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+  modelLabel?: string;
+};
+
 export type ChatMetrics = {
   provider: ProviderId;
   model: string;
@@ -269,6 +311,7 @@ export type ChatMetrics = {
 export type ProviderKeyState = {
   openai: string;
   gemini: string;
+  groq: string;
 };
 
 export type RuntimeRequirement = {
@@ -335,7 +378,7 @@ export type LocalAssistantProfile = {
   };
   capabilities: {
     voice: { enabled: boolean; sttProvider: SttProviderId | null; ttsProvider: TtsProviderId | null };
-    character: { enabled: boolean; renderer: string | null; characterId: string | null };
+    character: { enabled: boolean; renderer: CharacterRendererId | null; characterId: string | null };
     googleWorkspace: { enabled: boolean; accountId: string | null; scopes: string[] };
     files: { enabled: boolean; allowedRoots: string[] };
     tools: { enabled: boolean; enabledToolIds: string[] };

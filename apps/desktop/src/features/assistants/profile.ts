@@ -1,5 +1,7 @@
 ﻿import type {
   CalendarActionMode,
+  CharacterReactionMode,
+  CharacterRendererId,
   CodingAccessMode,
   CodingCapability,
   CodingProviderPolicy,
@@ -18,6 +20,8 @@ export const defaultProfileDetails: ProfileDetailsDraft = {
 };
 const legacySimpleAvoidance = "Do not make tool actions sound completed unless a connected tool confirms them.";
 const defaultSimpleAvoidance = "Only say an action is done when MiVA actually completed it. If not, explain what still needs to be done.";
+const legacyCharacterUserAddress = "Use the user's displayed name when it feels natural.";
+const defaultCharacterUserAddress = "Use my profile name unless I set a nickname.";
 export const defaultPromptSettings: PromptSettings = {
   simple: {
     assistantPurpose: "Help me organize daily tasks, answer questions, and plan practical next actions.",
@@ -76,12 +80,25 @@ export const defaultPromptSettings: PromptSettings = {
       provider: "browser",
       voiceId: "af_heart",
       speakingRate: 1,
+      volume: 0.85,
       autoSpeak: false,
     },
     runtime: {
       interruptOnUserSpeech: true,
       showTranscripts: true,
     },
+  },
+  character: {
+    enabled: false,
+    renderer: "live2d",
+    characterId: "vtuber-shizuku",
+    displayName: "Shizuku",
+    personality: "Calm, friendly, and softly supportive while still giving practical answers.",
+    userAddress: defaultCharacterUserAddress,
+    speakingStyle: "Use gentle wording, clear line breaks, and short natural reactions.",
+    reactionMode: "statusOnly",
+    live2dModelPath: "VtuberLLM/Open-LLM-VTuber-main/live2d-models/shizuku/runtime/shizuku.model3.json",
+    showInRuntime: true,
   },
   safetyRules: [
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
@@ -192,6 +209,9 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
   const voiceRuntime = voice.runtime && typeof voice.runtime === "object"
     ? voice.runtime as Partial<PromptSettings["voice"]["runtime"]>
     : {};
+  const character = source.character && typeof source.character === "object"
+    ? source.character as Partial<PromptSettings["character"]>
+    : {};
 
   const scheduleMode: CalendarActionMode =
     scheduleRules.mode === "confirmBeforeAction" || scheduleRules.mode === "connectedActions" || scheduleRules.mode === "draftOnly"
@@ -224,7 +244,7 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       : defaultPromptSettings.summaryMemory.modelPolicy
   );
   const normalizeSummaryProvider = (value: unknown) => (
-    value === "openai" || value === "gemini" || value === "ollama"
+    value === "openai" || value === "gemini" || value === "groq" || value === "ollama"
       ? value
       : defaultPromptSettings.summaryMemory.provider
   );
@@ -237,6 +257,16 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
     value === "disabled" || value === "browser" || value === "localVoice" || value === "cloud"
       ? value
       : defaultPromptSettings.voice.tts.provider
+  );
+  const normalizeCharacterRenderer = (value: unknown): CharacterRendererId => (
+    value === "live2d" || value === "placeholder"
+      ? value
+      : defaultPromptSettings.character.renderer
+  );
+  const normalizeCharacterReactionMode = (value: unknown): CharacterReactionMode => (
+    value === "aiCues" || value === "statusOnly"
+      ? value
+      : defaultPromptSettings.character.reactionMode
   );
   return {
     simple: {
@@ -327,6 +357,9 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
         speakingRate: Number.isFinite(Number(tts.speakingRate))
           ? Math.min(2, Math.max(0.5, Number(tts.speakingRate)))
           : defaultPromptSettings.voice.tts.speakingRate,
+        volume: Number.isFinite(Number(tts.volume))
+          ? Math.min(1, Math.max(0, Number(tts.volume)))
+          : defaultPromptSettings.voice.tts.volume,
         autoSpeak: typeof tts.autoSpeak === "boolean" ? tts.autoSpeak : defaultPromptSettings.voice.tts.autoSpeak,
       },
       runtime: {
@@ -337,6 +370,34 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
           ? voiceRuntime.showTranscripts
           : defaultPromptSettings.voice.runtime.showTranscripts,
       },
+    },
+    character: {
+      enabled: typeof character.enabled === "boolean" ? character.enabled : defaultPromptSettings.character.enabled,
+      renderer: normalizeCharacterRenderer(character.renderer),
+      characterId: typeof character.characterId === "string" && character.characterId.trim()
+        ? character.characterId.trim()
+        : defaultPromptSettings.character.characterId,
+      displayName: typeof character.displayName === "string" && character.displayName.trim()
+        ? character.displayName.trim()
+        : defaultPromptSettings.character.displayName,
+      personality: typeof character.personality === "string" && character.personality.trim()
+        ? character.personality.trim()
+        : defaultPromptSettings.character.personality,
+      userAddress: typeof character.userAddress === "string" && character.userAddress.trim()
+        ? character.userAddress.trim() === legacyCharacterUserAddress
+          ? defaultCharacterUserAddress
+          : character.userAddress.trim()
+        : defaultPromptSettings.character.userAddress,
+      speakingStyle: typeof character.speakingStyle === "string" && character.speakingStyle.trim()
+        ? character.speakingStyle.trim()
+        : defaultPromptSettings.character.speakingStyle,
+      reactionMode: normalizeCharacterReactionMode(character.reactionMode),
+      live2dModelPath: typeof character.live2dModelPath === "string"
+        ? character.live2dModelPath.trim()
+        : defaultPromptSettings.character.live2dModelPath,
+      showInRuntime: typeof character.showInRuntime === "boolean"
+        ? character.showInRuntime
+        : defaultPromptSettings.character.showInRuntime,
     },
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
   };
@@ -363,7 +424,7 @@ export function normalizeMemoryCapability(
         ? value.rollingSummary.content.trim()
         : null,
       updatedAt: typeof value?.rollingSummary?.updatedAt === "string" ? value.rollingSummary.updatedAt : null,
-      provider: value?.rollingSummary?.provider === "openai" || value?.rollingSummary?.provider === "gemini" || value?.rollingSummary?.provider === "ollama"
+      provider: value?.rollingSummary?.provider === "openai" || value?.rollingSummary?.provider === "gemini" || value?.rollingSummary?.provider === "groq" || value?.rollingSummary?.provider === "ollama"
         ? value.rollingSummary.provider
         : null,
       model: typeof value?.rollingSummary?.model === "string" && value.rollingSummary.model.trim()
@@ -408,7 +469,11 @@ export function normalizeProfileCapabilities(
       sttProvider: settings.voice.stt.enabled ? settings.voice.stt.provider : null,
       ttsProvider: settings.voice.tts.enabled ? settings.voice.tts.provider : null,
     },
-    character: value?.character ?? { enabled: false, renderer: null, characterId: null },
+    character: {
+      enabled: settings.character.enabled && settings.character.showInRuntime,
+      renderer: settings.character.enabled ? settings.character.renderer : null,
+      characterId: settings.character.enabled ? settings.character.characterId : null,
+    },
     googleWorkspace: {
       accountId: value?.googleWorkspace?.accountId ?? null,
       enabled: workspaceEnabled,

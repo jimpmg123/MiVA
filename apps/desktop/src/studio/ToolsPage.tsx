@@ -198,7 +198,7 @@ export function StudioToolsPanel({
 
           {cloudRequirementUnmet && (
             <div className="mt-4 rounded-xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">
-              This coding mode requires a cloud API model. Switch to Gemini/OpenAI before saving this assistant for code editing.
+              This coding mode requires a cloud API model. Switch to Gemini, OpenAI, or Groq before saving this assistant for code editing.
             </div>
           )}
 

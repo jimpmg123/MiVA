@@ -1,4 +1,13 @@
-import { Badge, Panel } from "../components/ui";
+import {
+  Badge,
+  InfoTile,
+  Panel,
+  PrimaryButton,
+  SecondaryButton,
+  SectionHeader,
+  SetupStepShell,
+  StatusAlert,
+} from "../components/ui";
 import type { LocalAssistantProfile, ProviderMode } from "../types";
 
 type ProfileStepProps = {
@@ -40,70 +49,59 @@ export function ProfileStep({
   ];
 
   return (
-    <div className="mx-auto max-w-[920px]">
-      <header className="mb-8 flex items-start justify-between gap-6">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Account</p>
-          <h2 className="mt-3 font-heading text-[28px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">
-            Sign in to sync profiles
-          </h2>
-          <p className="mt-2 max-w-[680px] text-base leading-7 text-[#42474d]">
-            Local profiles work without an account. Sign-in will later sync assistants, settings, and chat history across devices.
-          </p>
-        </div>
-        <button
-          className="rounded-xl bg-[#35607f] px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#4f7999]"
-          type="button"
-        >
-          Sign in
-        </button>
-      </header>
+    <SetupStepShell variant="narrow">
+      <SectionHeader
+        actions={<PrimaryButton className="miva-setup-primary h-10 px-4 text-sm">Sign in</PrimaryButton>}
+        body="Local profiles work without an account. Sign-in will later sync assistants, settings, and chat history across devices."
+        eyebrow="Account"
+        title="Sign in to sync profiles"
+      />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
-        <Panel>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="font-heading text-xl font-bold text-[#191c1d]">Assistant Setup</h3>
-              <p className="mt-2 text-sm leading-6 text-[#42474d]">
-                Survey choices, provider selection, and model recommendation are saved locally first.
-              </p>
-            </div>
-            <button
-              className="rounded-xl bg-[#35607f] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#4f7999]"
-              type="button"
-              onClick={finalizeProfile}
-            >
-              Save assistant
-            </button>
-          </div>
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_0.9fr]">
+        <Panel className="miva-stagger-item miva-stagger-0">
+          <SectionHeader
+            actions={(
+              <PrimaryButton className="miva-setup-primary h-10 px-4 text-sm" onClick={finalizeProfile}>
+                Save assistant
+              </PrimaryButton>
+            )}
+            body="Survey choices, provider selection, and model recommendation are saved locally first."
+            title="Assistant Setup"
+            className="mb-0"
+          />
 
           <div className="mt-6 grid gap-3">
-            {profileRows.map(([label, value]) => (
-              <div className="flex items-center justify-between rounded-xl bg-[#f3f4f5] px-4 py-3 text-sm" key={label}>
-                <span className="font-semibold text-[#72787e]">{label}</span>
-                <span className="font-bold text-[#191c1d]">{value}</span>
-              </div>
+            {profileRows.map(([label, value], index) => (
+              <InfoTile
+                className={`miva-stagger-item miva-stagger-${Math.min(index + 1, 5)} p-4`}
+                key={label}
+                label={label}
+                value={value}
+              />
             ))}
           </div>
 
-          <div className="mt-5 rounded-xl bg-[#f8f9fa] p-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">Future interests</span>
-            <p className="mt-2 text-sm font-semibold text-[#191c1d]">
+          <Panel className="mt-5 bg-[var(--miva-bg-soft)] shadow-none">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Future interests</span>
+            <p className="mt-2 text-sm font-semibold text-[var(--miva-text)]">
               {profile.futureFeatures.length ? profile.futureFeatures.join(", ") : "None selected"}
             </p>
-          </div>
+          </Panel>
         </Panel>
 
-        <Panel>
-          <h3 className="font-heading text-xl font-bold text-[#191c1d]">Extension Slots</h3>
-          <p className="mt-2 text-sm leading-6 text-[#42474d]">
+        <Panel className="miva-stagger-item miva-stagger-1">
+          <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Extension Slots</h3>
+          <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
             These fields are placeholders for later role details, voice, character, Google Workspace, MCP, and skills.
           </p>
 
           <div className="mt-6 grid gap-3">
-            {capabilityRows.map(([label, enabled]) => (
-              <div className="flex items-center justify-between rounded-xl bg-[#f3f4f5] px-4 py-3 text-sm" key={String(label)}>
-                <span className="font-semibold text-[#42474d]">{label}</span>
+            {capabilityRows.map(([label, enabled], index) => (
+              <div
+                className={`miva-stagger-item miva-stagger-${Math.min(index + 2, 5)} flex items-center justify-between rounded-lg bg-[var(--miva-bg-soft)] px-4 py-3 text-sm`}
+                key={String(label)}
+              >
+                <span className="font-semibold text-[var(--miva-text-muted)]">{label}</span>
                 <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "Enabled" : "Later"}</Badge>
               </div>
             ))}
@@ -111,28 +109,27 @@ export function ProfileStep({
         </Panel>
       </div>
 
-      <Panel className="mt-6">
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <h3 className="font-heading text-lg font-bold text-[#191c1d]">Prompt Preview</h3>
-            <p className="mt-1 text-sm text-[#72787e]">This preview is what the local helper can use to shape answers.</p>
-          </div>
-          <button
-            className="rounded-xl border border-[#c2c7ce] px-4 py-2 text-sm font-bold text-[#42474d] transition hover:border-[#35607f] hover:text-[#35607f]"
-            type="button"
-            onClick={enterGeneralSettings}
-          >
-            Open settings
-          </button>
-        </div>
-        <pre className="mt-5 max-h-56 overflow-auto rounded-2xl bg-[#2e3132] p-5 text-xs leading-6 text-[#f0f1f2]">
+      <Panel className="miva-stagger-item miva-stagger-2 mt-6">
+        <SectionHeader
+          actions={(
+            <SecondaryButton className="h-10 px-4 text-sm" onClick={enterGeneralSettings}>
+              Open settings
+            </SecondaryButton>
+          )}
+          body="This preview is what the local helper can use to shape answers."
+          title="Prompt Preview"
+          className="mb-0"
+        />
+        <pre className="mt-5 max-h-56 overflow-auto rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-bg-soft)]">
           {profile.prompt.systemPrompt}
         </pre>
       </Panel>
 
       {assistantProfileError && (
-        <p className="mt-4 rounded-xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">{assistantProfileError}</p>
+        <StatusAlert className="mt-4" tone="danger">
+          {assistantProfileError}
+        </StatusAlert>
       )}
-    </div>
+    </SetupStepShell>
   );
 }

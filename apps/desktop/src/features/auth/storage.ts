@@ -7,6 +7,7 @@ const DEVICE_STORAGE_KEY = "miva.desktop.deviceId.v1";
 export const emptyProviderKeys: ProviderKeyState = {
   openai: "",
   gemini: "",
+  groq: "",
 };
 
 export function loadProviderKeys(): ProviderKeyState {
@@ -24,6 +25,7 @@ export function loadProviderKeys(): ProviderKeyState {
     return {
       openai: typeof parsed.openai === "string" ? parsed.openai : "",
       gemini: typeof parsed.gemini === "string" ? parsed.gemini : "",
+      groq: typeof parsed.groq === "string" ? parsed.groq : "",
     };
   } catch {
     return emptyProviderKeys;

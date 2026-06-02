@@ -21,7 +21,7 @@
   "download": "Download",
   "chatTitle": "Local chat test",
   "chatBody": "After a model is installed, send a message to confirm local inference works.",
-  "messagePlaceholder": "Ask MiVA something...",
+  "messagePlaceholder": "Ask MiVA something... (type / for skills)",
   "send": "Send",
   "activity": "Activity",
   "settings": "Settings",

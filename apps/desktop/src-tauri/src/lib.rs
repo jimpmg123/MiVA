@@ -6,7 +6,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
@@ -27,6 +27,7 @@ const ALLOWED_MODELS: [&str; 6] = [
 ];
 const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
 const CHAT_HISTORY_STORE_FILE: &str = "chat-history.json";
+const LIVE2D_MODEL_DIRS: [&str; 4] = ["mao_pro", "shizuku", "knight", "takodachi"];
 
 struct LocalHelperProcess(Mutex<Option<Child>>);
 
@@ -127,6 +128,24 @@ struct RuntimeRequirements {
     python: RuntimeRequirement,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Live2DInstallProgress {
+    status: String,
+    completed: u64,
+    total: u64,
+    percent: f64,
+    done: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Live2DInstallResult {
+    install_dir: String,
+    installed_models: Vec<String>,
+}
+
 fn empty_assistant_profile_store() -> Value {
     json!({
         "schemaVersion": 1,
@@ -175,8 +194,9 @@ fn timestamp_millis() -> String {
 
 fn empty_chat_history_store() -> Value {
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "conversations": {},
+        "activeConversationIds": {},
         "summaries": {},
         "updatedAt": null
     })
@@ -197,6 +217,11 @@ fn normalize_chat_history_store(store: Value) -> Value {
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let active_conversation_ids = store
+        .get("activeConversationIds")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let summaries = store
         .get("summaries")
         .filter(|value| value.is_object())
@@ -204,8 +229,9 @@ fn normalize_chat_history_store(store: Value) -> Value {
         .unwrap_or_else(|| json!({}));
 
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "conversations": conversations,
+        "activeConversationIds": active_conversation_ids,
         "summaries": summaries,
         "updatedAt": store.get("updatedAt").and_then(Value::as_str)
     })
@@ -234,10 +260,28 @@ fn save_chat_history_store_inner(app: AppHandle, store: Value) -> Result<Value, 
     Ok(normalized)
 }
 
-fn delete_runtime_chat_messages_inner(app: AppHandle, assistant_id: String) -> Result<Value, String> {
+fn delete_runtime_chat_messages_inner(
+    app: AppHandle,
+    assistant_id: String,
+) -> Result<Value, String> {
     let mut store = load_chat_history_store_inner(app.clone())?;
-    if let Some(conversations) = store.get_mut("conversations").and_then(Value::as_object_mut) {
-        conversations.remove(&assistant_id);
+    if let Some(conversations) = store
+        .get_mut("conversations")
+        .and_then(Value::as_object_mut)
+    {
+        conversations.retain(|_, conversation| {
+            conversation
+                .get("assistantId")
+                .and_then(Value::as_str)
+                .map(|value| value != assistant_id)
+                .unwrap_or(true)
+        });
+    }
+    if let Some(active_conversation_ids) = store
+        .get_mut("activeConversationIds")
+        .and_then(Value::as_object_mut)
+    {
+        active_conversation_ids.remove(&assistant_id);
     }
     if let Some(summaries) = store.get_mut("summaries").and_then(Value::as_object_mut) {
         summaries.remove(&assistant_id);
@@ -455,6 +499,256 @@ fn get_runtime_requirements_inner() -> RuntimeRequirements {
     RuntimeRequirements {
         python: detect_python_requirement(),
     }
+}
+
+fn emit_live2d_install_progress(
+    app: &AppHandle,
+    status: impl Into<String>,
+    completed: u64,
+    total: u64,
+    done: bool,
+    error: Option<String>,
+) {
+    let percent = if total > 0 {
+        ((completed.min(total) as f64 / total as f64) * 1000.0).round() / 10.0
+    } else if done {
+        100.0
+    } else {
+        0.0
+    };
+
+    let _ = app.emit(
+        "live2d-install-progress",
+        Live2DInstallProgress {
+            status: status.into(),
+            completed,
+            total,
+            percent,
+            done,
+            error,
+        },
+    );
+}
+
+fn live2d_dev_models_dir() -> Option<PathBuf> {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|desktop_dir| desktop_dir.parent())
+        .and_then(|apps_dir| apps_dir.parent())
+        .map(|repo_dir| {
+            repo_dir
+                .join("VtuberLLM")
+                .join("Open-LLM-VTuber-main")
+                .join("live2d-models")
+        })
+        .filter(|path| path.exists())
+}
+
+fn live2d_resource_models_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("live2d-models"))
+        .filter(|path| path.exists())
+}
+
+fn live2d_source_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    live2d_resource_models_dir(app)
+        .or_else(live2d_dev_models_dir)
+        .ok_or_else(|| "Bundled Live2D model resources were not found.".to_string())
+}
+
+fn live2d_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("live2d-runtime")
+        .join("live2d-models");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir)
+}
+
+fn count_files(path: &Path) -> Result<u64, String> {
+    if path.is_file() {
+        return Ok(1);
+    }
+
+    let mut total = 0;
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            total += count_files(&entry_path)?;
+        } else if entry_path.is_file() {
+            total += 1;
+        }
+    }
+    Ok(total)
+}
+
+fn copy_dir_with_progress(
+    app: &AppHandle,
+    source: &Path,
+    target: &Path,
+    copied: &mut u64,
+    total: u64,
+) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| error.to_string())?;
+
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_dir_with_progress(app, &source_path, &target_path, copied, total)?;
+        } else if source_path.is_file() {
+            fs::copy(&source_path, &target_path).map_err(|error| error.to_string())?;
+            *copied += 1;
+            emit_live2d_install_progress(
+                app,
+                format!(
+                    "Copying {}",
+                    source_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("asset")
+                ),
+                *copied,
+                total,
+                false,
+                None,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_live2d_model(model_dir: &Path) -> bool {
+    let runtime_dir = model_dir.join("runtime");
+    fs::read_dir(runtime_dir)
+        .ok()
+        .map(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+                    && entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(".model3.json")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, String> {
+    emit_live2d_install_progress(&app, "Locating bundled Live2D assets", 0, 100, false, None);
+
+    let source_root = live2d_source_models_dir(&app).map_err(|error| {
+        emit_live2d_install_progress(&app, "Install failed", 0, 100, true, Some(error.clone()));
+        error
+    })?;
+    let install_root = live2d_install_dir(&app).map_err(|error| {
+        emit_live2d_install_progress(&app, "Install failed", 0, 100, true, Some(error.clone()));
+        error
+    })?;
+
+    let mut total_files = 0;
+    for model in LIVE2D_MODEL_DIRS {
+        let model_source = source_root.join(model);
+        if model_source.exists() {
+            total_files += count_files(&model_source)?;
+        }
+    }
+
+    if total_files == 0 {
+        let message = "No bundled Live2D model files were found.".to_string();
+        emit_live2d_install_progress(&app, "Install failed", 0, 100, true, Some(message.clone()));
+        return Err(message);
+    }
+
+    emit_live2d_install_progress(
+        &app,
+        "Copying bundled Live2D models",
+        0,
+        total_files,
+        false,
+        None,
+    );
+
+    let mut copied = 0;
+    for model in LIVE2D_MODEL_DIRS {
+        let model_source = source_root.join(model);
+        if model_source.exists() {
+            copy_dir_with_progress(
+                &app,
+                &model_source,
+                &install_root.join(model),
+                &mut copied,
+                total_files,
+            )?;
+        }
+    }
+
+    emit_live2d_install_progress(
+        &app,
+        "Verifying copied Live2D models",
+        copied,
+        total_files,
+        false,
+        None,
+    );
+    let installed_models = LIVE2D_MODEL_DIRS
+        .into_iter()
+        .filter(|model| verify_live2d_model(&install_root.join(model)))
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    if installed_models.is_empty() {
+        let message = "Live2D files copied, but no valid model3.json files were found.".to_string();
+        emit_live2d_install_progress(
+            &app,
+            "Install failed",
+            copied,
+            total_files,
+            true,
+            Some(message.clone()),
+        );
+        return Err(message);
+    }
+
+    let manifest_path = install_root
+        .parent()
+        .unwrap_or(&install_root)
+        .join("install-manifest.json");
+    let manifest = json!({
+        "schemaVersion": 1,
+        "installedAt": timestamp_millis(),
+        "installDir": install_root.to_string_lossy(),
+        "models": installed_models
+    });
+    let manifest_content =
+        serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?;
+    fs::write(manifest_path, manifest_content).map_err(|error| error.to_string())?;
+
+    emit_live2d_install_progress(
+        &app,
+        "Live2D runtime ready",
+        total_files,
+        total_files,
+        true,
+        None,
+    );
+
+    Ok(Live2DInstallResult {
+        install_dir: install_root.to_string_lossy().to_string(),
+        installed_models,
+    })
 }
 
 fn default_python_install_dir_inner() -> String {
@@ -908,8 +1202,10 @@ fn chat_ollama_direct_inner(
         .send()
         .map_err(|error| error.to_string())?;
 
-    if !response.status().is_success() {
-        return Err(format!("Ollama returned HTTP {}", response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().map_err(|error| error.to_string())?;
+        return Err(http_status_error("Ollama", status, &text));
     }
 
     let chat = response
@@ -1036,6 +1332,28 @@ fn http_json_response(status: &str, body: serde_json::Value) -> String {
     )
 }
 
+fn response_error_detail(text: &str) -> String {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| text.trim().to_string())
+}
+
+fn http_status_error(prefix: &str, status: reqwest::StatusCode, text: &str) -> String {
+    let detail = response_error_detail(text);
+    if detail.is_empty() {
+        format!("{prefix} returned HTTP {status}")
+    } else {
+        format!("{prefix} returned HTTP {status}: {detail}")
+    }
+}
+
 fn http_empty_response(status: &str) -> String {
     format!(
         "HTTP/1.1 {status}\r\ncontent-length: 0\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n"
@@ -1143,7 +1461,17 @@ async fn chat_once(
     memory_summary: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        chat_once_inner(provider, model, prompt, locale, api_key, auth_token, profile, messages, memory_summary)
+        chat_once_inner(
+            provider,
+            model,
+            prompt,
+            locale,
+            api_key,
+            auth_token,
+            profile,
+            messages,
+            memory_summary,
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1171,6 +1499,13 @@ async fn get_default_python_install_dir() -> Result<String, String> {
 #[tauri::command]
 async fn install_python(target_dir: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || install_python_inner(target_dir))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn install_live2d_runtime(app: AppHandle) -> Result<Live2DInstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || install_live2d_runtime_inner(app))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -1204,10 +1539,15 @@ async fn save_chat_history_store(app: AppHandle, store: Value) -> Result<Value, 
 }
 
 #[tauri::command]
-async fn delete_runtime_chat_messages(app: AppHandle, assistant_id: String) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || delete_runtime_chat_messages_inner(app, assistant_id))
-        .await
-        .map_err(|error| error.to_string())?
+async fn delete_runtime_chat_messages(
+    app: AppHandle,
+    assistant_id: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_runtime_chat_messages_inner(app, assistant_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1242,6 +1582,7 @@ pub fn run() {
             get_runtime_requirements,
             get_default_python_install_dir,
             install_python,
+            install_live2d_runtime,
             load_assistant_profile_store,
             save_assistant_profile_store,
             load_chat_history_store,

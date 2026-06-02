@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getDeviceAuthStatus, startDeviceAuth } from "../cloud/client";
+import { getDeviceAuthStatus, getGoogleWorkspaceAuthUrl, startDeviceAuth } from "../cloud/client";
 import { clearAuthSessionStorage, loadAuthSession, saveAuthSessionToStorage } from "./storage";
 import type { AuthFlowState, AuthSession, DeviceAuthStart } from "../../types";
 
@@ -107,6 +107,29 @@ export function useAuthFlow({
     }
   }
 
+  async function openWorkspaceConsent() {
+    if (!authSession) {
+      setAuthFlowError("Sign in to MiVA before connecting Google Workspace.");
+      onLog("Workspace consent blocked because no MiVA account is signed in.");
+      return;
+    }
+
+    let consentUrl = "";
+    try {
+      const { url } = await getGoogleWorkspaceAuthUrl({ authSession });
+      consentUrl = url;
+      if (tauriRuntime) {
+        await openUrl(consentUrl);
+      } else {
+        window.open(consentUrl, "_blank", "noopener,noreferrer");
+      }
+      onLog("Opened Google Workspace permission consent in the system browser.");
+    } catch (error) {
+      setAuthFlowError(consentUrl ? `Could not open Google Workspace consent. Open this URL manually: ${consentUrl}` : `Could not start Google Workspace consent: ${String(error)}`);
+      onLog(`Workspace consent open failed: ${String(error)}`);
+    }
+  }
+
   useEffect(() => {
     if (!deviceAuthRequest || authFlowState !== "waiting") {
       return;
@@ -161,6 +184,7 @@ export function useAuthFlow({
     deviceAuthRequest,
     clearAuthSession,
     continueLocalOnly,
+    openWorkspaceConsent,
     openWebConsole,
     startBrowserSignIn,
   };

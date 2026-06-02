@@ -1,7 +1,10 @@
 ﻿import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useEffect, useRef } from "react";
-import type { AppMode, ChatMessage, ChatMetrics, OllamaStatus, ProviderId, ProviderMode } from "../types";
+import type { AppMode, ChatMessage, ChatMetrics, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
 import { Badge, PrimaryButton } from "../components/ui";
+import { ChatSlashMenu } from "../components/ChatSlashMenu";
+import { getCharacterAsset } from "../features/characters/catalog";
+import { useChatSlashMenu } from "../features/chat/useChatSlashMenu";
 import { formatChatLatency } from "../utils";
 
 type RuntimePageProps = {
@@ -16,6 +19,7 @@ type RuntimePageProps = {
   chatInput: string;
   chatIntroKey: string;
   chatMetrics: ChatMetrics | null;
+  characterSettings: PromptSettings["character"];
   chatScrollRef: RefObject<HTMLDivElement | null>;
   providerText: Record<string, string>;
   selectedModelInstalled: boolean;
@@ -25,6 +29,8 @@ type RuntimePageProps = {
   status: OllamaStatus | null;
   runtimeTtsAvailable: boolean;
   runtimeTtsEnabled: boolean;
+  runtimeTtsSpeakingRate: number;
+  runtimeTtsVolume: number;
   t: Record<string, string>;
   ttsError: string | null;
   ttsPlaybackState: "idle" | "starting" | "speaking" | "error";
@@ -37,6 +43,8 @@ type RuntimePageProps = {
   setChatInput: Dispatch<SetStateAction<string>>;
   setDismissedChatIntroKeys: Dispatch<SetStateAction<string[]>>;
   setRuntimeTtsEnabled: Dispatch<SetStateAction<boolean>>;
+  setRuntimeTtsSpeakingRate: (speakingRate: number) => void;
+  setRuntimeTtsVolume: (volume: number) => void;
   stopRuntimeTts: () => void;
 };
 
@@ -52,6 +60,7 @@ export function RuntimePage({
   chatInput,
   chatIntroKey,
   chatMetrics,
+  characterSettings,
   chatScrollRef,
   providerText,
   selectedModelInstalled,
@@ -61,6 +70,8 @@ export function RuntimePage({
   status,
   runtimeTtsAvailable,
   runtimeTtsEnabled,
+  runtimeTtsSpeakingRate,
+  runtimeTtsVolume,
   t,
   ttsError,
   ttsPlaybackState,
@@ -73,11 +84,31 @@ export function RuntimePage({
   setChatInput,
   setDismissedChatIntroKeys,
   setRuntimeTtsEnabled,
+  setRuntimeTtsSpeakingRate,
+  setRuntimeTtsVolume,
   stopRuntimeTts,
 }: RuntimePageProps) {
 const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+const slashMenu = useChatSlashMenu({
+  chatInput,
+  setChatInput,
+  inputRef: chatInputRef,
+  disabled: busyAction === "chat",
+});
 const runtimeChat = appMode === "runtime";
-const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
+const showRuntimeTtsControl = runtimeChat;
+    const characterAsset = getCharacterAsset(characterSettings.characterId);
+    const characterRuntimeEnabled = runtimeChat && characterSettings.enabled && characterSettings.showInRuntime;
+    const characterActivity = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting"
+      ? "Speaking"
+      : busyAction === "chat"
+        ? "Thinking"
+        : "Idle";
+    const characterActivityIcon = characterActivity === "Speaking"
+      ? "record_voice_over"
+      : characterActivity === "Thinking"
+        ? "psychology"
+        : "self_improvement";
     const greeting =
       selectedProvider === "ollama"
         ? t.chatGreeting.replace("{model}", activeModelLabel)
@@ -95,8 +126,18 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
     const ttsMetric = `TTS: ${
-      !runtimeTtsEnabled ? "Off" : ttsPlaybackState === "speaking" || ttsPlaybackState === "starting" ? "Speaking" : "On"
+      !runtimeTtsAvailable
+        ? "Not configured"
+        : !runtimeTtsEnabled
+          ? "Off"
+          : ttsPlaybackState === "speaking" || ttsPlaybackState === "starting"
+            ? "Speaking"
+            : "On"
     }`;
+    const runtimeTtsVolumePercent = Math.round(runtimeTtsVolume * 100);
+    const runtimeTtsButtonTitle = runtimeTtsAvailable
+      ? runtimeTtsEnabled ? "Turn off runtime TTS" : "Turn on runtime TTS"
+      : "Enable TTS in Studio > TTS / Voice";
 
     useEffect(() => {
       const element = chatInputRef.current;
@@ -108,37 +149,37 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
       element.style.height = `${Math.min(element.scrollHeight, 144)}px`;
     }, [chatInput]);
 
-    const showAssistantRuntimePanel = runtimeChat;
+    const showAssistantRuntimePanel = characterRuntimeEnabled;
     const chatShellClass = !showAssistantRuntimePanel
-      ? "relative mx-auto h-[calc(100vh-132px)] max-w-[880px] overflow-visible"
+      ? "relative mx-auto h-full max-w-[880px] overflow-visible"
       : assistantPanelMinimized
       ? runtimeChat
-        ? "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
-        : "relative mx-auto h-[calc(100vh-132px)] max-w-[1180px] overflow-visible"
+        ? "relative mx-auto h-full max-w-[1180px] overflow-visible"
+        : "relative mx-auto h-full max-w-[1180px] overflow-visible"
       : runtimeChat
-        ? "relative mx-auto grid h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible"
-        : "relative mx-auto grid h-[calc(100vh-132px)] max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
+        ? "relative mx-auto grid h-full max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible"
+        : "relative mx-auto grid h-full max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
     const chatSectionClass = "flex h-full min-h-0 flex-col overflow-hidden";
-    const chatMessagesClass = "flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain pb-6 pr-1 pt-2";
+    const chatMessagesClass = "miva-scrollbar-hidden flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain pb-6 pt-2";
     const assistantCardClass = runtimeChat
-      ? "sticky top-4 flex h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]"
-      : "sticky top-2 flex max-h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-3xl border border-[#c2c7ce] bg-white shadow-[0_18px_48px_rgba(53,96,127,0.10)]";
+      ? "flex h-full self-start flex-col overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]"
+      : "sticky top-2 flex max-h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]";
 
     return (
       <div className={chatShellClass}>
         <section className={chatSectionClass}>
           {appMode === "setup" && (
-            <section className="relative z-20 mb-4 shrink-0 overflow-hidden rounded-3xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_18px_48px_rgba(53,96,127,0.10)]">
-              <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#cae6ff]/60 blur-3xl" />
+            <section className="relative z-20 mb-4 shrink-0 overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] p-6 shadow-[var(--miva-shadow-md)]">
+              <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[var(--miva-primary-soft)] blur-3xl" />
               <div className="relative z-10 flex items-center justify-between gap-6">
                 <div className="flex items-start gap-4">
-                  <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#c9e8cb] text-[#334d38] shadow-sm">
+                  <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-[var(--miva-success-soft)] text-[var(--miva-success)] shadow-sm">
                     <span className="material-symbols-outlined text-[28px]">verified</span>
                   </div>
                   <div>
-                    <p className="text-xs font-black uppercase tracking-[0.18em] text-[#72787e]">Test Chat</p>
-                    <h2 className="mt-2 font-heading text-2xl font-bold text-[#191c1d]">Try this assistant before entering runtime</h2>
-                    <p className="mt-2 max-w-[560px] text-sm leading-6 text-[#42474d]">
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--miva-text-soft)]">Test Chat</p>
+                    <h2 className="mt-2 font-heading text-2xl font-bold text-[var(--miva-text)]">Try this assistant before entering runtime</h2>
+                    <p className="mt-2 max-w-[560px] text-sm leading-6 text-[var(--miva-text-muted)]">
                       Test chat is temporary for setup validation. Runtime chat is saved locally and can be restored after restart.
                     </p>
                   </div>
@@ -150,7 +191,7 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
                     if (!saved) {
                       return;
                     }
-                    setAppMode("runtime");
+                    setAppMode("studio");
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
@@ -167,10 +208,10 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
           onScroll={handleChatScroll}
         >
           {showChatIntroCard && (
-            <section className="relative rounded-2xl border border-[#c2c7ce] bg-white p-6 shadow-sm">
+            <section className="relative rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] p-6 shadow-sm">
               <button
                 aria-label={t.close}
-                className="absolute right-4 top-4 rounded-full p-1 text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+                className="absolute right-4 top-4 rounded-full p-1 text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
                 onClick={() => setDismissedChatIntroKeys((current) => [...current, chatIntroKey])}
                 type="button"
               >
@@ -178,18 +219,18 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
               </button>
 
               <div className="flex items-start gap-4 pr-8">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[#4f7999] text-white">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-white">
                   <span className="material-symbols-outlined">smart_toy</span>
                 </div>
                 <div>
-                  <h2 className="font-heading mb-2 text-[22px] font-semibold leading-[30px] tracking-[-0.01em] text-[#191c1d]">
+                  <h2 className="font-heading mb-2 text-[22px] font-semibold leading-[30px] tracking-normal text-[var(--miva-text)]">
                     {t.chatSandboxTitle}
                   </h2>
-                  <p className="text-sm leading-6 text-[#42474d]">
+                  <p className="text-sm leading-6 text-[var(--miva-text-muted)]">
                     {selectedProvider === "ollama" ? (
                       <>
                         {sandboxBody.split(activeModelLabel)[0]}
-                        <span className="font-semibold text-[#35607f]">{activeModelLabel}</span>
+                        <span className="font-semibold text-[var(--miva-primary)]">{activeModelLabel}</span>
                         {sandboxBody.split(activeModelLabel)[1] ?? ""}
                       </>
                     ) : (
@@ -202,12 +243,12 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
           )}
 
           <div className="flex max-w-[85%] items-end gap-4 self-start">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#a1cbef]">
-              <span className="material-symbols-outlined text-[18px] text-[#1c4b69]">bolt</span>
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
+              <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
             </div>
-            <div className="rounded-2xl rounded-bl-none border border-[#c2c7ce] bg-white p-4 shadow-[0_8px_24px_rgba(53,96,127,0.08)]">
-              <p className="whitespace-pre-wrap break-words text-sm leading-6 text-[#191c1d]">{greeting}</p>
-              <span className="mt-2 block text-right text-[10px] text-[#72787e]">{t.justNow}</span>
+            <div className="rounded-lg rounded-bl-none border border-[var(--miva-border)] bg-[var(--miva-surface)] p-4 shadow-[var(--miva-shadow-sm)]">
+              <p className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--miva-text)]">{greeting}</p>
+              <span className="mt-2 block text-right text-[10px] text-[var(--miva-text-soft)]">{t.justNow}</span>
             </div>
           </div>
 
@@ -217,15 +258,15 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
               key={`${message.role}-${index}`}
             >
               {message.role === "assistant" && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#a1cbef]">
-                  <span className="material-symbols-outlined text-[18px] text-[#1c4b69]">bolt</span>
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
                 </div>
               )}
               <div
-                className={`whitespace-pre-wrap break-words rounded-2xl border p-4 text-sm leading-6 shadow-[0_8px_24px_rgba(53,96,127,0.08)] ${
+                className={`whitespace-pre-wrap break-words rounded-lg border p-4 text-sm leading-6 shadow-[var(--miva-shadow-sm)] ${
                   message.role === "user"
-                    ? "rounded-br-none border-[#35607f] bg-[#35607f] text-white"
-                    : "rounded-bl-none border-[#c2c7ce] bg-white text-[#191c1d]"
+                    ? "rounded-br-none border-[var(--miva-primary)] bg-[var(--miva-primary)] text-white"
+                    : "rounded-bl-none border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text)]"
                 }`}
               >
                 {message.content}
@@ -235,11 +276,11 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
 
           {busyAction === "chat" && (
             <div className="flex max-w-[85%] items-end gap-4 self-start" aria-live="polite">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#a1cbef]">
-                <span className="material-symbols-outlined text-[18px] text-[#1c4b69]">bolt</span>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
+                <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
               </div>
-              <div className="rounded-2xl rounded-bl-none border border-[#c2c7ce] bg-white p-4 shadow-[0_8px_24px_rgba(53,96,127,0.08)]">
-                <div className="flex items-center gap-3 text-sm font-semibold text-[#35607f]">
+              <div className="rounded-lg rounded-bl-none border border-[var(--miva-border)] bg-[var(--miva-surface)] p-4 shadow-[var(--miva-shadow-sm)]">
+                <div className="flex items-center gap-3 text-sm font-semibold text-[var(--miva-primary)]">
                   <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
                   <span>{t.generatingResponse}</span>
                   <span className="flex items-center gap-1" aria-hidden="true">
@@ -254,9 +295,9 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
 
           {activeChatMessages.length === 0 && (
             <div className="mt-3 flex flex-col items-center gap-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#72787e]">{t.suggestedAction}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--miva-text-soft)]">{t.suggestedAction}</p>
               <button
-                className="group flex items-center gap-3 rounded-full border border-[#35607f]/20 bg-[#f3f4f5] px-6 py-3 text-[#35607f] transition-all duration-200 hover:border-[#35607f] hover:bg-[#35607f]/5"
+                className="group flex items-center gap-3 rounded-full border border-[var(--miva-border)] bg-[var(--miva-surface-muted)] px-6 py-3 text-[var(--miva-primary)] transition-all duration-200 hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
                 onClick={() => setChatInput(t.suggestedPrompt)}
                 type="button"
               >
@@ -271,11 +312,11 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
           <div ref={chatEndRef} className="h-1 shrink-0" />
         </div>
 
-        <div className="relative z-10 shrink-0 border-t border-[#e1e3e4]/70 bg-[#f8f9fa]/95 pb-2 pt-4 backdrop-blur">
+        <div className="relative z-10 shrink-0 border-t border-[var(--miva-border)] bg-[rgba(248,250,252,0.95)] pb-2 pt-4 backdrop-blur">
           {showJumpToLatest && (
             <button
               aria-label={t.jumpToLatest}
-              className="absolute -top-5 left-1/2 z-20 grid h-10 w-10 -translate-x-1/2 place-items-center rounded-full border border-[#c2c7ce] bg-white text-[#35607f] shadow-[0_10px_24px_rgba(53,96,127,0.18)] transition hover:-translate-y-0.5 hover:border-[#35607f]"
+              className="absolute -top-5 left-1/2 z-20 grid h-10 w-10 -translate-x-1/2 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] shadow-[var(--miva-shadow-md)] transition hover:-translate-y-0.5 hover:border-[var(--miva-primary)]"
               title={t.jumpToLatest}
               type="button"
               onClick={() => scrollChatToLatest()}
@@ -285,18 +326,29 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
           )}
 
           <form
-            className="flex items-center gap-2 rounded-2xl border border-[#c2c7ce] bg-white p-2 shadow-[0_12px_40px_rgba(53,96,127,0.10)]"
+            className="relative flex items-center gap-2 rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] p-2 shadow-[var(--miva-shadow-md)]"
             onSubmit={(event) => {
               event.preventDefault();
+              if (slashMenu.menuOpen) {
+                return;
+              }
               void sendMessage();
             }}
           >
-            <button className="p-3 text-[#72787e] transition hover:text-[#35607f]" type="button">
+            {slashMenu.menuOpen && (
+              <ChatSlashMenu
+                activeIndex={slashMenu.activeIndex}
+                commands={slashMenu.filteredCommands}
+                onHighlight={slashMenu.setActiveIndex}
+                onSelect={(command) => slashMenu.selectCommand(command)}
+              />
+            )}
+            <button className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]" type="button">
               <span className="material-symbols-outlined">attach_file</span>
             </button>
             <textarea
-              className="max-h-[9rem] min-h-11 flex-1 resize-none overflow-y-auto border-none bg-transparent py-3 text-sm leading-6 text-[#191c1d] outline-none placeholder:text-[#72787e]"
-              disabled={chatUnavailable}
+              className="miva-scrollbar-hidden max-h-[9rem] min-h-11 flex-1 resize-none overflow-y-auto border-none bg-transparent py-3 text-sm leading-6 text-[var(--miva-text)] outline-none placeholder:text-[var(--miva-text-soft)]"
+              disabled={busyAction === "chat"}
               placeholder={busyAction === "chat" ? t.generatingResponse : t.messagePlaceholder}
               ref={chatInputRef}
               rows={1}
@@ -304,9 +356,14 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
               onChange={(event) => {
                 event.currentTarget.style.height = "auto";
                 event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
-                setChatInput(event.target.value);
+                slashMenu.handleInputChange(event.target.value, event.currentTarget);
               }}
+              onClick={(event) => slashMenu.syncCaret(event.currentTarget)}
               onKeyDown={(event) => {
+                if (slashMenu.handleKeyDown(event)) {
+                  return;
+                }
+
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   if (!chatSubmitDisabled) {
@@ -314,36 +371,90 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
                   }
                 }
               }}
+              onSelect={(event) => slashMenu.syncCaret(event.currentTarget)}
             />
             {showRuntimeTtsControl && (
-              <button
-                aria-pressed={runtimeTtsEnabled}
-                className={`grid h-10 w-10 place-items-center rounded-xl transition ${
-                  runtimeTtsEnabled
-                    ? "bg-[#cae6ff] text-[#35607f] hover:bg-[#b7dcfb]"
-                    : "bg-[#f3f4f5] text-[#72787e] hover:text-[#35607f]"
-                }`}
-                title={runtimeTtsEnabled ? "Turn off runtime TTS" : "Turn on runtime TTS"}
-                type="button"
-                onClick={() => {
-                  setRuntimeTtsEnabled((current) => {
-                    if (current) {
-                      stopRuntimeTts();
+              <div className="group relative flex items-center">
+                <div className="pointer-events-none absolute bottom-full right-0 z-30 w-56 translate-y-1 pb-3 opacity-0 transition duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                  <div className="rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.95)] p-3 shadow-[var(--miva-shadow-md)] backdrop-blur">
+                    {runtimeTtsAvailable ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">volume_up</span>
+                          <input
+                            aria-label="Runtime TTS volume"
+                            className="min-w-0 flex-1 accent-[var(--miva-primary)]"
+                            max={1}
+                            min={0}
+                            step={0.05}
+                            type="range"
+                            value={runtimeTtsVolume}
+                            onChange={(event) => setRuntimeTtsVolume(Number(event.target.value))}
+                          />
+                          <span className="w-9 text-right text-[11px] font-bold tabular-nums text-[var(--miva-text-muted)]">
+                            {runtimeTtsVolumePercent}%
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">speed</span>
+                          <input
+                            aria-label="Runtime TTS speed"
+                            className="min-w-0 flex-1 accent-[var(--miva-primary)]"
+                            max={2}
+                            min={0.5}
+                            step={0.1}
+                            type="range"
+                            value={runtimeTtsSpeakingRate}
+                            onChange={(event) => setRuntimeTtsSpeakingRate(Number(event.target.value))}
+                          />
+                          <span className="w-9 text-right text-[11px] font-bold tabular-nums text-[var(--miva-text-muted)]">
+                            {runtimeTtsSpeakingRate.toFixed(1)}x
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-start gap-3 text-sm leading-5 text-[var(--miva-text-muted)]">
+                        <span className="material-symbols-outlined text-[18px] text-[var(--miva-text-soft)]">volume_off</span>
+                        <span>Runtime TTS is off for this assistant. Enable a TTS provider in Studio &gt; TTS / Voice.</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  aria-pressed={runtimeTtsEnabled}
+                  className={`grid h-10 w-10 place-items-center rounded-xl transition ${
+                    !runtimeTtsAvailable
+                      ? "cursor-not-allowed bg-[var(--miva-surface-muted)] text-[var(--miva-text-soft)] opacity-80"
+                      : runtimeTtsEnabled
+                      ? "bg-[var(--miva-primary-soft)] text-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
+                      : "bg-[var(--miva-surface-muted)] text-[var(--miva-text-muted)] hover:text-[var(--miva-primary)]"
+                  }`}
+                  disabled={!runtimeTtsAvailable}
+                  title={runtimeTtsButtonTitle}
+                  type="button"
+                  onClick={() => {
+                    if (!runtimeTtsAvailable) {
+                      return;
                     }
-                    return !current;
-                  });
-                }}
-              >
-                <span className={`material-symbols-outlined text-[22px] ${ttsPlaybackState === "speaking" ? "animate-pulse" : ""}`}>
-                  {runtimeTtsEnabled ? "volume_up" : "volume_off"}
-                </span>
-              </button>
+                    setRuntimeTtsEnabled((current) => {
+                      if (current) {
+                        stopRuntimeTts();
+                      }
+                      return !current;
+                    });
+                  }}
+                >
+                  <span className={`material-symbols-outlined text-[22px] ${ttsPlaybackState === "speaking" ? "animate-pulse" : ""}`}>
+                    {runtimeTtsAvailable && runtimeTtsEnabled ? "volume_up" : "volume_off"}
+                  </span>
+                </button>
+              </div>
             )}
-            <button className="p-2 text-[#72787e] transition hover:text-[#4a654e]" type="button">
+            <button className="p-2 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-success)]" type="button">
               <span className="material-symbols-outlined">mic</span>
             </button>
             <button
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#35607f] text-white shadow-md transition hover:bg-[#4f7999] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-white shadow-md transition hover:bg-[var(--miva-primary-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={chatSubmitDisabled}
               type="submit"
             >
@@ -352,29 +463,29 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
               </span>
             </button>
           </form>
-          {ttsError && showRuntimeTtsControl && (
-            <p className="mt-2 rounded-xl bg-[#ffdad6] px-4 py-2 text-xs font-semibold text-[#93000a]">
+          {ttsError && runtimeTtsAvailable && (
+            <p className="mt-2 rounded-lg bg-[var(--miva-danger-soft)] px-4 py-2 text-xs font-semibold text-[var(--miva-danger-hover)]">
               TTS failed: {ttsError}
             </p>
           )}
 
           <div className="mt-3 flex justify-center gap-6">
             <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#4a654e]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatLatencyMetric}</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--miva-success)]" />
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[var(--miva-text-muted)]">{chatLatencyMetric}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#35607f]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatMessageMetric}</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--miva-primary)]" />
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[var(--miva-text-muted)]">{chatMessageMetric}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#555d63]" />
-              <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{chatProviderMetric}</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--miva-text-muted)]" />
+              <span className="text-[11px] font-semibold uppercase tracking-tight text-[var(--miva-text-muted)]">{chatProviderMetric}</span>
             </div>
-            {showRuntimeTtsControl && (
+            {runtimeChat && (
               <div className="flex items-center gap-1.5">
-                <span className={`h-1.5 w-1.5 rounded-full ${runtimeTtsEnabled ? "bg-[#4a654e]" : "bg-[#72787e]"}`} />
-                <span className="text-[11px] font-semibold uppercase tracking-tight text-[#42474d]">{ttsMetric}</span>
+                <span className={`h-1.5 w-1.5 rounded-full ${runtimeTtsEnabled ? "bg-[var(--miva-success)]" : "bg-[var(--miva-text-soft)]"}`} />
+                <span className="text-[11px] font-semibold uppercase tracking-tight text-[var(--miva-text-muted)]">{ttsMetric}</span>
               </div>
             )}
           </div>
@@ -383,33 +494,37 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
 
         {showAssistantRuntimePanel && (assistantPanelMinimized ? (
           <button
-            className="absolute right-0 top-0 z-20 flex max-w-[240px] items-center gap-3 rounded-2xl border border-[#c2c7ce] bg-white/95 p-3 text-left shadow-[0_16px_40px_rgba(53,96,127,0.16)] transition hover:border-[#35607f]"
+            className="absolute right-0 top-0 z-20 flex max-w-[240px] items-center gap-3 rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.95)] p-3 text-left shadow-[var(--miva-shadow-md)] transition hover:border-[var(--miva-primary)]"
             type="button"
             title="Show assistant panel"
             onClick={() => setAssistantPanelMinimized(false)}
           >
-            <span className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#35607f] text-white">
-              <span className="material-symbols-outlined text-[24px]">smart_toy</span>
+            <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-white">
+              {characterAsset.previewImage ? (
+                <img alt={`${characterSettings.displayName} preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
+              ) : (
+                <span className="material-symbols-outlined text-[24px]">{characterAsset.icon}</span>
+              )}
               <span
                 className={`absolute -right-0.5 top-1 h-3.5 w-3.5 rounded-full border-2 border-white ${
-                  busyAction === "chat" ? "bg-[#35607f] animate-pulse" : "bg-[#4a654e]"
+                  characterActivity !== "Idle" ? "bg-[var(--miva-primary)] animate-pulse" : "bg-[var(--miva-success)]"
                 }`}
               />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-sm font-bold text-[#191c1d]">{activeModelLabel}</span>
-              <span className="block text-xs font-semibold text-[#72787e]">Assistant profile</span>
+              <span className="block truncate text-sm font-bold text-[var(--miva-text)]">{characterSettings.displayName}</span>
+              <span className="block text-xs font-semibold text-[var(--miva-text-muted)]">{characterActivity}</span>
             </span>
-            <span className="material-symbols-outlined text-[18px] text-[#72787e]">open_in_full</span>
+            <span className="material-symbols-outlined text-[18px] text-[var(--miva-text-muted)]">open_in_full</span>
           </button>
         ) : (
           <aside className={assistantCardClass}>
-          <div className="border-b border-[#e1e3e4] p-5">
+          <div className="border-b border-[var(--miva-border)] p-5">
             <div className="flex items-start justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantStageTitle}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">{t.assistantStageTitle}</p>
               <button
                 aria-label="Minimize assistant panel"
-                className="grid h-8 w-8 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+                className="grid h-8 w-8 place-items-center rounded-full text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
                 type="button"
                 title="Minimize"
                 onClick={() => setAssistantPanelMinimized(true)}
@@ -417,27 +532,37 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
                 <span className="material-symbols-outlined text-[20px]">remove</span>
               </button>
             </div>
-            <h2 className="mt-2 font-heading text-[22px] font-bold leading-7 text-[#191c1d]">{activeModelLabel}</h2>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">{t.assistantStageBody}</p>
+            <h2 className="mt-2 font-heading text-[22px] font-bold leading-7 text-[var(--miva-text)]">{characterSettings.displayName}</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{characterSettings.personality}</p>
           </div>
 
-          <div className="flex flex-1 flex-col items-center justify-center bg-[radial-gradient(circle_at_top,#cae6ff_0%,#f8f9fa_48%,#ffffff_100%)] p-6 text-center">
-            <div className="relative grid h-40 w-40 place-items-center rounded-full bg-[#35607f] text-white shadow-[0_24px_60px_rgba(53,96,127,0.28)]">
+          <div className="flex flex-1 flex-col items-center justify-center bg-[radial-gradient(circle_at_top,var(--miva-primary-soft)_0%,var(--miva-bg-soft)_48%,var(--miva-surface)_100%)] p-6 text-center">
+            <div className="relative grid h-40 w-40 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-white shadow-[0_24px_60px_rgba(36,73,102,0.28)]">
               <span className="absolute inset-3 rounded-full border border-white/25" />
-              <span className="material-symbols-outlined text-[64px]">smart_toy</span>
+              {characterAsset.previewImage ? (
+                <img alt={`${characterSettings.displayName} character preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
+              ) : (
+                <span className="material-symbols-outlined text-[64px]">{characterAsset.icon}</span>
+              )}
               <span
                 className={`absolute -right-1 top-8 h-5 w-5 rounded-full border-4 border-white ${
-                  busyAction === "chat" ? "bg-[#35607f] animate-pulse" : "bg-[#4a654e]"
+                  characterActivity !== "Idle" ? "bg-[var(--miva-primary)] animate-pulse" : "bg-[var(--miva-success)]"
                 }`}
               />
             </div>
 
-            <h3 className="mt-8 font-heading text-xl font-bold text-[#191c1d]">{t.characterPreview}</h3>
-            <p className="mt-3 text-sm leading-6 text-[#42474d]">{t.characterPreviewBody}</p>
+            <h3 className="mt-8 font-heading text-xl font-bold text-[var(--miva-text)]">{t.characterPreview}</h3>
+            <p className="mt-3 text-sm leading-6 text-[var(--miva-text-muted)]">{characterSettings.speakingStyle}</p>
 
             <div className="mt-6 grid w-full gap-3">
               <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
-                <span className="font-semibold text-[#72787e]">
+                <span className="font-semibold text-[var(--miva-text-muted)]">Character asset</span>
+                <Badge tone={characterSettings.renderer === "live2d" ? "action" : "neutral"}>
+                  {characterAsset.name}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
+                <span className="font-semibold text-[var(--miva-text-muted)]">
                   {selectedProvider === "ollama" ? providerText.localRuntimeReady : providerText.cloudRuntimeReady}
                 </span>
                 <Badge tone={selectedProvider === "ollama" ? (status?.running ? "success" : "neutral") : "action"}>
@@ -445,9 +570,12 @@ const showRuntimeTtsControl = runtimeChat && runtimeTtsAvailable;
                 </Badge>
               </div>
               <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
-                <span className="font-semibold text-[#72787e]">{t.characterIdle}</span>
-                <Badge tone={busyAction === "chat" ? "action" : "neutral"}>
-                  {busyAction === "chat" ? t.generatingResponse : t.characterListening}
+                <span className="flex items-center gap-2 font-semibold text-[var(--miva-text-muted)]">
+                  <span className="material-symbols-outlined text-[18px]">{characterActivityIcon}</span>
+                  Character state
+                </span>
+                <Badge tone={characterActivity !== "Idle" ? "action" : "neutral"}>
+                  {characterActivity}
                 </Badge>
               </div>
             </div>

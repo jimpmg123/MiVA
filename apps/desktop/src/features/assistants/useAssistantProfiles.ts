@@ -16,6 +16,7 @@ import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, saveLocalAs
 import {
   addAssistantProfileStore,
   removeAssistantProfileStore,
+  replaceAssistantProfileStoreByName,
   replaceSyncedAssistantProfileStore,
   upsertAssistantProfileStore,
 } from "./storeOperations";
@@ -169,6 +170,14 @@ export function useAssistantProfiles({
     setPromptSettingsDraft(normalizePromptSettings(profile.prompt?.settings));
   }
 
+  function editLocalAssistantProfile(profile: LocalAssistantProfile) {
+    setActiveLocalProfileId(profile.id);
+    applyLocalAssistantProfile(profile);
+    setAssistantProfileError(null);
+    setAssistantProfileSaveState("idle");
+    setStudioSection("overview");
+  }
+
   function getNewAssistantDraftBaseline() {
     return getDefaultNewAssistantDraftFingerprint({
       selectedProvider,
@@ -235,18 +244,6 @@ export function useAssistantProfiles({
     setSelectedProvider("ollama");
     setSelectedModel("qwen3:4b");
     setSelectedCloudModel("gemini-2.5-flash");
-  }
-
-  function confirmDiscardStudioChanges() {
-    if (!hasUnsavedStudioDraftChanges()) {
-      return true;
-    }
-
-    const confirmed = window.confirm("You have unsaved changes. Leave without saving?");
-    if (confirmed) {
-      discardUnsavedStudioChanges();
-    }
-    return confirmed;
   }
 
   function clearAssistantProfileSyncStatus() {
@@ -579,31 +576,48 @@ export function useAssistantProfiles({
 
   async function saveSetupAssistantProfile() {
     try {
-      const savedProfile = activeLocalProfile
-        ? await saveCurrentLocalAssistantProfile()
-        : await addCurrentLocalAssistantProfile();
+      clearAssistantProfileSyncStatus();
+      const savedProfile = buildCurrentLocalAssistantProfile({
+        forceNew: !activeLocalProfile,
+        profileId: activeLocalProfile?.id ?? createLocalProfileId(),
+      });
+      validateProfileAuth(savedProfile, activeLocalProfile ? "save" : "add");
+      const nextStore = replaceAssistantProfileStoreByName(assistantProfileStore, savedProfile);
+
+      setAssistantProfileSaveState("saving");
+      setAssistantProfileError(null);
+      setAssistantProfileStore(nextStore);
+      setActiveLocalProfileId(savedProfile.id);
+
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      setAssistantProfileSaveState("saved");
+      newAssistantDraftBaselineRef.current = null;
       onLog("Assistant profile saved locally.");
       if (authSession && !savedProfile.sync.cloudEnabled) {
-        setAssistantProfileSyncState("syncing");
-        setAssistantProfileSyncMessage("Uploading assistant profile...");
-        const syncedProfile = await syncLocalAssistantProfileToCloud(savedProfile);
-        await persistLocalAssistantProfile(syncedProfile);
-        setAssistantProfileSyncState("synced");
-        setAssistantProfileSyncMessage("Initial assistant profile uploaded to the web console.");
+        try {
+          setAssistantProfileSyncState("syncing");
+          setAssistantProfileSyncMessage("Uploading assistant profile...");
+          const syncedProfile = await syncLocalAssistantProfileToCloud(savedProfile);
+          await persistLocalAssistantProfile(syncedProfile);
+          setAssistantProfileSyncState("synced");
+          setAssistantProfileSyncMessage("Initial assistant profile uploaded to the web console.");
+        } catch (error) {
+          const message = `Assistant saved locally, but cloud sync failed: ${String(error)}`;
+          setAssistantProfileSyncState("error");
+          setAssistantProfileSyncMessage(message);
+          onLog(message);
+        }
       }
       setAssistantProfileSaveState("idle");
       return true;
-    } catch {
-      // The save function already records the visible error state.
+    } catch (error) {
+      onLog(`Enter MiVA blocked: ${String(error)}`);
       return false;
     }
   }
 
   function startNewAssistantDraft() {
-    if (!confirmDiscardStudioChanges()) {
-      return;
-    }
-
     newAssistantDraftBaselineRef.current = getNewAssistantDraftBaseline();
     setActiveLocalProfileId(NEW_LOCAL_PROFILE_DRAFT_ID);
     setProfileDetailsDraft(defaultProfileDetails);
@@ -692,6 +706,7 @@ export function useAssistantProfiles({
     visibleAssistantProfileStore,
     activeLocalProfileId,
     activeLocalProfile,
+    isNewAssistantDraft: activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID,
     promptProfileId,
     assistantProfileLoaded,
     assistantProfileSaveState,
@@ -699,6 +714,7 @@ export function useAssistantProfiles({
     assistantProfileSyncState,
     assistantProfileSyncMessage,
     setActiveLocalProfileId,
+    editLocalAssistantProfile,
     buildCurrentLocalAssistantProfile,
     applyLocalAssistantProfile,
     saveCurrentLocalAssistantProfile,
@@ -709,7 +725,8 @@ export function useAssistantProfiles({
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,
-    confirmDiscardStudioChanges,
+    hasUnsavedStudioDraftChanges,
+    discardUnsavedStudioChanges,
     startNewAssistantDraft,
     saveStudioDraft,
   };

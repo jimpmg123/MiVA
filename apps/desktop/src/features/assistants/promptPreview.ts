@@ -38,6 +38,18 @@ export function buildSystemPromptPreview(
     `- Voice workspace: ${promptSettings.voice.enabled ? "enabled" : "disabled"}.`,
     `- STT provider: ${promptSettings.voice.stt.enabled ? promptSettings.voice.stt.provider : "disabled"}; recording mode: ${promptSettings.voice.stt.recordingMode}; show transcripts: ${promptSettings.voice.runtime.showTranscripts ? "yes" : "no"}.`,
     `- TTS provider: ${promptSettings.voice.tts.enabled ? promptSettings.voice.tts.provider : "disabled"}; auto-speak: ${promptSettings.voice.tts.autoSpeak ? "yes" : "no"}.`,
+    promptSettings.voice.tts.enabled && promptSettings.voice.tts.provider !== "disabled"
+      ? "- Runtime TTS is connected. Responses may be spoken aloud, so use natural spoken wording, short paragraphs, and readable punctuation unless the user asks for a dense format."
+      : "- Runtime TTS is not connected for this assistant.",
+    "Character policy:",
+    `- Character workspace: ${promptSettings.character.enabled ? "enabled" : "disabled"}.`,
+    `- Character: ${promptSettings.character.displayName}; renderer: ${promptSettings.character.renderer}; runtime visible: ${promptSettings.character.showInRuntime ? "yes" : "no"}.`,
+    `- Character personality: ${promptSettings.character.personality}`,
+    `- User address style: ${promptSettings.character.userAddress}`,
+    `- Character speaking style: ${promptSettings.character.speakingStyle}`,
+    promptSettings.character.reactionMode === "aiCues"
+      ? "- Reaction cues may be written lightly for future Runtime mapping, but do not claim a Live2D motion was rendered unless the app confirms it."
+      : "- Use app status only for character reactions. Do not invent expressions, motions, or visual actions.",
     `Persona: ${promptSettings.persona}`,
     `Role goal: ${promptSettings.roleGoal}`,
     `Use case: ${profile.useCase ?? "daily"}.`,

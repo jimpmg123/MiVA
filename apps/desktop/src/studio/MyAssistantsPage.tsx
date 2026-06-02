@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
-import { Badge, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
+import { Badge, IconTile, Input, ModalBackdrop, ModalPanel, Panel, PrimaryButton, SecondaryButton, SectionHeader } from "../components/ui";
 import { MyAssistantCard } from "./MyAssistantCard";
 
 type MyAssistantsPanelProps = {
@@ -77,24 +77,22 @@ export function MyAssistantsPanel({
   return (
     <div className="grid gap-5">
       <Panel>
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h3 className="font-heading text-xl font-bold text-[#191c1d]">My Assistants</h3>
-            <p className="mt-2 max-w-[680px] text-sm leading-6 text-[#42474d]">
-              Choose which saved assistant you want to edit in Studio or run in Runtime.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-start gap-3 lg:justify-end">
+        <SectionHeader
+          title="My Assistants"
+          body="Choose which saved assistant you want to edit in Studio or run in Runtime."
+          actions={
+            <>
             <Badge className="min-w-[88px] px-4" tone="action">{profiles.length} saved</Badge>
             <PrimaryButton onClick={onAddAssistant}>Add assistant</PrimaryButton>
             <SecondaryButton disabled={syncState === "syncing"} onClick={onSyncAll}>
               {syncState === "syncing" ? "Syncing..." : "Sync all"}
             </SecondaryButton>
-          </div>
-        </div>
+            </>
+          }
+        />
       </Panel>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid items-start gap-3 lg:grid-cols-2">
         {profiles.map((profile) => (
           <MyAssistantCard
             active={profile.id === activeProfileId}
@@ -111,13 +109,13 @@ export function MyAssistantsPanel({
       </div>
 
       {renameTarget && (
-        <div className="fixed inset-0 z-[120] grid place-items-center bg-[#191c1d]/35 px-6 backdrop-blur-sm">
-          <div className="w-full max-w-[420px] rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 shadow-[0_24px_60px_rgba(25,28,29,0.28)]">
-            <h3 className="font-heading text-xl font-bold text-[#191c1d]">Rename assistant</h3>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">Update the assistant name shown in Studio and Runtime.</p>
-            <input
+        <ModalBackdrop>
+          <ModalPanel className="max-w-[420px]">
+            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Rename assistant</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Update the assistant name shown in Studio and Runtime.</p>
+            <Input
               autoFocus
-              className="mt-5 w-full rounded-xl border border-[#c2c7ce] bg-white px-4 py-3 text-base font-semibold text-[#191c1d] outline-none transition focus:border-[#35607f] focus:ring-4 focus:ring-[#cae6ff]"
+              className="mt-5 text-base font-semibold"
               onChange={(event) => {
                 setRenameValue(event.target.value);
                 setRenameError(null);
@@ -130,35 +128,35 @@ export function MyAssistantsPanel({
               value={renameValue}
             />
             {renameError && (
-              <p className="mt-3 rounded-xl bg-[#ffdad6] px-4 py-3 text-sm font-semibold text-[#93000a]">{renameError}</p>
+              <p className="mt-3 rounded-lg bg-[var(--miva-danger-soft)] px-4 py-3 text-sm font-semibold text-[var(--miva-danger-hover)]">{renameError}</p>
             )}
             <div className="mt-6 flex justify-end gap-3">
               <SecondaryButton onClick={() => setRenameTarget(null)}>Cancel</SecondaryButton>
               <PrimaryButton onClick={() => void confirmRename()}>Save name</PrimaryButton>
             </div>
-          </div>
-        </div>
+          </ModalPanel>
+        </ModalBackdrop>
       )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 z-[120] grid place-items-center bg-[#191c1d]/35 px-6 backdrop-blur-sm">
-          <div className="w-full max-w-[460px] rounded-2xl border border-[#ffdad6] bg-white p-6 text-center shadow-[0_24px_60px_rgba(25,28,29,0.28)]">
-            <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#ffdad6] text-[#93000a]">
+        <ModalBackdrop>
+          <ModalPanel className="max-w-[460px] border-[var(--miva-danger-soft)] text-center">
+            <IconTile className="mx-auto h-14 w-14" tone="danger">
               <span className="material-symbols-outlined">delete</span>
-            </div>
-            <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">Delete this assistant?</h3>
-            <p className="mt-3 text-sm leading-6 text-[#42474d]">
+            </IconTile>
+            <h3 className="mt-5 font-heading text-xl font-bold text-[var(--miva-text)]">Delete this assistant?</h3>
+            <p className="mt-3 text-sm leading-6 text-[var(--miva-text-muted)]">
               Deleting this assistant will permanently remove its settings and conversation history from this device.
             </p>
-            <p className="mt-3 rounded-xl bg-[#f3f4f5] px-4 py-3 text-sm font-semibold text-[#191c1d]">{deleteTarget.name}</p>
+            <p className="mt-3 rounded-lg bg-[var(--miva-bg-soft)] px-4 py-3 text-sm font-semibold text-[var(--miva-text)]">{deleteTarget.name}</p>
             <div className="mt-6 flex justify-center gap-3">
               <SecondaryButton onClick={() => setDeleteTarget(null)}>Cancel</SecondaryButton>
-              <PrimaryButton className="bg-[#ba1a1a] hover:bg-[#93000a]" onClick={() => void confirmDelete()}>
+              <PrimaryButton className="bg-[var(--miva-danger)] hover:bg-[var(--miva-danger-hover)]" onClick={() => void confirmDelete()}>
                 Delete assistant
               </PrimaryButton>
             </div>
-          </div>
-        </div>
+          </ModalPanel>
+        </ModalBackdrop>
       )}
     </div>
   );

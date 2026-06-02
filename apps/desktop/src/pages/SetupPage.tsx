@@ -28,14 +28,22 @@ export function SetupPage({
   surveyStep,
   welcomeStep,
 }: SetupPageProps) {
-  if (activeStep === "welcome") return <>{welcomeStep}</>;
-  if (activeStep === "survey") return <>{surveyStep}</>;
-  if (activeStep === "hardware") return <>{hardwareStep}</>;
-  if (activeStep === "recommendation") return <>{recommendationStep}</>;
-  if (activeStep === "ollama") return <>{ollamaStep}</>;
-  if (activeStep === "clawCode") return <>{clawCodeStep}</>;
-  if (activeStep === "download") return <>{downloadStep}</>;
-  if (activeStep === "chat") return <>{chatStep}</>;
-  if (activeStep === "profile") return <>{profileStep}</>;
-  return <>{settingsStep}</>;
+  let content: ReactNode;
+
+  if (activeStep === "welcome") content = welcomeStep;
+  else if (activeStep === "survey") content = surveyStep;
+  else if (activeStep === "hardware") content = hardwareStep;
+  else if (activeStep === "recommendation") content = recommendationStep;
+  else if (activeStep === "ollama") content = ollamaStep;
+  else if (activeStep === "clawCode") content = clawCodeStep;
+  else if (activeStep === "download") content = downloadStep;
+  else if (activeStep === "chat") content = chatStep;
+  else if (activeStep === "profile") content = profileStep;
+  else content = settingsStep;
+
+  return (
+    <div key={activeStep} className="miva-step-enter">
+      {content}
+    </div>
+  );
 }

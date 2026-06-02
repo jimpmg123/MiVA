@@ -6,54 +6,97 @@ type StudioSectionItem = { id: StudioSection; label: string; detail: string; ico
 
 type StudioNavigationProps = {
   authSession: AuthSession | null;
+  editorExpanded: boolean;
   studioSection: StudioSection;
   studioSections: StudioSectionItem[];
   onOpenAuth: () => void;
   onStudioSectionChange: (section: StudioSection) => void;
 };
 
-export function StudioNavigation({ authSession, studioSection, studioSections, onOpenAuth, onStudioSectionChange }: StudioNavigationProps) {
+export function StudioNavigation({
+  authSession,
+  editorExpanded,
+  studioSection,
+  studioSections,
+  onOpenAuth,
+  onStudioSectionChange,
+}: StudioNavigationProps) {
+  const librarySection = studioSections.find((section) => section.id === "myAssistants");
+  const overviewSection = studioSections.find((section) => section.id === "overview");
+  const editorSections = studioSections.filter((section) => section.id !== "myAssistants" && section.id !== "overview");
+
   return (
-    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
+    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
+      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
         <BrandLogo />
         <div>
-          <h1 className="font-heading text-sm font-extrabold text-[#191c1d]">MiVA</h1>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#72787e]">Assistant Studio</p>
+          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
+          <p className="miva-nav-section-label">Assistant Studio</p>
         </div>
       </div>
 
       <nav className="flex-1 p-4">
-        <p className="px-3 pb-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">Studio</p>
+        <p className="miva-nav-section-label px-3 pb-3">Studio</p>
         <div className="grid gap-1">
-          {studioSections.map((section) => {
-            const active = studioSection === section.id;
-            const childOfOverview = section.id !== "myAssistants" && section.id !== "overview";
+          {librarySection && (
+            <button
+              className={`miva-nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                studioSection === "myAssistants"
+                  ? "miva-nav-item-active"
+                  : ""
+              }`}
+              onClick={() => onStudioSectionChange("myAssistants")}
+              type="button"
+            >
+              <span className={`grid h-8 w-8 place-items-center rounded-full ${
+                studioSection === "myAssistants" ? "miva-nav-icon-active" : "miva-nav-icon"
+              }`}>
+                <span className="material-symbols-outlined text-[18px]">{librarySection.icon}</span>
+              </span>
+              <span className="min-w-0">
+                <span className="block">{librarySection.label}</span>
+                <span className="block text-xs font-medium opacity-70">{librarySection.detail}</span>
+              </span>
+            </button>
+          )}
 
-            return (
-              <button
-                className={`relative flex w-full items-center gap-3 rounded-xl py-3 text-left text-sm font-semibold transition ${
-                  active ? "bg-[#cae6ff]/45 text-[#35607f]" : "text-[#72787e] hover:bg-[#e7e8e9] hover:text-[#191c1d]"
-                } ${childOfOverview ? "ml-5 px-3" : "px-3"}`}
-                key={section.id}
-                onClick={() => onStudioSectionChange(section.id)}
-                type="button"
-              >
-                {childOfOverview && (
-                  <span className={`absolute -left-3 top-1/2 h-px w-3 ${active ? "bg-[#35607f]" : "bg-[#c2c7ce]"}`} />
-                )}
-                <span className={`grid place-items-center rounded-full ${
-                  childOfOverview ? "h-7 w-7" : "h-8 w-8"
-                } ${active ? "bg-[#35607f] text-white" : "bg-[#e1e3e4] text-[#72787e]"}`}>
-                  <span className="material-symbols-outlined text-[18px]">{section.icon}</span>
-                </span>
-                <span className="min-w-0">
-                  <span className="block">{section.label}</span>
-                  {!childOfOverview && <span className="block text-xs font-medium opacity-70">{section.detail}</span>}
-                </span>
-              </button>
-            );
-          })}
+          <div
+            className={`grid transition-all duration-300 ease-out ${
+              editorExpanded ? "mt-3 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"
+            }`}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="grid gap-1 pt-1">
+                {[...(overviewSection ? [overviewSection] : []), ...editorSections].map((section, index) => {
+                  const active = studioSection === section.id;
+                  const childOfOverview = section.id !== "overview";
+
+                  return (
+                    <button
+                      className={`miva-nav-item relative flex items-center rounded-xl px-3 py-3 text-left text-sm font-semibold transition-all duration-300 ${
+                        active ? "miva-nav-item-active" : ""
+                      } ${editorExpanded ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"} ${
+                        childOfOverview ? "mr-2 w-[calc(100%-0.5rem)] gap-2 pl-6 text-[12px]" : "w-full gap-3"
+                      }`}
+                      key={section.id}
+                      onClick={() => onStudioSectionChange(section.id)}
+                      style={{ transitionDelay: editorExpanded ? `${index * 35}ms` : "0ms" }}
+                      type="button"
+                    >
+                      <span className={`grid shrink-0 place-items-center rounded-full transition-colors ${
+                        active ? "miva-nav-icon-active" : "miva-nav-icon"
+                      } ${childOfOverview ? "h-7 w-7" : "h-8 w-8"}`}>
+                        <span className={`material-symbols-outlined ${childOfOverview ? "text-[16px]" : "text-[18px]"}`}>{section.icon}</span>
+                      </span>
+                      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+                        <span className="block truncate">{section.label}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       </nav>
 

@@ -1,59 +1,50 @@
-﻿type WelcomeStepProps = {
+﻿import { IconTile, Panel, PrimaryButton, SetupStepShell } from "../components/ui";
+
+type WelcomeStepProps = {
   t: Record<string, string>;
   onStart: () => void;
 };
 
+const features = [
+  { icon: "lock", tone: "action" as const, titleKey: "privacyTitle", bodyKey: "privacyBody" },
+  { icon: "bolt", tone: "success" as const, titleKey: "localModelTitle", bodyKey: "localModelBody" },
+  { icon: "cloud_off", tone: "neutral" as const, titleKey: "guidedTitle", bodyKey: "guidedBody" },
+];
+
 export function WelcomeStep({ t, onStart }: WelcomeStepProps) {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-144px)] w-full max-w-4xl flex-col items-center justify-center text-center">
-      <div className="mb-10 space-y-4">
-        <h2 className="font-heading text-[42px] font-black leading-tight tracking-tight text-[#191c1d]">{t.welcomeTitle}</h2>
-        <p className="mx-auto max-w-xl font-sans text-base leading-6 text-[#42474d] opacity-80">{t.welcomeBody}</p>
+    <SetupStepShell className="items-center justify-center text-center" variant="hero">
+      <div className="miva-welcome-reveal mb-10 space-y-4">
+        <h2 className="font-heading text-[42px] font-black leading-tight tracking-tight text-[var(--miva-text)]">
+          {t.welcomeTitle}
+        </h2>
+        <p className="mx-auto max-w-xl text-base leading-6 text-[var(--miva-text-muted)]">{t.welcomeBody}</p>
       </div>
 
       <div className="mb-12 grid w-full grid-cols-3 gap-6">
-        <div className="flex flex-col items-center rounded-xl border border-[#c2c7ce]/20 bg-white p-6 text-center shadow-sm">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#35607f]/10 text-[#35607f]">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-              lock
-            </span>
-          </div>
-          <h3 className="font-heading mb-1 text-base font-bold text-[#191c1d]">{t.privacyTitle}</h3>
-          <p className="text-sm leading-5 text-[#42474d]">{t.privacyBody}</p>
-        </div>
-
-        <div className="flex flex-col items-center rounded-xl border border-[#c2c7ce]/20 bg-white p-6 text-center shadow-sm">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#4a654e]/10 text-[#4a654e]">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-              bolt
-            </span>
-          </div>
-          <h3 className="font-heading mb-1 text-base font-bold text-[#191c1d]">{t.localModelTitle}</h3>
-          <p className="text-sm leading-5 text-[#42474d]">{t.localModelBody}</p>
-        </div>
-
-        <div className="flex flex-col items-center rounded-xl border border-[#c2c7ce]/20 bg-white p-6 text-center shadow-sm">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#555d63]/10 text-[#555d63]">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
-              cloud_off
-            </span>
-          </div>
-          <h3 className="font-heading mb-1 text-base font-bold text-[#191c1d]">{t.guidedTitle}</h3>
-          <p className="text-sm leading-5 text-[#42474d]">{t.guidedBody}</p>
-        </div>
+        {features.map((feature, index) => (
+          <Panel
+            className={`miva-soft-card miva-stagger-item miva-stagger-${index} flex flex-col items-center p-6 text-center transition hover:-translate-y-0.5 hover:shadow-[var(--miva-shadow-md)]`}
+            key={feature.titleKey}
+          >
+            <IconTile className="mb-4 h-12 w-12 rounded-full" tone={feature.tone}>
+              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+                {feature.icon}
+              </span>
+            </IconTile>
+            <h3 className="font-heading mb-1 text-base font-bold text-[var(--miva-text)]">{t[feature.titleKey]}</h3>
+            <p className="text-sm leading-5 text-[var(--miva-text-muted)]">{t[feature.bodyKey]}</p>
+          </Panel>
+        ))}
       </div>
 
-      <div className="flex flex-col items-center gap-4">
-        <button
-          className="group flex items-center gap-2 rounded-full bg-[#35607f] px-12 py-4 font-heading text-base font-semibold text-white transition-all duration-300 hover:bg-[#4f7999] hover:shadow-lg active:scale-95"
-          onClick={onStart}
-          type="button"
-        >
+      <div className="miva-welcome-reveal animation-delay-300 flex flex-col items-center gap-4">
+        <PrimaryButton className="group rounded-full px-12" onClick={onStart}>
           {t.startSetup}
           <span className="material-symbols-outlined transition-transform group-hover:translate-x-1">arrow_forward</span>
-        </button>
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#72787e] opacity-60">{t.estimatedTime}</p>
+        </PrimaryButton>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--miva-text-soft)]">{t.estimatedTime}</p>
       </div>
-    </div>
+    </SetupStepShell>
   );
 }

@@ -13,16 +13,18 @@ import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, pro
 import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
 import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
 import { useModelRecommendation } from "./features/models/useModelRecommendation";
-import { defaultProfileDetails, defaultPromptSettings } from "./features/assistants/profile";
+import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
 import { useAuthFlow } from "./features/auth/useAuthFlow";
 import { useProviderKeys } from "./features/auth/useProviderKeys";
 import { AuthHost } from "./hosts/AuthHost";
 import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles";
 import { useRuntimeChat } from "./features/chat/useRuntimeChat";
 import { useCloudDevice } from "./features/cloud/useCloudDevice";
+import { getGoogleWorkspaceStatus } from "./features/cloud/client";
 import { RuntimeHost } from "./hosts/RuntimeHost";
 import { SettingsHost } from "./hosts/SettingsHost";
 import { StudioHost } from "./hosts/StudioHost";
+import { PrimaryButton, SecondaryButton } from "./components/ui";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
@@ -32,6 +34,7 @@ import type {
   ProviderId,
   StudioSection,
   SurveyState,
+  GoogleWorkspaceStatus,
 } from "./types";
 
 
@@ -67,12 +70,18 @@ function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [assistantPanelMinimized, setAssistantPanelMinimized] = useState(false);
   const [runtimeTtsEnabled, setRuntimeTtsEnabled] = useState(false);
+  const [runtimeTtsPlaybackSettings, setRuntimeTtsPlaybackSettings] = useState(() => ({
+    speakingRate: defaultPromptSettings.voice.tts.speakingRate,
+    volume: defaultPromptSettings.voice.tts.volume,
+  }));
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [profileDetailsDraft, setProfileDetailsDraft] = useState<ProfileDetailsDraft>(() => defaultProfileDetails);
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
   const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
+  const [pendingUnsavedAction, setPendingUnsavedAction] = useState<(() => void) | null>(null);
   const [tauriRuntime] = useState(isTauriRuntime);
+  const [googleWorkspaceStatus, setGoogleWorkspaceStatus] = useState<GoogleWorkspaceStatus | null>(null);
 
   const log = useCallback((message: string) => {
     setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
@@ -123,6 +132,7 @@ function App() {
     deviceAuthRequest,
     clearAuthSession,
     continueLocalOnly,
+    openWorkspaceConsent,
     openWebConsole,
     startBrowserSignIn,
   } = useAuthFlow({
@@ -132,6 +142,25 @@ function App() {
     onContinueLocalOnly: closeAuth,
   });
   const signedIn = Boolean(authSession);
+  const refreshGoogleWorkspaceStatus = useCallback(async () => {
+    if (!authSession) {
+      setGoogleWorkspaceStatus(null);
+      return null;
+    }
+
+    try {
+      const status = await getGoogleWorkspaceStatus({ authSession });
+      setGoogleWorkspaceStatus(status);
+      return status;
+    } catch (error) {
+      log(`Google Workspace status check failed: ${String(error)}`);
+      return null;
+    }
+  }, [authSession, log]);
+
+  useEffect(() => {
+    void refreshGoogleWorkspaceStatus();
+  }, [refreshGoogleWorkspaceStatus]);
   const {
     cloudRecommended,
     recommendedCloudModel,
@@ -161,6 +190,7 @@ function App() {
     visibleAssistantProfileStore,
     activeLocalProfileId,
     activeLocalProfile,
+    isNewAssistantDraft,
     promptProfileId,
     assistantProfileLoaded,
     assistantProfileSaveState,
@@ -169,6 +199,7 @@ function App() {
     assistantProfileSyncMessage,
     setActiveLocalProfileId,
     buildCurrentLocalAssistantProfile,
+    editLocalAssistantProfile,
     applyLocalAssistantProfile,
     saveCurrentLocalAssistantProfile,
     addCurrentLocalAssistantProfile,
@@ -178,7 +209,8 @@ function App() {
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,
-    confirmDiscardStudioChanges,
+    hasUnsavedStudioDraftChanges,
+    discardUnsavedStudioChanges,
     startNewAssistantDraft,
     saveStudioDraft,
   } = useAssistantProfiles({
@@ -227,14 +259,23 @@ function App() {
     activeTtsSettings.provider !== "disabled";
 
   useEffect(() => {
-    setRuntimeTtsEnabled(runtimeTtsAvailable && activeTtsSettings.autoSpeak);
-  }, [promptProfileId, runtimeTtsAvailable, activeTtsSettings.autoSpeak]);
+    setRuntimeTtsEnabled(runtimeTtsAvailable && (activeTtsSettings.autoSpeak || activeTtsSettings.provider === "localVoice"));
+  }, [promptProfileId, runtimeTtsAvailable, activeTtsSettings.autoSpeak, activeTtsSettings.provider]);
+  useEffect(() => {
+    setRuntimeTtsPlaybackSettings({
+      speakingRate: activeTtsSettings.speakingRate,
+      volume: activeTtsSettings.volume,
+    });
+  }, [promptProfileId, activeTtsSettings.speakingRate, activeTtsSettings.volume]);
+
+  const effectiveRuntimeTtsSettings = {
+    ...activeTtsSettings,
+    speakingRate: runtimeTtsPlaybackSettings.speakingRate,
+    volume: runtimeTtsPlaybackSettings.volume,
+  };
 
   const runtimeChatIntroKey = `${selectedProvider}:${selectedProvider === "ollama" ? selectedModel : selectedCloudModel}:${promptProfileId}`;
-  const showChatIntroCard =
-    appMode === "runtime" &&
-    (selectedProvider !== "ollama" || selectedModelInstalled) &&
-    !dismissedChatIntroKeys.includes(runtimeChatIntroKey);
+  const showChatIntroCard = appMode === "setup" && !dismissedChatIntroKeys.includes(runtimeChatIntroKey);
   const {
     activeChatMessages,
     activeConversationId,
@@ -283,7 +324,12 @@ function App() {
     ensureOllamaReadyForChat,
     recordRuntimeUsageEvent,
     runtimeTtsEnabled: runtimeTtsAvailable && runtimeTtsEnabled,
-    runtimeTtsSettings: runtimeTtsAvailable ? activeTtsSettings : null,
+    runtimeTtsSettings: runtimeTtsAvailable ? effectiveRuntimeTtsSettings : null,
+    refreshGoogleWorkspaceStatus,
+    onWorkspaceAuthRequired: async () => {
+      await openWorkspaceConsent();
+      log("Google Workspace permission is required. Complete consent in the browser, then try again.");
+    },
     onLog: log,
   });
   const {
@@ -291,10 +337,7 @@ function App() {
     goToNextStep,
     goToPreviousStep,
     setSurveyQuestionIndex,
-    setSurveyTipExpanded,
     surveyQuestionIndex,
-    surveyTipContentVisible,
-    surveyTipExpanded,
   } = useSetupWizard({
     activeStep,
     steps,
@@ -318,16 +361,60 @@ function App() {
     />
   );
 
+  const runAfterUnsavedCheck = useCallback((action: () => void) => {
+    if (!hasUnsavedStudioDraftChanges()) {
+      action();
+      return;
+    }
+
+    setPendingUnsavedAction(() => action);
+  }, [hasUnsavedStudioDraftChanges]);
+
+  const cancelUnsavedAction = useCallback(() => {
+    setPendingUnsavedAction(null);
+  }, []);
+
+  const confirmUnsavedAction = useCallback(() => {
+    const action = pendingUnsavedAction;
+    setPendingUnsavedAction(null);
+    discardUnsavedStudioChanges();
+    action?.();
+  }, [discardUnsavedStudioChanges, pendingUnsavedAction]);
+
+  const renderUnsavedChangesModal = () => (
+    pendingUnsavedAction ? (
+      <div className="fixed inset-0 z-[140] grid place-items-center bg-[#191c1d]/35 px-6 backdrop-blur-sm">
+        <section className="w-full max-w-[460px] rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 text-center shadow-[0_24px_80px_rgba(25,28,29,0.24)]">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#fff2cc] text-[#6b4b00]">
+            <span className="material-symbols-outlined">warning</span>
+          </div>
+          <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">Leave without saving?</h3>
+          <p className="mt-3 text-sm leading-6 text-[#42474d]">
+            Changes in Overview and its sections are not applied until you click Save changes.
+          </p>
+          <div className="mt-6 flex justify-center gap-3">
+            <SecondaryButton onClick={cancelUnsavedAction}>Stay here</SecondaryButton>
+            <PrimaryButton className="bg-[#ba1a1a] hover:bg-[#93000a]" onClick={confirmUnsavedAction}>
+              Leave without saving
+            </PrimaryButton>
+          </div>
+        </section>
+      </div>
+    ) : null
+  );
+
   const renderStudioNavigation = () => (
     <StudioNavigation
       authSession={authSession}
+      editorExpanded={studioSection !== "myAssistants"}
       onOpenAuth={openAuth}
       onStudioSectionChange={(section) => {
         if (section === studioSection) {
           return;
         }
 
-        if (section === "myAssistants" && !confirmDiscardStudioChanges()) {
+        if (section === "myAssistants") {
+          runAfterUnsavedCheck(() => setStudioSection(section));
           return;
         }
 
@@ -353,20 +440,14 @@ function App() {
   );
 
   const changeAppMode = (mode: AppMode) => {
-    if (mode !== appMode && !confirmDiscardStudioChanges()) {
+    if (mode === appMode) {
       return;
     }
 
-    setAppMode(mode);
+    runAfterUnsavedCheck(() => setAppMode(mode));
   };
 
-  const enterGeneralSettingsFromTopBar = () => {
-    if (!confirmDiscardStudioChanges()) {
-      return;
-    }
-
-    enterSettings("general");
-  };
+  const enterGeneralSettingsFromTopBar = () => runAfterUnsavedCheck(() => enterSettings("general"));
 
   const renderTopBar = () => (
     <AppTopBar
@@ -399,6 +480,7 @@ function App() {
       chatInput={chatInput}
       chatIntroKey={chatIntroKey}
       chatMetrics={chatMetrics}
+      characterSettings={(activeLocalProfile ? normalizePromptSettings(activeLocalProfile.prompt?.settings) : promptSettingsDraft).character}
       chatScrollRef={chatScrollRef}
       providerText={providerText}
       selectedModelInstalled={selectedModelInstalled}
@@ -408,6 +490,8 @@ function App() {
       status={status}
       runtimeTtsAvailable={runtimeTtsAvailable}
       runtimeTtsEnabled={runtimeTtsEnabled}
+      runtimeTtsSpeakingRate={effectiveRuntimeTtsSettings.speakingRate}
+      runtimeTtsVolume={effectiveRuntimeTtsSettings.volume}
       t={t}
       ttsError={ttsError}
       ttsPlaybackState={ttsPlaybackState}
@@ -420,6 +504,18 @@ function App() {
       setChatInput={setChatInput}
       setDismissedChatIntroKeys={setDismissedChatIntroKeys}
       setRuntimeTtsEnabled={setRuntimeTtsEnabled}
+      setRuntimeTtsSpeakingRate={(speakingRate) => {
+        setRuntimeTtsPlaybackSettings((current) => ({
+          ...current,
+          speakingRate: Math.min(2, Math.max(0.5, speakingRate)),
+        }));
+      }}
+      setRuntimeTtsVolume={(volume) => {
+        setRuntimeTtsPlaybackSettings((current) => ({
+          ...current,
+          volume: Math.min(1, Math.max(0, volume)),
+        }));
+      }}
       stopRuntimeTts={stopRuntimeTts}
     />
   );
@@ -451,14 +547,18 @@ function App() {
       assistantProfileSyncState={assistantProfileSyncState}
       buildCurrentLocalAssistantProfile={buildCurrentLocalAssistantProfile}
       busyAction={busyAction}
+      googleWorkspaceStatus={googleWorkspaceStatus}
       cloudModelCatalog={cloudModelCatalog}
       deleteLocalAssistantProfile={deleteLocalAssistantProfile}
       downloadModel={downloadModel}
       enterAiModelSettings={() => enterSettings("aiModels")}
+      editLocalAssistantProfile={editLocalAssistantProfile}
       installedModels={installedModels}
+      isNewAssistantDraft={isNewAssistantDraft}
       modelCatalog={modelCatalog}
       profileDetailsDraft={profileDetailsDraft}
       promptEditorMode={promptEditorMode}
+      promptSettingsDraft={promptSettingsDraft}
       providerText={providerText}
       saveCurrentLocalAssistantProfile={saveCurrentLocalAssistantProfile}
       renameLocalAssistantProfile={renameLocalAssistantProfile}
@@ -474,10 +574,11 @@ function App() {
       setSelectedCloudModel={setSelectedCloudModel}
       setSelectedModel={setSelectedModel}
       setSelectedProvider={setSelectedProvider}
-      setStudioSection={setStudioSection}
       setToolsForAiOpen={setToolsForAiOpen}
-      onAddAssistantStart={startNewAssistantDraft}
-      onConfirmDiscardStudioChanges={confirmDiscardStudioChanges}
+      onOpenWorkspaceConsent={() => void openWorkspaceConsent()}
+      onRefreshGoogleWorkspaceStatus={() => void refreshGoogleWorkspaceStatus()}
+      onAddAssistantStart={() => runAfterUnsavedCheck(startNewAssistantDraft)}
+      onConfirmDiscardStudioChanges={runAfterUnsavedCheck}
       status={status}
       studioSection={studioSection}
       studioSections={studioSections}
@@ -576,15 +677,12 @@ function App() {
       setSelectedProvider={setSelectedProvider}
       setSurvey={setSurvey}
       setSurveyQuestionIndex={setSurveyQuestionIndex}
-      setSurveyTipExpanded={setSurveyTipExpanded}
       settingsStep={renderSettings()}
       startOllama={startOllama}
       status={status}
       survey={survey}
       surveyQuestionIndex={surveyQuestionIndex}
       surveyQuestions={surveyQuestions}
-      surveyTipContentVisible={surveyTipContentVisible}
-      surveyTipExpanded={surveyTipExpanded}
       tauriRuntime={tauriRuntime}
       t={t}
     />
@@ -595,7 +693,12 @@ function App() {
       appMode={appMode}
       authView={renderAuth()}
       content={appMode === "setup" ? renderSetup() : appMode === "studio" ? renderStudio() : renderChat()}
-      downloadModal={renderDownloadProgressModal()}
+      downloadModal={(
+        <>
+          {renderDownloadProgressModal()}
+          {renderUnsavedChangesModal()}
+        </>
+      )}
       navigation={appMode === "setup" ? renderNavigation() : appMode === "studio" ? renderStudioNavigation() : renderRuntimeNavigation()}
       topBar={renderTopBar()}
     />

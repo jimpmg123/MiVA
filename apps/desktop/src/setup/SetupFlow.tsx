@@ -1,6 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
 import type { Locale } from "../i18n";
-import { PrimaryButton, SecondaryButton } from "../components/ui";
 import { SetupPage } from "../pages/SetupPage";
 import { cloudModelCatalog, modelCatalog, providerMeta } from "../features/models/catalog";
 import { ClawCodeStep } from "./ClawCodeStep";
@@ -73,14 +72,11 @@ type SetupFlowProps = {
   setSelectedProvider: (provider: ProviderId) => void;
   setSurvey: ComponentProps<typeof SurveyStep>["setSurvey"];
   setSurveyQuestionIndex: ComponentProps<typeof SurveyStep>["setSurveyQuestionIndex"];
-  setSurveyTipExpanded: ComponentProps<typeof SurveyStep>["setSurveyTipExpanded"];
   settingsStep: ReactNode;
   status: OllamaStatus | null;
   survey: SurveyState;
   surveyQuestionIndex: number;
   surveyQuestions: ComponentProps<typeof SurveyStep>["surveyQuestions"];
-  surveyTipContentVisible: boolean;
-  surveyTipExpanded: boolean;
   tauriRuntime: boolean;
   t: Record<string, string>;
 };
@@ -135,28 +131,14 @@ export function SetupFlow({
   setSelectedProvider,
   setSurvey,
   setSurveyQuestionIndex,
-  setSurveyTipExpanded,
   settingsStep,
   status,
   survey,
   surveyQuestionIndex,
   surveyQuestions,
-  surveyTipContentVisible,
-  surveyTipExpanded,
   tauriRuntime,
   t,
 }: SetupFlowProps) {
-  const renderFooter = (primaryLabel = t.continue, primaryAction = goToNextStep, primaryDisabled = false) => (
-    <div className="mt-8 flex items-center justify-between">
-      <SecondaryButton disabled={activeStep === "welcome"} onClick={goToPreviousStep}>
-        {t.back}
-      </SecondaryButton>
-      <PrimaryButton disabled={primaryDisabled} onClick={primaryAction}>
-        {primaryLabel}
-      </PrimaryButton>
-    </div>
-  );
-
   return (
     <SetupPage
       activeStep={activeStep}
@@ -169,9 +151,9 @@ export function SetupFlow({
           installPython={installPython}
           pythonInstallPath={pythonInstallPath}
           refreshRuntimeRequirements={refreshRuntimeRequirements}
-          renderFooter={renderFooter}
           runtimeRequirements={runtimeRequirements}
           runtimeRequirementsError={runtimeRequirementsError}
+          t={t}
           tauriRuntime={tauriRuntime}
         />
       )}
@@ -184,7 +166,6 @@ export function SetupFlow({
           goToNextStep={goToNextStep}
           installedModels={installedModels}
           modelCatalog={modelCatalog}
-          renderFooter={renderFooter}
           selectedModel={selectedModel}
           selectedModelInfo={selectedModelInfo}
           selectedModelInstalled={selectedModelInstalled}
@@ -213,12 +194,11 @@ export function SetupFlow({
           installOllama={installOllama}
           logs={logs}
           refreshStatus={refreshStatus}
-          renderFooter={renderFooter}
           serviceLabel={serviceLabel}
           startOllama={startOllama}
           status={status}
-          tauriRuntime={tauriRuntime}
           t={t}
+          tauriRuntime={tauriRuntime}
         />
       )}
       profileStep={(
@@ -237,7 +217,6 @@ export function SetupFlow({
           activeLocale={activeLocale}
           cloudModelCatalog={cloudModelCatalog}
           cloudRecommended={cloudRecommended}
-          goToPreviousStep={goToPreviousStep}
           hardware={hardware}
           installedModels={installedModels}
           modelCatalog={modelCatalog}
@@ -255,7 +234,6 @@ export function SetupFlow({
           setSelectedCloudModel={setSelectedCloudModel}
           setSelectedModel={setSelectedModel}
           setSelectedProvider={setSelectedProvider}
-          survey={survey}
           t={t}
         />
       )}
@@ -263,17 +241,13 @@ export function SetupFlow({
       surveyStep={(
         <SurveyStep
           activeLocale={activeLocale}
-          enterSettings={enterGeneralSettings}
           goToNextStep={goToNextStep}
           goToPreviousStep={goToPreviousStep}
           setSurvey={setSurvey}
           setSurveyQuestionIndex={setSurveyQuestionIndex}
-          setSurveyTipExpanded={setSurveyTipExpanded}
           survey={survey}
           surveyQuestionIndex={surveyQuestionIndex}
           surveyQuestions={surveyQuestions}
-          surveyTipContentVisible={surveyTipContentVisible}
-          surveyTipExpanded={surveyTipExpanded}
           t={t}
         />
       )}

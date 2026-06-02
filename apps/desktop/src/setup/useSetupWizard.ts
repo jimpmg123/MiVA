@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { StepId } from "../types";
 
 type SetupStep = {
@@ -19,8 +19,6 @@ export function useSetupWizard({
   onEnteringChatStep,
 }: UseSetupWizardOptions) {
   const [surveyQuestionIndex, setSurveyQuestionIndex] = useState(0);
-  const [surveyTipExpanded, setSurveyTipExpanded] = useState(false);
-  const [surveyTipContentVisible, setSurveyTipContentVisible] = useState(false);
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
 
   function goToNextStep() {
@@ -36,28 +34,11 @@ export function useSetupWizard({
     onStepChange(previous.id);
   }
 
-  useEffect(() => {
-    if (!surveyTipExpanded) {
-      setSurveyTipContentVisible(false);
-      return;
-    }
-
-    setSurveyTipContentVisible(false);
-    const timer = window.setTimeout(() => {
-      setSurveyTipContentVisible(true);
-    }, 320);
-
-    return () => window.clearTimeout(timer);
-  }, [surveyTipExpanded]);
-
   return {
     activeIndex,
     goToNextStep,
     goToPreviousStep,
     setSurveyQuestionIndex,
-    setSurveyTipExpanded,
     surveyQuestionIndex,
-    surveyTipContentVisible,
-    surveyTipExpanded,
   };
 }

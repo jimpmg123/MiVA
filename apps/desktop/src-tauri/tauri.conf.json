@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.miva.desktop",
   "build": {
-    "beforeDevCommand": "npm.cmd run dev",
-    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm.cmd run dev -- --port 1421",
+    "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "npm.cmd run build",
     "frontendDist": "../dist"
   },
@@ -26,6 +26,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../../../VtuberLLM/Open-LLM-VTuber-main/live2d-models"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

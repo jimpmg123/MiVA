@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-heading: Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 @font-face {
@@ -13,11 +13,45 @@
 }
 
 :root {
+  --miva-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+  --miva-bg: #f9f9fe;
+  --miva-bg-soft: #f4f7fb;
+  --miva-surface: #ffffff;
+  --miva-surface-muted: #edf2f8;
+  --miva-surface-raised: rgba(255, 255, 255, 0.82);
+  --miva-border: #dbe3ee;
+  --miva-border-strong: #b9c7d8;
+  --miva-text: #172033;
+  --miva-text-muted: #627087;
+  --miva-text-soft: #7f8a9a;
+  --miva-primary: #4a6fa5;
+  --miva-primary-hover: #3d5f91;
+  --miva-primary-soft: #dce9fb;
+  --miva-primary-surface: #edf5ff;
+  --miva-success: #4f7b58;
+  --miva-success-soft: #dff2e3;
+  --miva-success-surface: #eef8f0;
+  --miva-warning: #7a5500;
+  --miva-warning-soft: #fff2cc;
+  --miva-danger: #ba1a1a;
+  --miva-danger-hover: #93000a;
+  --miva-danger-soft: #ffdad6;
+  --miva-switch-off: #dfe5ee;
+  --miva-nav-icon-bg: #e7eef7;
+  --miva-shadow-sm: 0 1px 2px rgba(31, 57, 88, 0.07);
+  --miva-shadow-md: 0 12px 32px rgba(31, 57, 88, 0.11);
+  --miva-shadow-lg: 0 24px 80px rgba(31, 57, 88, 0.17);
+  --miva-glass: rgba(255, 255, 255, 0.78);
+  --miva-glass-border: rgba(219, 227, 238, 0.74);
+  --miva-live-glow: 0 0 8px rgba(79, 123, 88, 0.38);
+  --miva-radius-sm: 10px;
+  --miva-radius-md: 14px;
+  --miva-radius-lg: 18px;
+  --miva-focus: 0 0 0 4px rgba(36, 73, 102, 0.16);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  color: #191c1d;
-  background: #f8f9fa;
+    var(--miva-font-sans);
+  color: var(--miva-text);
+  background: var(--miva-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -28,7 +62,9 @@ body {
   margin: 0;
   min-width: 1000px;
   min-height: 720px;
-  background: #f8f9fa;
+  background:
+    linear-gradient(180deg, rgba(220, 233, 251, 0.52) 0%, rgba(249, 249, 254, 0) 250px),
+    var(--miva-bg);
 }
 
 #root {
@@ -41,6 +77,116 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.miva-app-shell {
+  background:
+    radial-gradient(circle at 84% -8%, rgba(220, 233, 251, 0.82), transparent 28rem),
+    radial-gradient(circle at 14% 10%, rgba(208, 225, 251, 0.46), transparent 24rem),
+    linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+  color: var(--miva-text);
+}
+
+.miva-scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.miva-scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+.miva-sidebar {
+  border-right: 1px solid rgba(184, 198, 210, 0.55);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(244, 247, 251, 0.88) 100%);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(18px);
+}
+
+.miva-topbar {
+  border-bottom: 1px solid rgba(184, 198, 210, 0.58);
+  background: rgba(249, 249, 254, 0.82);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(18px);
+}
+
+.miva-nav-section-label {
+  color: var(--miva-text-soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.miva-nav-item {
+  color: var(--miva-text-muted);
+  min-height: 44px;
+  border: 1px solid transparent;
+}
+
+.miva-nav-item:hover {
+  color: var(--miva-text);
+  background: var(--miva-surface-muted);
+}
+
+.miva-nav-item-active {
+  color: var(--miva-primary);
+  background: var(--miva-primary-surface);
+  border-color: rgba(36, 73, 102, 0.12);
+  box-shadow: var(--miva-shadow-sm);
+}
+
+.miva-nav-icon {
+  background: var(--miva-nav-icon-bg);
+  color: var(--miva-text-muted);
+}
+
+.miva-nav-icon-active {
+  background: var(--miva-primary);
+  color: white;
+}
+
+.miva-nav-icon-success {
+  background: var(--miva-success-soft);
+  color: var(--miva-success);
+}
+
+.miva-soft-card {
+  border: 1px solid var(--miva-glass-border);
+  background: var(--miva-glass);
+  box-shadow: 0 4px 20px rgba(31, 57, 88, 0.06);
+  backdrop-filter: blur(16px);
+}
+
+.miva-glass-card {
+  border: 1px solid var(--miva-glass-border);
+  background: var(--miva-glass);
+  box-shadow: 0 4px 20px rgba(31, 57, 88, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.miva-status-glow {
+  box-shadow: var(--miva-live-glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 .material-symbols-outlined {
@@ -136,7 +282,7 @@ textarea {
   width: 0.375rem;
   height: 0.375rem;
   border-radius: 9999px;
-  background: #35607f;
+  background: var(--miva-primary);
   animation: typingPulse 1s infinite ease-in-out;
 }
 
@@ -146,4 +292,169 @@ textarea {
 
 .animation-delay-300 {
   animation-delay: 300ms;
+}
+
+@keyframes stepEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stepEnterShort {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes welcomeReveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes staggerReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes navCheckPop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes successFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(79, 123, 88, 0.45);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(79, 123, 88, 0);
+  }
+
+  100% {
+    box-shadow: none;
+  }
+}
+
+.miva-step-enter {
+  animation: stepEnter 280ms ease-out both;
+}
+
+.miva-step-enter-short {
+  animation: stepEnterShort 180ms ease-out both;
+}
+
+.miva-welcome-reveal {
+  animation: welcomeReveal 420ms ease-out both;
+}
+
+.miva-stagger-item {
+  animation: staggerReveal 360ms ease-out both;
+}
+
+.miva-stagger-0 {
+  animation-delay: 0ms;
+}
+
+.miva-stagger-1 {
+  animation-delay: 80ms;
+}
+
+.miva-stagger-2 {
+  animation-delay: 160ms;
+}
+
+.miva-stagger-3 {
+  animation-delay: 240ms;
+}
+
+.miva-stagger-4 {
+  animation-delay: 320ms;
+}
+
+.miva-stagger-5 {
+  animation-delay: 400ms;
+}
+
+.miva-nav-check-enter {
+  animation: navCheckPop 200ms ease-out both;
+}
+
+.miva-progress-bar-fill {
+  transition: width 500ms ease-out;
+}
+
+.miva-progress-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.miva-progress-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: workspaceProgress 2s infinite linear;
+}
+
+.miva-success-flash {
+  animation: successFlash 700ms ease-out both;
+}
+
+.miva-hero-panel::before {
+  content: "";
+  position: absolute;
+  right: -3rem;
+  top: -3rem;
+  height: 10rem;
+  width: 10rem;
+  border-radius: 9999px;
+  background: var(--miva-primary-soft);
+  filter: blur(48px);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.miva-setup-footer .miva-setup-primary:not(:disabled) {
+  transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
+}
+
+.miva-setup-footer .miva-setup-primary:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.miva-setup-footer .miva-setup-primary:disabled {
+  opacity: 0.55;
 }

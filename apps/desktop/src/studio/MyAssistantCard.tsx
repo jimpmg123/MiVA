@@ -1,5 +1,5 @@
 import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
-import { Badge, PrimaryButton, SecondaryButton } from "../components/ui";
+import { Badge, IconButton, IconTile, InfoTile } from "../components/ui";
 
 type MyAssistantCardProps = {
   profile: LocalAssistantProfile;
@@ -43,6 +43,35 @@ function getPromptSummary(profile: LocalAssistantProfile) {
   return purpose;
 }
 
+type AssistantActionButtonProps = {
+  label: string;
+  icon: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+};
+
+function AssistantActionButton({ label, icon, active = false, disabled = false, onClick }: AssistantActionButtonProps) {
+  return (
+    <button
+      aria-label={label}
+      className={`grid h-12 w-full place-items-center rounded-xl border shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[color:rgba(36,73,102,0.32)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${
+        active
+          ? "border-[var(--miva-primary)] bg-[var(--miva-primary)] text-white hover:bg-[var(--miva-primary-hover)]"
+          : "border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] hover:border-[var(--miva-border-strong)] hover:bg-[var(--miva-bg-soft)]"
+      }`}
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+        {icon}
+      </span>
+    </button>
+  );
+}
+
 export function MyAssistantCard({
   profile,
   active,
@@ -60,14 +89,14 @@ export function MyAssistantCard({
 
   return (
     <article
-      className={`group relative z-0 rounded-2xl border bg-white p-4 shadow-sm transition hover:z-30 ${
-        active ? "border-[#35607f] ring-4 ring-[#cae6ff]" : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+      className={`group relative overflow-hidden rounded-lg border bg-[var(--miva-surface)] p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--miva-shadow-md)] focus-within:-translate-y-0.5 focus-within:shadow-[var(--miva-shadow-md)] ${
+        active ? "border-[var(--miva-primary)] ring-4 ring-[var(--miva-primary-soft)]" : "border-[var(--miva-border)] hover:border-[var(--miva-border-strong)] focus-within:border-[var(--miva-border-strong)]"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+        <IconTile className="h-10 w-10">
           <span className="material-symbols-outlined text-[21px]">smart_toy</span>
-        </span>
+        </IconTile>
         <div className="flex flex-wrap justify-end gap-2">
           {active && <Badge tone="action">Active</Badge>}
           <Badge tone={syncTone}>{syncLabel}</Badge>
@@ -75,70 +104,59 @@ export function MyAssistantCard({
       </div>
 
       <div className="mt-3 flex min-w-0 items-center gap-2">
-        <h4 className="min-w-0 flex-1 truncate font-heading text-lg font-bold text-[#191c1d]">{profile.name}</h4>
-        <button
+        <h4 className="min-w-0 flex-1 truncate font-heading text-lg font-bold text-[var(--miva-text)]">{profile.name}</h4>
+        <IconButton
           aria-label={`Rename ${profile.name}`}
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#35607f]"
+          className="h-8 w-8 shrink-0 rounded-full text-[var(--miva-text-muted)] hover:bg-[var(--miva-primary-surface)] hover:text-[var(--miva-primary)]"
           onClick={onRename}
           title="Rename assistant"
-          type="button"
         >
           <span className="material-symbols-outlined text-[18px]">edit</span>
-        </button>
-        <button
+        </IconButton>
+        <IconButton
           aria-label={`Delete ${profile.name}`}
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#ffdad6] hover:text-[#93000a]"
+          className="h-8 w-8 shrink-0 rounded-full text-[var(--miva-text-muted)] hover:bg-[var(--miva-danger-soft)] hover:text-[var(--miva-danger-hover)]"
           onClick={onDelete}
           title="Delete assistant"
-          type="button"
         >
           <span className="material-symbols-outlined text-[18px]">delete</span>
-        </button>
+        </IconButton>
       </div>
-      <p className="mt-1 line-clamp-1 text-sm leading-6 text-[#42474d]">{profile.description}</p>
+      <p className="mt-1 line-clamp-1 text-sm leading-6 text-[var(--miva-text-muted)]">{profile.description}</p>
 
       <div className="mt-3 grid gap-2">
-        <div className="rounded-xl bg-[#f3f4f5] p-3">
-          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Prompt character</span>
-          <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[#191c1d]">{promptSummary}</p>
+        <div className="rounded-lg bg-[var(--miva-bg-soft)] p-3">
+          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Prompt character</span>
+          <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[var(--miva-text)]">{promptSummary}</p>
         </div>
       </div>
 
-      <div className="pointer-events-none absolute left-0 right-0 top-[calc(100%-6px)] z-50 translate-y-1 opacity-0 transition duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
-        <div className="rounded-2xl border border-[#c2c7ce]/70 bg-white p-4 shadow-[0_18px_42px_rgba(53,96,127,0.22)]">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Prompt character</span>
-              <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-[#191c1d]">{promptSummary}</p>
+      <div className="grid grid-rows-[0fr] opacity-0 transition-all duration-200 ease-out group-hover:mt-4 group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus-within:mt-4 group-focus-within:grid-rows-[1fr] group-focus-within:opacity-100">
+        <div className="min-h-0 overflow-hidden">
+          <div className="border-t border-[var(--miva-border)] pt-4">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <InfoTile label="Role" value={roleLabel} />
+              <InfoTile label="Last updated" value={formatCardDate(profile.updatedAt)} />
+              <InfoTile label="Last chatted" value="Not started" />
+              <InfoTile label="Model" value={profile.modelLabel || profile.model} />
             </div>
-            <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Role</span>
-              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{roleLabel}</p>
-            </div>
-            <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Last updated</span>
-              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">{formatCardDate(profile.updatedAt)}</p>
-            </div>
-            <div className="rounded-xl bg-[#f3f4f5] p-2.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.14em] text-[#72787e]">Last chatted</span>
-              <p className="mt-1 truncate text-sm font-semibold text-[#191c1d]">Not started</p>
-            </div>
-          </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {profile.futureFeatures.length ? (
-              profile.futureFeatures.map((feature) => <Badge key={feature}>{feature}</Badge>)
-            ) : (
-              <Badge>Default profile</Badge>
-            )}
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <SecondaryButton onClick={onEdit}>Edit</SecondaryButton>
-            <SecondaryButton disabled={syncState === "syncing"} onClick={onSync}>
-              {syncState === "syncing" ? "Syncing..." : "Sync"}
-            </SecondaryButton>
-            <PrimaryButton onClick={onRun}>Run</PrimaryButton>
+            <div className="mt-4 grid grid-cols-3 items-center gap-2">
+              <div>
+                <AssistantActionButton icon="edit" label={`Edit ${profile.name}`} onClick={onEdit} />
+              </div>
+              <div>
+                <AssistantActionButton
+                  disabled={syncState === "syncing"}
+                  icon="sync"
+                  label={syncState === "syncing" ? `Syncing ${profile.name}` : `Sync ${profile.name}`}
+                  onClick={onSync}
+                />
+              </div>
+              <div>
+                <AssistantActionButton active icon="play_arrow" label={`Run ${profile.name}`} onClick={onRun} />
+              </div>
+            </div>
           </div>
         </div>
       </div>

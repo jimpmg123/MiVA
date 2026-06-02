@@ -33,36 +33,36 @@ export function SetupNavigation({
   onAppModeChange,
 }: SetupNavigationProps) {
   return (
-    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
+    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
+      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
         <BrandLogo />
         <div>
-          <h1 className="font-heading text-sm font-extrabold text-[#191c1d]">MiVA</h1>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.setupFlowSubtitle}</p>
+          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
+          <p className="miva-nav-section-label">{t.setupFlowSubtitle}</p>
         </div>
       </div>
 
-      <nav className="flex-1">
+      <nav className="flex-1 p-4">
         {activeStep === "settings" ? (
-          <div className="p-4">
-            <p className="px-3 pb-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">Settings</p>
+          <>
+            <p className="miva-nav-section-label px-3 pb-3">Settings</p>
             <div className="grid gap-1">
               {settingsSections.map((section) => {
                 const active = settingsSection === section.id;
 
                 return (
                   <button
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
-                      active ? "bg-[#cae6ff]/45 text-[#35607f]" : "text-[#72787e] hover:bg-[#e7e8e9] hover:text-[#191c1d]"
+                    className={`miva-nav-item flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                      active ? "miva-nav-item-active" : ""
                     }`}
                     key={section.id}
                     onClick={() => onSettingsSectionChange(section.id)}
                     type="button"
                   >
-                    <span className={`grid h-8 w-8 place-items-center rounded-full ${active ? "bg-[#35607f] text-white" : "bg-[#e1e3e4] text-[#72787e]"}`}>
+                    <span className={`grid h-8 w-8 place-items-center rounded-full ${active ? "miva-nav-icon-active" : "miva-nav-icon"}`}>
                       <span className="material-symbols-outlined text-[18px]">{section.icon}</span>
                     </span>
-                    <span>
+                    <span className="min-w-0">
                       <span className="block">{section.label}</span>
                       <span className="block text-xs font-medium opacity-70">{section.detail}</span>
                     </span>
@@ -70,42 +70,47 @@ export function SetupNavigation({
                 );
               })}
             </div>
-          </div>
+          </>
         ) : (
-          steps.map((step, index) => {
-            const active = step.id === activeStep;
-            const completed = index < activeIndex;
+          <>
+            <p className="miva-nav-section-label px-3 pb-3">Setup</p>
+            <div className="grid gap-1">
+              {steps.map((step, index) => {
+                const active = step.id === activeStep;
+                const completed = index < activeIndex;
 
-            return (
-              <button
-                className={`flex w-full items-center gap-3 border-r-4 px-6 py-4 text-left text-sm font-semibold transition ${
-                  active
-                    ? "border-[#35607f] bg-[#cae6ff]/45 text-[#35607f]"
-                    : completed
-                      ? "border-transparent text-[#4a654e] hover:bg-[#e7e8e9]"
-                      : "border-transparent text-[#72787e] hover:bg-[#e7e8e9]"
-                }`}
-                key={step.id}
-                onClick={() => {
-                  onAppModeChange("setup");
-                  onStepChange(step.id);
-                }}
-                type="button"
-              >
-                <span
-                  className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${
-                    active ? "bg-[#35607f] text-white" : completed ? "bg-[#c9e8cb] text-[#334d38]" : "bg-[#e1e3e4] text-[#72787e]"
-                  }`}
-                >
-                  {completed ? <span className="material-symbols-outlined text-[18px]">check</span> : String(index + 1).padStart(2, "0")}
-                </span>
-                <span>
-                  <span className="block">{step.label}</span>
-                  <span className="block text-xs font-medium opacity-70">{step.detail}</span>
-                </span>
-              </button>
-            );
-          })
+                return (
+                  <button
+                    className={`miva-nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                      active ? "miva-nav-item-active" : completed ? "text-[var(--miva-success)]" : ""
+                    }`}
+                    key={step.id}
+                    onClick={() => {
+                      onAppModeChange("setup");
+                      onStepChange(step.id);
+                    }}
+                    type="button"
+                  >
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold transition-all duration-300 ${
+                        active ? "miva-nav-icon-active" : completed ? "miva-nav-icon-success" : "miva-nav-icon"
+                      } ${active ? "miva-status-glow" : ""}`}
+                    >
+                      {completed ? (
+                        <span className="material-symbols-outlined miva-nav-check-enter text-[18px]">check</span>
+                      ) : (
+                        String(index + 1).padStart(2, "0")
+                      )}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block">{step.label}</span>
+                      <span className="block text-xs font-medium opacity-70">{step.detail}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
         )}
       </nav>
 

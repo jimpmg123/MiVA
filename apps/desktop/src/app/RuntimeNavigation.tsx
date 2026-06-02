@@ -54,32 +54,32 @@ export function RuntimeNavigation({
   }
 
   return (
-    <aside className="flex h-screen w-[250px] shrink-0 flex-col border-r border-[#c2c7ce]/40 bg-white/70 backdrop-blur">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[#c2c7ce]/40 px-6">
+    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
+      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
         <BrandLogo />
         <div>
-          <h1 className="font-heading text-sm font-extrabold text-[#191c1d]">MiVA</h1>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#72787e]">{t.assistantWorkspace}</p>
+          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
+          <p className="miva-nav-section-label">{t.assistantWorkspace}</p>
         </div>
       </div>
 
-      <div className="border-b border-[#c2c7ce]/30 p-4">
+      <div className="border-b border-[var(--miva-border)]/60 p-4">
         <button
-          className="flex w-full items-center justify-between rounded-2xl border border-[#c2c7ce]/50 bg-white px-4 py-3 text-sm font-bold text-[#191c1d] shadow-sm transition hover:border-[#35607f]/60"
+          className="miva-soft-card flex min-h-11 w-full items-center justify-between rounded-2xl px-4 py-3 text-sm font-bold text-[var(--miva-text)] transition hover:border-[var(--miva-primary)]/60"
           type="button"
           onClick={onClearCurrentChat}
         >
           <span className="flex items-center gap-3">
-            <span className="material-symbols-outlined text-[18px] text-[#35607f]">add_comment</span>
+            <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">add_comment</span>
             {t.newChat}
           </span>
-          <span className="material-symbols-outlined text-[16px] text-[#72787e]">arrow_forward</span>
+          <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">arrow_forward</span>
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-5">
         <section>
-          <h2 className="px-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">By assistant</h2>
+          <h2 className="miva-nav-section-label px-3">By assistant</h2>
           <div className="mt-3 grid gap-2">
             {assistantConversationGroups.map((group) => {
               const expanded = expandedAssistantIds.includes(group.assistantId);
@@ -87,14 +87,14 @@ export function RuntimeNavigation({
 
               return (
                 <div className="rounded-xl" key={group.assistantId}>
-                  <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${isActiveAssistant ? "bg-[#cae6ff]/25" : ""}`}>
+                  <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${isActiveAssistant ? "bg-[var(--miva-primary-surface)]" : ""}`}>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-[#191c1d]">{group.assistantName}</p>
-                      <p className="text-xs text-[#72787e]">{group.conversations.length} conversations</p>
+                      <p className="truncate text-sm font-bold text-[var(--miva-text)]">{group.assistantName}</p>
+                      <p className="text-xs text-[var(--miva-text-muted)]">{group.conversations.length} conversations</p>
                     </div>
                     <button
                       aria-label={expanded ? `Collapse ${group.assistantName}` : `Expand ${group.assistantName}`}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#e7e8e9] hover:text-[#191c1d]"
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
                       onClick={() => toggleAssistant(group.assistantId)}
                       type="button"
                     >
@@ -123,10 +123,10 @@ export function RuntimeNavigation({
                           ))
                         ) : (
                           <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2">
-                            <p className="min-w-0 truncate text-xs text-[#72787e]">No conversations yet.</p>
+                            <p className="min-w-0 truncate text-xs text-[var(--miva-text-muted)]">No conversations yet.</p>
                             <button
                               aria-label={`Start new chat with ${group.assistantName}`}
-                              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[#c2c7ce]/70 bg-white text-[#35607f] transition hover:border-[#35607f] hover:bg-[#f3f4f5]"
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[var(--miva-border)] bg-white text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
                               onClick={() => onNewChatForAssistant(group.assistantId)}
                               type="button"
                             >
@@ -144,14 +144,14 @@ export function RuntimeNavigation({
         </section>
 
         <section className="mt-8">
-          <h2 className="px-3 text-[10px] font-black uppercase tracking-[0.18em] text-[#72787e]">Collection</h2>
+          <h2 className="miva-nav-section-label px-3">Collection</h2>
           <div className="mt-3 grid gap-1">
-            <button className="flex items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-[#42474d] transition hover:bg-[#f3f4f5]" type="button">
-              <span className="material-symbols-outlined text-[16px] text-[#72787e]">bookmark</span>
+            <button className="miva-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition" type="button">
+              <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">bookmark</span>
               {t.savedSnippets}
             </button>
-            <button className="flex items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-[#42474d] transition hover:bg-[#f3f4f5]" type="button">
-              <span className="material-symbols-outlined text-[16px] text-[#72787e]">monitoring</span>
+            <button className="miva-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition" type="button">
+              <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">monitoring</span>
               {t.systemLogs}
             </button>
           </div>
@@ -178,15 +178,15 @@ function ConversationButton({
     <button
       className={`flex min-w-0 items-center gap-3 rounded-xl px-3 text-left transition ${
         compact ? "py-2 text-xs" : "py-3 text-sm"
-      } ${active ? "bg-[#cae6ff]/35 font-bold text-[#191c1d]" : "text-[#42474d] hover:bg-[#f3f4f5]"}`}
+      } ${active ? "miva-nav-item-active font-bold" : "miva-nav-item"}`}
       onClick={() => onSelect(conversation)}
       type="button"
     >
-      <span className="material-symbols-outlined shrink-0 text-[16px] text-[#72787e]">history</span>
+      <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--miva-text-muted)]">history</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate">{conversation.title}</span>
         {!compact && (
-          <span className="block truncate text-xs font-medium text-[#72787e]">
+          <span className="block truncate text-xs font-medium text-[var(--miva-text-muted)]">
             {conversation.assistantName} - {conversation.updatedAtLabel}
           </span>
         )}

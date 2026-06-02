@@ -45,7 +45,7 @@ export function ModelsPanel({
   onSelectLocalModel,
 }: ModelsPanelProps) {
   const [localModelsExpanded, setLocalModelsExpanded] = useState(false);
-  const visibleCloudModels = cloudModelCatalog.filter((model) => model.id !== "custom-cloud").slice(0, 3);
+  const visibleCloudModels = cloudModelCatalog.filter((model) => model.id !== "custom-cloud");
 
   return (
     <div className="grid gap-6">
@@ -154,9 +154,9 @@ export function ModelsPanel({
               </p>
             )}
           </div>
-          <Badge tone="action">OpenAI / Gemini</Badge>
+          <Badge tone="action">OpenAI / Gemini / Groq</Badge>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
           {visibleCloudModels.map((model) => (
             <button
               className={`rounded-2xl border bg-white p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
