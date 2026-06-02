@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, HttpCode, Inject, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import type { Request } from "express";
 import { MivaApiService } from "./api.service.js";
 
@@ -125,6 +125,17 @@ export class ApiController {
     return this.api.getGoogleWorkspaceStatus(req);
   }
 
+  @Get("workspace/google/auth-url")
+  getGoogleWorkspaceAuthUrl(@Req() req: Request) {
+    return this.api.getGoogleWorkspaceAuthUrl(req);
+  }
+
+  @Get("workspace/google/callback")
+  @Header("content-type", "text/html; charset=utf-8")
+  completeGoogleWorkspaceOAuthCallback(@Query() query: Record<string, unknown>) {
+    return this.api.completeGoogleWorkspaceOAuthCallback(query);
+  }
+
   @Post("workspace/google/token")
   saveGoogleWorkspaceToken(@Req() req: Request, @Body() body: unknown) {
     return this.api.saveGoogleWorkspaceToken(req, body);
@@ -133,5 +144,10 @@ export class ApiController {
   @Post("workspace/context")
   getGoogleWorkspaceContext(@Req() req: Request, @Body() body: unknown) {
     return this.api.getGoogleWorkspaceContext(req, body);
+  }
+
+  @Post("workspace/actions")
+  runGoogleWorkspaceAction(@Req() req: Request, @Body() body: unknown) {
+    return this.api.runGoogleWorkspaceAction(req, body);
   }
 }

@@ -5,11 +5,17 @@ import { AppModule } from "./app.module.js";
 import { HttpErrorFilter } from "./http-error.filter.js";
 import { MivaApiService } from "./api.service.js";
 
-const PORT = Number(process.env.MIVA_API_PORT || 4000);
+const PORT = Number(process.env.PORT || process.env.MIVA_API_PORT || 4000);
+const configuredCorsOrigins = (process.env.MIVA_CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const allowedOrigins = new Set([
   "http://localhost:1420",
   "http://127.0.0.1:1420",
+  "http://localhost:1421",
+  "http://127.0.0.1:1421",
   "tauri://localhost",
   "http://tauri.localhost",
   "https://tauri.localhost",
@@ -17,6 +23,7 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
+  ...configuredCorsOrigins,
 ]);
 
 async function bootstrap() {
@@ -44,4 +51,3 @@ bootstrap().catch((error) => {
   console.error("Failed to initialize MiVA API", error);
   process.exit(1);
 });
-

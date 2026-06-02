@@ -1,10 +1,28 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { randomBytes } from "node:crypto";
 import type { RequestLike } from "./api.shared.js";
+import { GOOGLE_OAUTH_CLIENT_ID } from "./api.shared.js";
 import { AuthService } from "./auth.service.js";
 import { throwHttp } from "./http-errors.js";
 import { PrismaService } from "./prisma.service.js";
 
 const MAX_CONTEXT_CHARS = 6000;
+const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+const GOOGLE_WORKSPACE_REDIRECT_URI = process.env.GOOGLE_WORKSPACE_REDIRECT_URI || "http://127.0.0.1:4000/workspace/google/callback";
+const GOOGLE_WORKSPACE_SUCCESS_URL = process.env.GOOGLE_WORKSPACE_SUCCESS_URL || "http://127.0.0.1:5173/?workspaceConnected=1";
+const GOOGLE_WORKSPACE_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/documents.readonly",
+  "https://www.googleapis.com/auth/documents",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/spreadsheets.readonly",
+];
+const workspaceOAuthStates = new Map<string, { userId: string; expiresAt: number }>();
 
 function truncate(value: unknown, maxLength = MAX_CONTEXT_CHARS) {
   const text = String(value || "").trim();
@@ -13,6 +31,23 @@ function truncate(value: unknown, maxLength = MAX_CONTEXT_CHARS) {
 
 function asString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function asObject(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function getStringQuery(value: unknown) {
+  return Array.isArray(value) ? asString(value[0]) : asString(value);
+}
+
+function getAccessTokenExpiresAt(expiresIn: unknown) {
+  const seconds = Number(expiresIn);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+
+  return new Date(Date.now() + Math.max(0, seconds - 60) * 1000);
 }
 
 function normalizeServices(value: unknown) {
@@ -30,6 +65,13 @@ function getHeader(headers: Array<{ name?: unknown; value?: unknown }> | undefin
   const lowerName = name.toLowerCase();
   const match = headers?.find((header) => String(header?.name || "").toLowerCase() === lowerName);
   return asString(match?.value);
+}
+
+class GoogleWorkspaceAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GoogleWorkspaceAuthError";
+  }
 }
 
 function extractDocsText(document: any) {
@@ -55,6 +97,105 @@ export class WorkspaceService {
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
+
+  async getGoogleAuthUrl(req: RequestLike) {
+    const user = await this.requireUser(req);
+    if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET) {
+      throwHttp(500, "GOOGLE_OAUTH_CLIENT_NOT_CONFIGURED");
+    }
+
+    const state = randomBytes(24).toString("base64url");
+    workspaceOAuthStates.set(state, {
+      userId: user.id,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const params = new URLSearchParams({
+      client_id: GOOGLE_OAUTH_CLIENT_ID,
+      redirect_uri: GOOGLE_WORKSPACE_REDIRECT_URI,
+      response_type: "code",
+      scope: GOOGLE_WORKSPACE_SCOPES.join(" "),
+      access_type: "offline",
+      prompt: "consent",
+      include_granted_scopes: "true",
+      state,
+    });
+
+    return {
+      url: `https://accounts.google.com/o/oauth2/v2/auth?${params}`,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    };
+  }
+
+  async completeGoogleOAuthCallback(query: Record<string, unknown>) {
+    const error = getStringQuery(query.error);
+    if (error) {
+      return this.renderGoogleOAuthResult(false, `Google authorization failed: ${error}`);
+    }
+
+    const code = getStringQuery(query.code);
+    const state = getStringQuery(query.state);
+    const stateRecord = workspaceOAuthStates.get(state);
+    workspaceOAuthStates.delete(state);
+
+    if (!code || !state || !stateRecord || stateRecord.expiresAt < Date.now()) {
+      return this.renderGoogleOAuthResult(false, "Google authorization expired or had an invalid state. Return to MiVA and reconnect Google Workspace.");
+    }
+
+    try {
+      const token = await this.exchangeGoogleCode(code);
+      const accessToken = asString(token.access_token);
+      const refreshToken = asString(token.refresh_token);
+      if (!accessToken) {
+        throw new Error("Google did not return an access token.");
+      }
+
+      const existing = await this.prisma.workspaceConnection.findUnique({
+        where: {
+          userId_provider: {
+            userId: stateRecord.userId,
+            provider: "google",
+          },
+        },
+      });
+      const accountEmail = await this.fetchGoogleAccountEmail(accessToken).catch(() => existing?.accountEmail || null);
+      const scopes = asString(token.scope).split(/\s+/).filter(Boolean);
+      const accessTokenExpiresAt = getAccessTokenExpiresAt(token.expires_in);
+
+      await this.prisma.workspaceConnection.upsert({
+        where: {
+          userId_provider: {
+            userId: stateRecord.userId,
+            provider: "google",
+          },
+        },
+        create: {
+          userId: stateRecord.userId,
+          provider: "google",
+          accountEmail,
+          encryptedAccessToken: accessToken,
+          encryptedRefreshToken: refreshToken || null,
+          accessTokenExpiresAt,
+          scopes,
+          status: "CONNECTED",
+          connectedAt: new Date(),
+        },
+        update: {
+          accountEmail,
+          encryptedAccessToken: accessToken,
+          encryptedRefreshToken: refreshToken || existing?.encryptedRefreshToken || null,
+          accessTokenExpiresAt,
+          scopes: scopes.length ? scopes : existing?.scopes || [],
+          status: "CONNECTED",
+          connectedAt: new Date(),
+        },
+      });
+
+      return this.renderGoogleOAuthResult(true, "Google Workspace is connected. You can return to MiVA.");
+    } catch (callbackError) {
+      return this.renderGoogleOAuthResult(false, `Google Workspace connection failed: ${String((callbackError as Error)?.message || callbackError)}`);
+    }
+  }
 
   async saveGoogleToken(req: RequestLike, payload: any) {
     const user = await this.requireUser(req);
@@ -82,6 +223,7 @@ export class WorkspaceService {
         provider: "google",
         accountEmail,
         encryptedAccessToken: accessToken,
+        accessTokenExpiresAt: getAccessTokenExpiresAt(payload.expiresIn),
         scopes,
         status: "CONNECTED",
         connectedAt: new Date(),
@@ -89,6 +231,7 @@ export class WorkspaceService {
       update: {
         accountEmail,
         encryptedAccessToken: accessToken,
+        accessTokenExpiresAt: getAccessTokenExpiresAt(payload.expiresIn),
         scopes,
         status: "CONNECTED",
         connectedAt: new Date(),
@@ -118,8 +261,27 @@ export class WorkspaceService {
       },
     });
 
+    const connected = connection?.status === "CONNECTED" && Boolean(connection.encryptedAccessToken || connection.encryptedRefreshToken);
+    if (connected) {
+      try {
+        const accessToken = await this.getValidGoogleAccessToken(user.id);
+        await this.fetchGoogleAccountEmail(accessToken);
+      } catch (error) {
+        if (error instanceof GoogleWorkspaceAuthError) {
+          await this.markGoogleNeedsAuth(user.id);
+          return {
+            connected: false,
+            accountEmail: connection?.accountEmail ?? null,
+            scopes: connection?.scopes ?? [],
+            status: "NEEDS_AUTH",
+            connectedAt: connection?.connectedAt ?? null,
+          };
+        }
+      }
+    }
+
     return {
-      connected: connection?.status === "CONNECTED" && Boolean(connection.encryptedAccessToken),
+      connected: connection?.status === "CONNECTED" && Boolean(connection.encryptedAccessToken || connection.encryptedRefreshToken),
       accountEmail: connection?.accountEmail ?? null,
       scopes: connection?.scopes ?? [],
       status: connection?.status ?? "NEEDS_AUTH",
@@ -134,16 +296,10 @@ export class WorkspaceService {
       return { context: null, services: [] };
     }
 
-    const connection = await this.prisma.workspaceConnection.findUnique({
-      where: {
-        userId_provider: {
-          userId: user.id,
-          provider: "google",
-        },
-      },
-    });
-    const accessToken = asString(connection?.encryptedAccessToken);
-    if (!accessToken || connection?.status !== "CONNECTED") {
+    let accessToken = "";
+    try {
+      accessToken = await this.getValidGoogleAccessToken(user.id);
+    } catch {
       return {
         context: "Google Workspace context was requested, but this account has not connected Google Workspace permissions yet. Do not claim Workspace data was checked.",
         services,
@@ -164,14 +320,62 @@ export class WorkspaceService {
     return {
       context: [
         "Google Workspace read-only context is available for this request.",
-        "Use this context only as supporting information. Do not claim create/update/delete actions were completed.",
-        "If the user asks to modify Calendar, Gmail, Drive, Docs, or Sheets, ask for confirmation and explain that write actions are not enabled in this runtime yet.",
+        "Use this context only as supporting information. Do not claim create/update/delete actions were completed from read-only context alone.",
+        "If a separate Google Workspace write action result is provided, treat that result as authoritative for whether an action completed.",
         "",
         ...blocks,
       ].join("\n"),
       services,
       status: "CONNECTED",
     };
+  }
+
+  async runAction(req: RequestLike, payload: any) {
+    const user = await this.requireUser(req);
+    let accessToken = "";
+    try {
+      accessToken = await this.getValidGoogleAccessToken(user.id);
+    } catch {
+      return {
+        ok: false,
+        status: "NEEDS_AUTH",
+        message: "Google Workspace write action requires a connected Google account with Workspace permissions.",
+      };
+    }
+
+    const action = asString(payload.action);
+    const params = asObject(payload.params);
+
+    try {
+      if (action === "calendar.create") {
+        return await this.createCalendarEvent(accessToken, params);
+      }
+
+      if (action === "calendar.update") {
+        return await this.updateCalendarEvent(accessToken, params);
+      }
+
+      if (action === "calendar.delete") {
+        return await this.deleteCalendarEvent(accessToken, params);
+      }
+
+      if (action === "docs.append") {
+        return await this.appendGoogleDoc(accessToken, params);
+      }
+    } catch (error) {
+      if (error instanceof GoogleWorkspaceAuthError) {
+        await this.markGoogleNeedsAuth(user.id);
+        return {
+          ok: false,
+          status: "NEEDS_AUTH",
+          message: "Google Workspace access token expired or was rejected. Reconnect Google Workspace permissions, then retry.",
+        };
+      }
+
+      throw error;
+    }
+
+    throwHttp(400, "UNSUPPORTED_WORKSPACE_ACTION");
   }
 
   private async requireUser(req: RequestLike) {
@@ -187,6 +391,130 @@ export class WorkspaceService {
     return asString(userInfo.email);
   }
 
+  private async markGoogleNeedsAuth(userId: string) {
+    await this.prisma.workspaceConnection.updateMany({
+      where: {
+        userId,
+        provider: "google",
+      },
+      data: {
+        status: "NEEDS_AUTH",
+      },
+    });
+  }
+
+  private async getValidGoogleAccessToken(userId: string) {
+    const connection = await this.prisma.workspaceConnection.findUnique({
+      where: {
+        userId_provider: {
+          userId,
+          provider: "google",
+        },
+      },
+    });
+
+    if (!connection || connection.status !== "CONNECTED") {
+      throw new GoogleWorkspaceAuthError("Google Workspace is not connected.");
+    }
+
+    const accessToken = asString(connection.encryptedAccessToken);
+    const expiresAt = connection.accessTokenExpiresAt?.getTime() ?? 0;
+    if (accessToken && (!expiresAt || expiresAt > Date.now() + 60_000)) {
+      return accessToken;
+    }
+
+    const refreshToken = asString(connection.encryptedRefreshToken);
+    if (!refreshToken) {
+      if (accessToken) {
+        return accessToken;
+      }
+      throw new GoogleWorkspaceAuthError("Google Workspace refresh token is missing.");
+    }
+
+    const refreshed = await this.refreshGoogleAccessToken(refreshToken);
+    const nextAccessToken = asString(refreshed.access_token);
+    if (!nextAccessToken) {
+      throw new GoogleWorkspaceAuthError("Google token refresh did not return an access token.");
+    }
+
+    const nextScopes = asString(refreshed.scope).split(/\s+/).filter(Boolean);
+    await this.prisma.workspaceConnection.update({
+      where: {
+        userId_provider: {
+          userId,
+          provider: "google",
+        },
+      },
+      data: {
+        encryptedAccessToken: nextAccessToken,
+        accessTokenExpiresAt: getAccessTokenExpiresAt(refreshed.expires_in),
+        scopes: nextScopes.length ? nextScopes : connection.scopes,
+        status: "CONNECTED",
+      },
+    });
+
+    return nextAccessToken;
+  }
+
+  private async exchangeGoogleCode(code: string) {
+    return this.fetchGoogleToken({
+      code,
+      client_id: GOOGLE_OAUTH_CLIENT_ID,
+      client_secret: GOOGLE_OAUTH_CLIENT_SECRET,
+      redirect_uri: GOOGLE_WORKSPACE_REDIRECT_URI,
+      grant_type: "authorization_code",
+    });
+  }
+
+  private async refreshGoogleAccessToken(refreshToken: string) {
+    return this.fetchGoogleToken({
+      refresh_token: refreshToken,
+      client_id: GOOGLE_OAUTH_CLIENT_ID,
+      client_secret: GOOGLE_OAUTH_CLIENT_SECRET,
+      grant_type: "refresh_token",
+    });
+  }
+
+  private async fetchGoogleToken(params: Record<string, string>) {
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(params),
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new Error(payload?.error_description || payload?.error || `${response.status} ${response.statusText}`);
+    }
+    return payload;
+  }
+
+  private renderGoogleOAuthResult(ok: boolean, message: string) {
+    const escapedMessage = message.replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;",
+    }[char] || char));
+    const redirect = ok
+      ? `<script>setTimeout(() => { window.location.href = ${JSON.stringify(GOOGLE_WORKSPACE_SUCCESS_URL)}; }, 1200);</script>`
+      : "";
+    return [
+      "<!doctype html>",
+      "<html><head><meta charset=\"utf-8\"><title>MiVA Google Workspace</title>",
+      "<style>body{font-family:Arial,sans-serif;margin:48px;color:#191c1d}main{max-width:640px}h1{font-size:24px}</style>",
+      "</head><body><main>",
+      `<h1>${ok ? "Google Workspace connected" : "Google Workspace connection failed"}</h1>`,
+      `<p>${escapedMessage}</p>`,
+      ok ? "<p>This page will return to MiVA Web Console shortly. You can close it after MiVA updates.</p>" : "<p>Return to MiVA and try reconnecting Google Workspace.</p>",
+      redirect,
+      "</main></body></html>",
+    ].join("");
+  }
+
   private async googleFetch(url: string, accessToken: string) {
     const response = await fetch(url, {
       headers: {
@@ -196,6 +524,29 @@ export class WorkspaceService {
     const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new GoogleWorkspaceAuthError(payload?.error_description || payload?.error?.message || "Google credentials are invalid or expired.");
+      }
+      throw new Error(payload?.error_description || payload?.error?.message || `${response.status} ${response.statusText}`);
+    }
+    return payload;
+  }
+
+  private async googleFetchWithBody(url: string, accessToken: string, init: RequestInit) {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${accessToken}`,
+        ...(init.headers || {}),
+      },
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new GoogleWorkspaceAuthError(payload?.error_description || payload?.error?.message || "Google credentials are invalid or expired.");
+      }
       throw new Error(payload?.error_description || payload?.error?.message || `${response.status} ${response.statusText}`);
     }
     return payload;
@@ -287,6 +638,129 @@ export class WorkspaceService {
     return `Upcoming Google Calendar events:\n${JSON.stringify(summaries, null, 2)}`;
   }
 
+  private async createCalendarEvent(accessToken: string, params: Record<string, unknown>) {
+    const summary = asString(params.summary);
+    const start = asString(params.start);
+    const end = asString(params.end);
+    const timeZone = asString(params.timeZone) || "Asia/Seoul";
+    const description = asString(params.description);
+    const location = asString(params.location);
+
+    if (!summary || !start || !end) {
+      throwHttp(400, "CALENDAR_EVENT_REQUIRES_SUMMARY_START_END");
+    }
+
+    const event = await this.googleFetchWithBody(
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          summary,
+          description: description || undefined,
+          location: location || undefined,
+          start: { dateTime: start, timeZone },
+          end: { dateTime: end, timeZone },
+        }),
+      },
+    );
+
+    return {
+      ok: true,
+      status: "DONE",
+      action: "calendar.create",
+      event: {
+        id: event.id,
+        summary: event.summary,
+        htmlLink: event.htmlLink,
+        start: event.start,
+        end: event.end,
+      },
+    };
+  }
+
+  private async updateCalendarEvent(accessToken: string, params: Record<string, unknown>) {
+    const eventId = asString(params.eventId);
+    if (!eventId) {
+      throwHttp(400, "CALENDAR_UPDATE_REQUIRES_EVENT_ID");
+    }
+
+    const timeZone = asString(params.timeZone) || "Asia/Seoul";
+    const summary = asString(params.summary);
+    const start = asString(params.start);
+    const end = asString(params.end);
+    const description = asString(params.description);
+    const location = asString(params.location);
+    const patch: Record<string, unknown> = {};
+
+    if (summary) {
+      patch.summary = summary;
+    }
+    if (description) {
+      patch.description = description;
+    }
+    if (location) {
+      patch.location = location;
+    }
+    if (start) {
+      patch.start = { dateTime: start, timeZone };
+    }
+    if (end) {
+      patch.end = { dateTime: end, timeZone };
+    }
+
+    if (Object.keys(patch).length === 0) {
+      throwHttp(400, "CALENDAR_UPDATE_REQUIRES_CHANGES");
+    }
+
+    const event = await this.googleFetchWithBody(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      accessToken,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    );
+
+    return {
+      ok: true,
+      status: "DONE",
+      action: "calendar.update",
+      event: {
+        id: event.id,
+        summary: event.summary,
+        htmlLink: event.htmlLink,
+        start: event.start,
+        end: event.end,
+      },
+    };
+  }
+
+  private async deleteCalendarEvent(accessToken: string, params: Record<string, unknown>) {
+    const eventId = asString(params.eventId);
+    if (!eventId) {
+      throwHttp(400, "CALENDAR_DELETE_REQUIRES_EVENT_ID");
+    }
+
+    await this.googleFetchWithBody(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      accessToken,
+      {
+        method: "DELETE",
+      },
+    );
+
+    return {
+      ok: true,
+      status: "DONE",
+      action: "calendar.delete",
+      event: {
+        id: eventId,
+        deleted: true,
+      },
+    };
+  }
+
   private async fetchDriveListContext(accessToken: string, mimeType: string, label: string) {
     const files = await this.fetchDriveFiles(accessToken, mimeType, 10);
     return `${label}:\n${JSON.stringify(files, null, 2)}`;
@@ -310,5 +784,60 @@ export class WorkspaceService {
         webViewLink: asString(file.webViewLink),
       })).filter((file: { id: string }) => file.id)
       : [];
+  }
+
+  private async appendGoogleDoc(accessToken: string, params: Record<string, unknown>) {
+    let documentId = asString(params.documentId);
+    const text = asString(params.text);
+    if (!text) {
+      throwHttp(400, "DOCS_APPEND_REQUIRES_TEXT");
+    }
+
+    if (!documentId) {
+      const files = await this.fetchDriveFiles(accessToken, "application/vnd.google-apps.document", 1);
+      documentId = files[0]?.id || "";
+    }
+
+    if (!documentId) {
+      throwHttp(400, "DOCS_APPEND_REQUIRES_DOCUMENT_ID");
+    }
+
+    const document = await this.googleFetch(
+      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`,
+      accessToken,
+    );
+    const content = Array.isArray(document?.body?.content) ? document.body.content : [];
+    const lastBlock = content.at(-1);
+    const insertIndex = Math.max(1, Number(lastBlock?.endIndex || 1) - 1);
+    const insertText = text.startsWith("\n") ? text : `\n${text}`;
+
+    const result = await this.googleFetchWithBody(
+      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}:batchUpdate`,
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: insertIndex },
+                text: insertText,
+              },
+            },
+          ],
+        }),
+      },
+    );
+
+    return {
+      ok: true,
+      status: "DONE",
+      action: "docs.append",
+      document: {
+        id: documentId,
+        title: document.title || "(untitled)",
+      },
+      replies: result.replies || [],
+    };
   }
 }

@@ -104,7 +104,7 @@ export function toTopList(counts: Record<string, number>) {
 
 export function toDbProvider(provider: unknown) {
   const normalized = String(provider || "").toUpperCase();
-  return ["OLLAMA", "OPENAI", "GEMINI", "ANTHROPIC", "CUSTOM"].includes(normalized) ? normalized : "CUSTOM";
+  return ["OLLAMA", "OPENAI", "GEMINI", "GROQ", "ANTHROPIC", "CUSTOM"].includes(normalized) ? normalized : "CUSTOM";
 }
 
 export function fromDbProvider(provider: unknown) {
@@ -383,7 +383,7 @@ export function maskApiKey(value: unknown) {
 }
 
 export function normalizeApiKeyPayload(payload: any) {
-  const provider = ["openai", "gemini", "anthropic", "custom"].includes(payload.provider)
+  const provider = ["openai", "gemini", "groq", "anthropic", "custom"].includes(payload.provider)
     ? payload.provider
     : "custom";
   const label = String(payload.label || provider).trim() || provider;

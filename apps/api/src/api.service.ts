@@ -124,11 +124,23 @@ export class MivaApiService {
     return this.workspace.saveGoogleToken(req, payload);
   }
 
+  getGoogleWorkspaceAuthUrl(req: RequestLike) {
+    return this.workspace.getGoogleAuthUrl(req);
+  }
+
+  completeGoogleWorkspaceOAuthCallback(query: Record<string, unknown>) {
+    return this.workspace.completeGoogleOAuthCallback(query);
+  }
+
   getGoogleWorkspaceStatus(req: RequestLike) {
     return this.workspace.getGoogleStatus(req);
   }
 
   getGoogleWorkspaceContext(req: RequestLike, payload: any) {
     return this.workspace.buildContext(req, payload);
+  }
+
+  runGoogleWorkspaceAction(req: RequestLike, payload: any) {
+    return this.workspace.runAction(req, payload);
   }
 }
