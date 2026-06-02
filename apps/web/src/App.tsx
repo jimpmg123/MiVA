@@ -101,7 +101,9 @@ const GOOGLE_WORKSPACE_SCOPE = [
   'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/documents.readonly',
+  'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/spreadsheets.readonly',
 ].join(' ');
 
@@ -280,6 +282,15 @@ function getDesktopLoginRequest() {
     deviceCode,
     userCode: params.get('userCode') || '',
   };
+}
+
+function getWorkspaceConsentRequest() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  return params.get('workspaceConsent') === '1';
 }
 
 // --- Sub-components ---
@@ -1040,6 +1051,12 @@ const apiKeyProviders: Array<{
     label: 'Gemini',
     description: 'Use Gemini Flash/Pro models for lightweight cloud routing.',
     placeholder: 'AIza...',
+  },
+  {
+    provider: 'groq',
+    label: 'Groq',
+    description: 'Use Groq-hosted Llama models for very fast cloud routing.',
+    placeholder: 'gsk_...',
   },
   {
     provider: 'anthropic',
@@ -2022,7 +2039,10 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [auth, setAuth] = useState<AuthState>(() => loadAuthState());
   const [desktopLoginRequest] = useState(() => getDesktopLoginRequest());
+  const [workspaceConsentRequest] = useState(() => getWorkspaceConsentRequest());
   const [desktopLoginCompleted, setDesktopLoginCompleted] = useState(false);
+  const [workspaceConsentCompleted, setWorkspaceConsentCompleted] = useState(false);
+  const [googleOAuthReady, setGoogleOAuthReady] = useState(false);
   const [loginPending, setLoginPending] = useState(false);
   const [googleLoginPending, setGoogleLoginPending] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -2037,6 +2057,31 @@ export default function App() {
       : NAV_ITEMS.filter((item) => item.id !== 'admin'),
     [auth.role]
   );
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      return;
+    }
+
+    if (window.google?.accounts?.oauth2) {
+      setGoogleOAuthReady(true);
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-miva-google-identity]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => setGoogleOAuthReady(true), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.mivaGoogleIdentity = 'true';
+    script.onload = () => setGoogleOAuthReady(true);
+    document.head.appendChild(script);
+  }, []);
 
   const refreshCloud = async (roleOverride: AuthRole = auth.role) => {
     const next: CloudState = {
@@ -2102,6 +2147,41 @@ export default function App() {
     }
   };
 
+  const requestGoogleWorkspaceConsent = async () => {
+    if (!GOOGLE_CLIENT_ID) {
+      throw new Error('Google OAuth client is not configured.');
+    }
+
+    if (!window.google?.accounts?.oauth2) {
+      throw new Error('Google OAuth script is not ready. Refresh the web console and try again.');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_WORKSPACE_SCOPE,
+        callback: (tokenResponse) => {
+          if (tokenResponse.error) {
+            reject(new Error(tokenResponse.error));
+            return;
+          }
+
+          if (tokenResponse.access_token) {
+            void saveGoogleWorkspaceToken({
+              accessToken: tokenResponse.access_token,
+              scope: tokenResponse.scope,
+              expiresIn: tokenResponse.expires_in,
+            }).then(() => resolve()).catch(reject);
+            return;
+          }
+
+          reject(new Error('Google did not return a Workspace access token.'));
+        },
+      });
+      tokenClient?.requestAccessToken({ prompt: 'consent' });
+    });
+  };
+
   const handleGoogleCredential = async (credential: string) => {
     setGoogleLoginPending(true);
     setLoginError(null);
@@ -2117,23 +2197,8 @@ export default function App() {
       setAuth(nextAuth);
 
       if (GOOGLE_CLIENT_ID && window.google?.accounts?.oauth2 && response.user.role !== 'admin') {
-        await new Promise<void>((resolve) => {
-          const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
-            client_id: GOOGLE_CLIENT_ID,
-            scope: GOOGLE_WORKSPACE_SCOPE,
-            callback: (tokenResponse) => {
-              if (tokenResponse.access_token) {
-                void saveGoogleWorkspaceToken({
-                  accessToken: tokenResponse.access_token,
-                  scope: tokenResponse.scope,
-                  expiresIn: tokenResponse.expires_in,
-                }).finally(resolve);
-                return;
-              }
-              resolve();
-            },
-          });
-          tokenClient?.requestAccessToken({ prompt: 'consent' });
+        await requestGoogleWorkspaceConsent().catch((error) => {
+          setLoginError(error instanceof Error ? error.message : 'Google Workspace consent failed.');
         });
       }
 
@@ -2348,6 +2413,26 @@ export default function App() {
         setLoginError(error instanceof Error ? error.message : 'Could not connect MiVA Desktop.');
       });
   }, [auth.token, desktopLoginCompleted, desktopLoginRequest]);
+
+  useEffect(() => {
+    if (!workspaceConsentRequest || !auth.token || auth.role === 'admin' || workspaceConsentCompleted) {
+      return;
+    }
+
+    if (!googleOAuthReady || !window.google?.accounts?.oauth2) {
+      return;
+    }
+
+    void requestGoogleWorkspaceConsent()
+      .then(async () => {
+        setWorkspaceConsentCompleted(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        await refreshCloud(auth.role);
+      })
+      .catch((error) => {
+        setLoginError(error instanceof Error ? error.message : 'Google Workspace consent failed.');
+      });
+  }, [auth.role, auth.token, googleOAuthReady, workspaceConsentCompleted, workspaceConsentRequest]);
 
   useEffect(() => {
     if (auth.role === 'admin' && activePage !== 'admin') {

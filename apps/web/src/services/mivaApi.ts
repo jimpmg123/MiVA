@@ -1,7 +1,9 @@
-export const CLOUD_API_URL = "http://127.0.0.1:4000";
+const configuredCloudApiUrl = import.meta.env.VITE_MIVA_API_URL as string | undefined;
+
+export const CLOUD_API_URL = (configuredCloudApiUrl || "http://127.0.0.1:4000").replace(/\/$/, "");
 const WEB_AUTH_STORAGE_KEY = "miva.web.auth.v1";
 
-export type ProviderId = "ollama" | "openai" | "gemini";
+export type ProviderId = "ollama" | "openai" | "gemini" | "groq";
 export type ServiceStatus = "checking" | "connected" | "offline";
 export type AssistantProfileSource = "desktop-setup" | "web-console" | "api";
 export type AuthRole = "guest" | "user" | "admin";
@@ -10,7 +12,7 @@ export type WorkspaceToolPolicy = "disabled" | "askFirst" | "connectedOnly";
 export type CodingCapability = "chatOnly" | "codeExplain" | "codeEdit" | "clawCode";
 export type CodingProviderPolicy = "localAllowed" | "cloudRecommended" | "cloudRequired";
 export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
-export type ApiKeyProviderId = "openai" | "gemini" | "anthropic" | "custom";
+export type ApiKeyProviderId = "openai" | "gemini" | "groq" | "anthropic" | "custom";
 export type ApiKeyStatus = "notConfigured" | "configured" | "verified" | "error";
 export type UsageMode = "local" | "cloud";
 
