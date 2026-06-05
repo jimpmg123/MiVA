@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
 import { chooseImagePaths, createImageAttachment, readImageAttachment } from "../images/imageRuntime";
@@ -11,6 +11,8 @@ import { analyzeDocument, chooseDocumentPaths, openDocument } from "../documents
 import { runDaisoRequest } from "../daiso/daisoRuntime";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { streamChatOnce } from "./chatStream";
+import { resolveClawCodeBusyLabel } from "../claw/clawCodeBusyLabel";
+import { resolveWorkspaceBusyLabel } from "./workspaceBusyLabel";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
   applySlashCommandProfile,
@@ -139,6 +141,7 @@ export function useRuntimeChat({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [ttsPlaybackState, setTtsPlaybackState] = useState<TtsPlaybackState>("idle");
   const [ttsError, setTtsError] = useState<string | null>(null);
+  const [chatBusyLabel, setChatBusyLabel] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -293,14 +296,20 @@ export function useRuntimeChat({
     setImageAttachments([]);
     setActiveRuntimeConversationId(conversation.id);
     setAppMode("runtime");
+    shouldAutoScrollChatRef.current = true;
+    setShowJumpToLatest(false);
   }
 
-  function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
+  function scrollChatToLatest(behavior: ScrollBehavior = "auto") {
     const element = chatScrollRef.current;
     if (element) {
-      element.scrollTo({ top: element.scrollHeight, behavior });
+      if (behavior === "auto") {
+        element.scrollTop = element.scrollHeight;
+      } else {
+        element.scrollTo({ top: element.scrollHeight, behavior });
+      }
     } else {
-      chatEndRef.current?.scrollIntoView({ behavior, block: "nearest" });
+      chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
     }
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
@@ -718,26 +727,6 @@ export function useRuntimeChat({
       return;
     }
 
-    if (usesImageVision && !providerKeys.gemini.trim()) {
-      const requestedAt = new Date().toISOString();
-      setChatInput("");
-      shouldAutoScrollChatRef.current = true;
-      setShowJumpToLatest(false);
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
-        {
-          role: "assistant",
-          content: "Image analysis requires a Gemini API key. Add it in Settings > AI models, then try again.",
-          createdAt: new Date().toISOString(),
-          provider: activeProvider,
-          model: providerModel,
-        },
-      ]);
-      onLog("Image analysis blocked because no Gemini API key is configured.");
-      return;
-    }
-
     const latestUserMessage = displayContent;
 
     const workspaceEnabled = assistantProfile.prompt.settings.toolConnections.googleWorkspace;
@@ -785,11 +774,16 @@ export function useRuntimeChat({
       return;
     }
 
+    setChatBusyLabel(
+      resolveClawCodeBusyLabel(rawInput, assistantProfile, activeLocale)
+      || resolveWorkspaceBusyLabel(rawInput, currentMessages, assistantProfile, activeLocale),
+    );
     setBusyAction("chat");
     if (!usesImageVision) {
       const runtimeReady = await ensureOllamaReadyForChat(providerModel);
       if (!runtimeReady) {
         setBusyAction(null);
+        setChatBusyLabel(null);
         return;
       }
     }
@@ -839,6 +833,20 @@ export function useRuntimeChat({
           onLog(message);
           return;
         }
+        if (daisoResult.featureGuide && daisoResult.directReply) {
+          updateChatMessages(chatMode, (current) => [
+            ...current,
+            {
+              role: "assistant",
+              content: daisoResult.directReply,
+              createdAt: new Date().toISOString(),
+              provider: selectedProvider,
+              model: providerModel,
+            },
+          ]);
+          onLog("Daiso CLI feature guide shown without model inference.");
+          return;
+        }
         toolContexts.push(daisoResult.context || [
           "Daiso CLI result was retrieved by MiVA.",
           `CLI command: ${daisoResult.commandLine || "unknown"}`,
@@ -882,6 +890,7 @@ export function useRuntimeChat({
         prompt,
         locale: activeLocale,
         apiKey: apiKey || null,
+        openAiApiKey: providerKeys.openai.trim() || null,
         authToken: authSession?.token ?? null,
         profile: assistantProfile,
         messages: recentContextMessages,
@@ -1028,6 +1037,7 @@ export function useRuntimeChat({
       }
     } finally {
       setBusyAction(null);
+      setChatBusyLabel(null);
     }
   }
 
@@ -1095,6 +1105,18 @@ export function useRuntimeChat({
     };
   }, [appMode, onLog, promptProfileId]);
 
+  useLayoutEffect(() => {
+    if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
+      return;
+    }
+
+    if (!shouldAutoScrollChatRef.current) {
+      return;
+    }
+
+    scrollChatToLatest("auto");
+  }, [appMode, activeStep, activeChatMessages.length, busyAction, showChatIntroCard, selectedProvider, selectedModel, selectedCloudModel]);
+
   useEffect(() => {
     if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
       return;
@@ -1105,7 +1127,7 @@ export function useRuntimeChat({
     }
 
     const frame = window.requestAnimationFrame(() => {
-      scrollChatToLatest(activeChatMessages.length === 0 ? "auto" : "smooth");
+      scrollChatToLatest("auto");
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -1121,6 +1143,7 @@ export function useRuntimeChat({
     activeChatMessages,
     activeConversationId: currentConversationId,
     assistantConversationGroups,
+    chatBusyLabel,
     chatEndRef,
     chatInput,
     chatIntroKey,

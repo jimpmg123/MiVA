@@ -1,6 +1,11 @@
 import type { LocalAssistantProfile, WorkspaceServiceId } from "../../types";
 
-export type ChatSlashCommandId = "workspace" | "daiso";
+export type ChatSlashCommandId =
+  | "google-calendar"
+  | "google-docs"
+  | "gmail"
+  | "google-sheets"
+  | "daiso";
 
 export type ChatSlashCommand = {
   id: ChatSlashCommandId;
@@ -8,16 +13,46 @@ export type ChatSlashCommand = {
   label: string;
   description: string;
   icon: string;
+  workspaceService?: WorkspaceServiceId;
 };
 
-export const CHAT_SLASH_COMMANDS: ChatSlashCommand[] = [
+const GOOGLE_SLASH_COMMANDS: ChatSlashCommand[] = [
   {
-    id: "workspace",
-    aliases: ["google-workspace", "google", "workspace"],
-    label: "Google Workspace",
-    description: "Gmail, Calendar, Drive, Docs, and Sheets",
-    icon: "workspaces",
+    id: "google-calendar",
+    aliases: ["calendar", "google-calendar", "gcal"],
+    label: "Google Calendar",
+    description: "Create, update, or check calendar events with confirmation",
+    icon: "calendar_month",
+    workspaceService: "calendar",
   },
+  {
+    id: "google-docs",
+    aliases: ["docs", "google-docs", "gdocs"],
+    label: "Google Docs",
+    description: "Read or append content in Google Docs with confirmation",
+    icon: "description",
+    workspaceService: "docs",
+  },
+  {
+    id: "gmail",
+    aliases: ["gmail", "mail", "email"],
+    label: "Gmail",
+    description: "Read recent Gmail context for this assistant",
+    icon: "mail",
+    workspaceService: "gmail",
+  },
+  {
+    id: "google-sheets",
+    aliases: ["sheets", "google-sheets", "spreadsheet"],
+    label: "Google Sheets",
+    description: "Read spreadsheet context for this assistant",
+    icon: "table",
+    workspaceService: "sheets",
+  },
+];
+
+export const CHAT_SLASH_COMMANDS: ChatSlashCommand[] = [
+  ...GOOGLE_SLASH_COMMANDS,
   {
     id: "daiso",
     aliases: ["daiso-cli", "daiso_cli", "daiso"],
@@ -85,32 +120,38 @@ export function formatSlashUserMessage(command: ChatSlashCommand, prompt: string
   return trimmedPrompt ? `[${command.label}] ${trimmedPrompt}` : `[${command.label}]`;
 }
 
+function enableGoogleWorkspaceService(
+  profile: LocalAssistantProfile,
+  service: WorkspaceServiceId,
+): LocalAssistantProfile {
+  const settings = profile.prompt.settings;
+
+  return {
+    ...profile,
+    prompt: {
+      ...profile.prompt,
+      settings: {
+        ...settings,
+        toolConnections: {
+          ...settings.toolConnections,
+          googleWorkspace: true,
+          googleWorkspaceServices: [service],
+        },
+      },
+    },
+  };
+}
+
 export function applySlashCommandProfile(
   profile: LocalAssistantProfile,
   commandId: ChatSlashCommandId,
 ): LocalAssistantProfile {
-  const settings = profile.prompt.settings;
-
-  if (commandId === "workspace") {
-    const services: WorkspaceServiceId[] = settings.toolConnections.googleWorkspaceServices.length
-      ? settings.toolConnections.googleWorkspaceServices
-      : ["gmail", "calendar", "drive", "docs", "sheets"];
-
-    return {
-      ...profile,
-      prompt: {
-        ...profile.prompt,
-        settings: {
-          ...settings,
-          toolConnections: {
-            ...settings.toolConnections,
-            googleWorkspace: true,
-            googleWorkspaceServices: services,
-          },
-        },
-      },
-    };
+  const command = CHAT_SLASH_COMMANDS.find((entry) => entry.id === commandId);
+  if (command?.workspaceService) {
+    return enableGoogleWorkspaceService(profile, command.workspaceService);
   }
+
+  const settings = profile.prompt.settings;
 
   return {
     ...profile,

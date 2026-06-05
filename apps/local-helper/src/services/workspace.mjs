@@ -1,13 +1,19 @@
-import { CLOUD_API_URL } from "../config.mjs";
+import {
+  CLOUD_API_URL,
+  GEMINI_DEFAULT_MODEL,
+  GROQ_DEFAULT_MODEL,
+  OPENAI_DEFAULT_MODEL,
+} from "../config.mjs";
 import {
   buildActionConfirmationMessage,
   createActionPlan,
   hasExplicitActionConfirmation,
   summarizeActionRequest,
 } from "./action-confirmation.mjs";
+import { getProviderApiKey } from "./provider-keys.mjs";
 
 const serviceKeywords = {
-  calendar: ["calendar", "schedule", "event", "meeting", "\uc77c\uc815", "\uce98\ub9b0\ub354", "\ud68c\uc758", "\ubbf8\ud305", "\uc2a4\ucf00\uc904"],
+  calendar: ["calendar", "schedule", "event", "meeting", "appointment", "reservation", "booked", "cancel", "delete", "remove", "\uc77c\uc815", "\uce98\ub9b0\ub354", "\ud68c\uc758", "\ubbf8\ud305", "\uc2a4\ucf00\uc904", "\uc608\uc57d", "\ucde8\uc18c", "\uc0ad\uc81c"],
   gmail: ["gmail", "email", "mail", "inbox", "\uba54\uc77c", "\uc774\uba54\uc77c", "\uc9c0\uba54\uc77c", "\ubc1b\uc740\ud3b8\uc9c0"],
   drive: ["drive", "file", "folder", "document", "\ub4dc\ub77c\uc774\ube0c", "\ud30c\uc77c", "\ud3f4\ub354"],
   docs: ["docs", "doc", "document", "google docs", "\uad6c\uae00 \ubb38\uc11c", "\uad6c\uae00 \ub3c5\uc2a4", "\ubb38\uc11c", "\ub3c5\uc2a4"],
@@ -122,6 +128,9 @@ function promptRequestsWrite(prompt) {
     "delete",
     "remove",
     "cancel",
+    "book",
+    "reserve",
+    "schedule",
     "\ub9cc\ub4e4",
     "\uc0dd\uc131",
     "\ucd94\uac00",
@@ -132,6 +141,9 @@ function promptRequestsWrite(prompt) {
     "\ub4f1\ub85d",
     "\uc368\uc918",
     "\uc801\uc5b4",
+    "\uc608\uc57d",
+    "\uc785\ub825",
+    "\ub123\uc5b4",
   ].some((keyword) => lowerPrompt.includes(keyword));
 }
 
@@ -155,13 +167,41 @@ function extractJsonObject(value) {
 function buildWorkspaceWriteConfirmationMessage({ prompt, locale }) {
   const services = mentionedWorkspaceServices(prompt);
   const serviceLabel = joinWorkspaceServiceNames(services, locale);
+  const toolLabel = services.length === 1
+    ? formatWorkspaceServiceName(services[0], locale)
+    : (locale === "en" ? "Google apps" : "Google 앱");
   return buildActionConfirmationMessage(createActionPlan({
     toolId: "googleWorkspace",
-    toolLabel: "Google Workspace",
+    toolLabel,
     requestSummary: summarizeActionRequest(prompt, locale),
     affectedResources: [serviceLabel],
     locale,
   }));
+}
+
+function resolveWorkspacePlannerCredentials({ provider, model, apiKey }) {
+  if (apiKey) {
+    return { provider, model, apiKey };
+  }
+
+  const candidates = [
+    { provider: "gemini", model: GEMINI_DEFAULT_MODEL },
+    { provider: "openai", model: OPENAI_DEFAULT_MODEL },
+    { provider: "groq", model: GROQ_DEFAULT_MODEL },
+  ];
+
+  for (const candidate of candidates) {
+    const plannerKey = getProviderApiKey(candidate.provider, "");
+    if (plannerKey) {
+      return {
+        provider: candidate.provider,
+        model: candidate.model,
+        apiKey: plannerKey,
+      };
+    }
+  }
+
+  return null;
 }
 
 function directWorkspaceAnswer(answer) {
@@ -214,7 +254,7 @@ function buildWorkspacePlannerPrompt({ prompt, locale, workspaceContext = "" }) 
     "Supported actions:",
     "- calendar.create: params must include summary, start, end, timeZone. Optional description, location.",
     "- calendar.update: params must include eventId and at least one field to change: summary, start, end, timeZone, description, location.",
-    "- calendar.delete: params must include eventId. Use this when the user asks to delete/remove/cancel an existing event and the event id is available in context.",
+    "- calendar.delete: params must include eventId when available in context. If only summary/time are known, include summary and optional start so MiVA can resolve the event.",
     "- docs.append: params must include text. Optional documentId. If the user says latest/recent document and gives no id, omit documentId.",
     "Use ISO 8601 dateTime strings. Default timeZone is Asia/Seoul. Current date in Korea is " + new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }) + ".",
     "If the request is not a concrete Calendar create/update/delete or Docs append request, return {\"action\":\"none\",\"params\":{},\"reason\":\"...\"}.",
@@ -393,15 +433,27 @@ export async function buildWorkspaceActionContext({ prompt, profile, authToken, 
   }
 
   if (!authToken) {
-    return directWorkspaceAnswer("Google Workspace write action was requested, but this desktop session is not signed in. Sign in and connect Google Workspace permissions, then retry.");
+    return directWorkspaceAnswer("Google Workspace write action was requested, but this desktop session is not signed in. Sign in and connect Google permissions, then retry.");
   }
 
-  if (!apiKey) {
-    return null;
+  const planner = resolveWorkspacePlannerCredentials({ provider, model, apiKey });
+  if (!planner) {
+    return directWorkspaceAnswer(
+      locale === "en"
+        ? "A cloud planner API key is required to run Google Calendar or Google Docs actions while using a local model. Add a Gemini, OpenAI, or Groq key in local-helper/.env or demo.env, then retry."
+        : "로컬 모델을 사용하는 동안 Google Calendar 또는 Google Docs 작업을 실행하려면 Gemini, OpenAI, Groq API 키가 필요합니다. local-helper/.env 또는 demo.env에 키를 추가한 뒤 다시 시도해 주세요.",
+    );
   }
 
   try {
-    const plan = await planWorkspaceAction({ prompt, provider, model, apiKey, locale, workspaceContext });
+    const plan = await planWorkspaceAction({
+      prompt,
+      provider: planner.provider,
+      model: planner.model,
+      apiKey: planner.apiKey,
+      locale,
+      workspaceContext,
+    });
     const action = typeof plan?.action === "string" ? plan.action : "none";
     if (action === "none") {
       return null;

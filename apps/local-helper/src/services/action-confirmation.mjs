@@ -1,8 +1,14 @@
 const exactConfirmations = new Set([
   "yes",
   "y",
+  "o",
   "ok",
   "okay",
+  "\u3147",
+  "\u3147\u3147",
+  "\u3147\u3147\u3147",
+  "\u3147\u314b",
+  "\u3147\u314c",
   "\ub124",
   "\uc608",
   "\uc751",
@@ -18,6 +24,10 @@ const exactConfirmations = new Set([
   "\uc608 \ucd94\uac00\ud574\uc918",
   "\ud574\uc918",
   "\ud574\uc8fc\uc138\uc694",
+  "\uadf8\ub807\uac8c \ud574\uc918",
+  "\uc751 \uadf8\ub807\uac8c \ud574\uc918",
+  "\ub124 \uadf8\ub807\uac8c \ud574\uc918",
+  "\uc608 \uadf8\ub807\uac8c \ud574\uc918",
 ]);
 
 const includesConfirmations = [
@@ -44,8 +54,18 @@ const shortAffirmativeMarkers = [
   "go ahead",
 ];
 
+export function isShortActionConfirmation(prompt) {
+  const normalized = latestUserInstruction(prompt).trim().toLowerCase();
+  return exactConfirmations.has(normalized)
+    || /^(ㅇ|ㅇㅇ|ㅇㅇㅇ|ㅇㅋ|ㅇㅈ|ok|o|y)$/.test(normalized);
+}
+
 export function hasExplicitActionConfirmation(prompt) {
   const normalized = latestUserInstruction(prompt).trim().toLowerCase();
+  if (isShortActionConfirmation(prompt)) {
+    return true;
+  }
+
   if (exactConfirmations.has(normalized)) {
     return true;
   }
@@ -125,4 +145,24 @@ export function buildActionConfirmationMessage(actionPlan) {
 export function isActionConfirmationMessage(value) {
   const text = String(value || "");
   return text.includes("Should I run this?") || text.includes("\uc774 \uc791\uc5c5\uc744 \uc2e4\ud589\ud560\uae4c\uc694?");
+}
+
+export function resolveWorkspaceActionPrompt({ messages, latestUserPrompt, fallbackPrompt = "" }) {
+  const userMessages = messages
+    .filter((message) => message.role === "user")
+    .map((message) => String(message.content || "").trim())
+    .filter(Boolean);
+  const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const awaitingConfirmation = isActionConfirmationMessage(lastAssistant?.content);
+  const confirmed = hasExplicitActionConfirmation(latestUserPrompt)
+    || (awaitingConfirmation && isShortActionConfirmation(latestUserPrompt));
+
+  if (confirmed) {
+    return [
+      userMessages.slice(-3).join("\n\n"),
+      fallbackPrompt,
+    ].filter(Boolean).join("\n\n");
+  }
+
+  return latestUserPrompt;
 }

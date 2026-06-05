@@ -238,8 +238,8 @@ export const allowedProviderIds = Object.keys(providerManifests);
 export const toolManifestList = [
   {
     id: "googleWorkspace",
-    title: "Google Workspace",
-    label: "Google apps",
+    title: "Google apps",
+    label: "Google Calendar, Gmail, Drive, Docs, Sheets",
     icon: "workspaces",
     description: "Uses direct Google APIs to provide Gmail, Drive, Docs, Calendar, and Sheets context after OAuth.",
     role: "Lets the assistant answer with retrieved Workspace context. Write actions still require a MiVA confirmation before external services are changed.",
@@ -254,9 +254,9 @@ export const toolManifestList = [
     prompt: {
       enabled: [
         "Google Workspace access is usable only when a later Workspace context or Workspace action result is included in this prompt. Do not assume access from the profile setting alone.",
-        "When Google Workspace context is provided, it was retrieved by MiVA using the user's approved Google permissions. Use that retrieved context to answer the user.",
-        "Do not claim you lack access if the needed Gmail, Calendar, Drive, Docs, or Sheets information is included in the provided Workspace context.",
-        "Workspace write actions such as sending email, creating calendar events, editing files, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion.",
+        "When Google app context is provided, it was retrieved by MiVA using the user's approved Google permissions. Use that retrieved context to answer the user.",
+        "Do not claim you lack access if the needed Gmail, Google Calendar, Google Drive, Google Docs, or Google Sheets information is included in the provided context.",
+        "Write actions such as creating Google Calendar events, updating Google Docs, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion. Never invent progress messages such as 'adding to calendar now' without a tool result.",
       ],
       disabled: [
         "Google Workspace context is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.",

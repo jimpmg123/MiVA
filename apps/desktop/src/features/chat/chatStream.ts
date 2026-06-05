@@ -9,6 +9,7 @@ export type StreamChatInput = {
   prompt: string;
   locale: string;
   apiKey: string | null;
+  openAiApiKey?: string | null;
   authToken?: string | null;
   profile: LocalAssistantProfile;
   messages?: Pick<ChatMessage, "role" | "content">[];
@@ -99,6 +100,18 @@ export async function streamChatOnce(
       if (event.done && typeof event.answer === "string" && event.answer.trim()) {
         answer = event.answer.trim();
       }
+    }
+  }
+
+  if (!answer.trim() && buffer.trim()) {
+    try {
+      const payload = JSON.parse(buffer.trim()) as { answer?: string };
+      if (typeof payload.answer === "string" && payload.answer.trim()) {
+        answer = payload.answer.trim();
+        callbacks.onDelta(answer);
+      }
+    } catch {
+      // Ignore non-JSON fallback payloads.
     }
   }
 

@@ -1,10 +1,12 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppMode, ChatMessage, ChatMetrics, DocumentAttachment, ImageAttachment, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
 import { PrimaryButton } from "../components/ui";
 import { ChatSlashMenu } from "../components/ChatSlashMenu";
 import { getCharacterAsset } from "../features/characters/catalog";
 import { Live2DStage } from "../features/characters/Live2DStage";
+import { useCharacterOverlaySync } from "../features/characters/useCharacterOverlay";
+import { isTauriRuntime } from "../app/tauri";
 import { useChatSlashMenu } from "../features/chat/useChatSlashMenu";
 import { formatChatLatency } from "../utils";
 
@@ -16,6 +18,7 @@ type RuntimePageProps = {
   appMode: AppMode;
   assistantPanelMinimized: boolean;
   busyAction: string | null;
+  chatBusyLabel: string | null;
   chooseAndAttachDocuments: () => Promise<void> | void;
   chooseAndAttachImages: () => Promise<void> | void;
   documentAttachments: DocumentAttachment[];
@@ -64,6 +67,7 @@ export function RuntimePage({
   appMode,
   assistantPanelMinimized,
   busyAction,
+  chatBusyLabel,
   chooseAndAttachDocuments,
   chooseAndAttachImages,
   documentAttachments,
@@ -104,7 +108,22 @@ export function RuntimePage({
   stopRuntimeTts,
 }: RuntimePageProps) {
 const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+const previousBusyActionRef = useRef(busyAction);
 const previousMessageCountRef = useRef(activeChatMessages.length);
+const chatGenerating = busyAction === "chat";
+
+const focusChatInput = useCallback(() => {
+  requestAnimationFrame(() => {
+    const element = chatInputRef.current;
+    if (!element || element.disabled) {
+      return;
+    }
+
+    element.focus();
+    const caret = element.value.length;
+    element.setSelectionRange(caret, caret);
+  });
+}, []);
 const [assistantReplyPulse, setAssistantReplyPulse] = useState(false);
 const slashMenu = useChatSlashMenu({
   chatInput,
@@ -117,11 +136,22 @@ const showRuntimeTtsControl = runtimeChat;
 const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
     const characterAsset = getCharacterAsset(characterSettings.characterId);
     const characterRuntimeEnabled = runtimeChat && characterSettings.enabled && characterSettings.showInRuntime;
-    const characterActivity = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting" || assistantReplyPulse
+    const characterActivity: "Idle" | "Thinking" | "Speaking" = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting" || assistantReplyPulse
       ? "Speaking"
       : busyAction === "chat"
         ? "Thinking"
         : "Idle";
+    const overlaySyncState = characterRuntimeEnabled && characterSettings.renderer === "live2d"
+      ? { character: characterSettings, activity: characterActivity }
+      : null;
+    const { overlayOpen, toggleOverlay } = useCharacterOverlaySync(overlaySyncState);
+    const canUseCharacterOverlay = isTauriRuntime() && Boolean(overlaySyncState);
+
+    useEffect(() => {
+      if (overlayOpen) {
+        setAssistantPanelMinimized(true);
+      }
+    }, [overlayOpen, setAssistantPanelMinimized]);
     const characterActivityIcon = characterActivity === "Speaking"
       ? "record_voice_over"
       : characterActivity === "Thinking"
@@ -141,10 +171,6 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       : false;
     const hasPendingAttachments = documentAttachments.some((attachment) => attachment.status === "analyzing");
     const hasImageAttachments = imageAttachments.length > 0;
-    const lastAssistantMessage = activeChatMessages[activeChatMessages.length - 1];
-    const waitingForFirstToken = busyAction === "chat"
-      && lastAssistantMessage?.role === "assistant"
-      && !lastAssistantMessage.content.trim();
     const chatSubmitDisabled = (chatUnavailable && !hasImageAttachments) || busyAction === "chat" || hasPendingAttachments;
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
@@ -172,6 +198,14 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       element.style.height = "auto";
       element.style.height = `${Math.min(element.scrollHeight, 144)}px`;
     }, [chatInput]);
+
+    useEffect(() => {
+      const wasGenerating = previousBusyActionRef.current === "chat";
+      previousBusyActionRef.current = busyAction;
+      if (wasGenerating && busyAction !== "chat") {
+        focusChatInput();
+      }
+    }, [busyAction, focusChatInput]);
 
     useEffect(() => {
       const previousCount = previousMessageCountRef.current;
@@ -289,49 +323,52 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             </div>
           </div>
 
-          {activeChatMessages.map((message, index) => (
-            <div
-              className={`flex max-w-[85%] items-end gap-4 ${message.role === "user" ? "self-end" : "self-start"}`}
-              key={`${message.role}-${index}`}
-            >
-              {message.role === "assistant" && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
-                  <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
-                </div>
-              )}
-              <div
-                className={`whitespace-pre-wrap break-words rounded-lg border p-4 text-sm leading-6 shadow-[var(--miva-shadow-sm)] ${
-                  message.role === "user"
-                    ? "rounded-br-none border-[var(--miva-primary)] bg-[var(--miva-primary)] text-[var(--miva-on-primary)]"
-                    : "rounded-bl-none border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text)]"
-                }`}
-              >
-                {message.content}
-                {message.role === "assistant" && index === activeChatMessages.length - 1 && busyAction === "chat" ? (
-                  <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-[var(--miva-primary)] align-[-2px]" aria-hidden="true" />
-                ) : null}
-              </div>
-            </div>
-          ))}
+          {activeChatMessages.map((message, index) => {
+            const isLastMessage = index === activeChatMessages.length - 1;
+            const isStreamingAssistant = message.role === "assistant" && isLastMessage && busyAction === "chat";
+            const isAwaitingFirstToken = isStreamingAssistant && !message.content.trim();
+            const isStreamingTokens = isStreamingAssistant && Boolean(message.content.trim());
+            const generatingLabel = chatBusyLabel || t.generatingResponse;
 
-          {waitingForFirstToken && (
-            <div className="flex max-w-[85%] items-end gap-4 self-start" aria-live="polite">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
-                <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
-              </div>
-              <div className="rounded-lg rounded-bl-none border border-[var(--miva-border)] bg-[var(--miva-surface)] p-4 shadow-[var(--miva-shadow-sm)]">
-                <div className="flex items-center gap-3 text-sm font-semibold text-[var(--miva-primary)]">
-                  <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
-                  <span>{t.generatingResponse}</span>
-                  <span className="flex items-center gap-1" aria-hidden="true">
-                    <span className="typing-dot" />
-                    <span className="typing-dot animation-delay-150" />
-                    <span className="typing-dot animation-delay-300" />
-                  </span>
+            return (
+              <div
+                className={`flex max-w-[85%] items-end gap-4 ${message.role === "user" ? "self-end" : "self-start"}`}
+                key={`${message.role}-${index}`}
+              >
+                {message.role === "assistant" && (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
+                  </div>
+                )}
+                <div
+                  className={`whitespace-pre-wrap break-words rounded-lg border p-4 text-sm leading-6 shadow-[var(--miva-shadow-sm)] ${
+                    message.role === "user"
+                      ? "rounded-br-none border-[var(--miva-primary)] bg-[var(--miva-primary)] text-[var(--miva-on-primary)]"
+                      : "rounded-bl-none border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text)]"
+                  }`}
+                >
+                  {isAwaitingFirstToken ? (
+                    <div aria-live="polite" className="flex items-center gap-3 font-semibold text-[var(--miva-primary)]">
+                      <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                      <span>{generatingLabel}</span>
+                      <span className="flex items-center gap-1" aria-hidden="true">
+                        <span className="typing-dot" />
+                        <span className="typing-dot animation-delay-150" />
+                        <span className="typing-dot animation-delay-300" />
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      {message.content}
+                      {isStreamingTokens ? (
+                        <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-[var(--miva-primary)] align-[-2px]" aria-hidden="true" />
+                      ) : null}
+                    </>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })}
 
           {activeChatMessages.length === 0 && (
             <div className="mt-3 flex flex-col items-center gap-4">
@@ -359,7 +396,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               className="absolute -top-5 left-1/2 z-20 grid h-10 w-10 -translate-x-1/2 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] shadow-[var(--miva-shadow-md)] transition hover:-translate-y-0.5 hover:border-[var(--miva-primary)]"
               title={t.jumpToLatest}
               type="button"
-              onClick={() => scrollChatToLatest()}
+              onClick={() => scrollChatToLatest("smooth")}
             >
               <span className="material-symbols-outlined text-[22px]">arrow_downward</span>
             </button>
@@ -410,6 +447,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                 return;
               }
               void sendMessage();
+              focusChatInput();
             }}
           >
             {slashMenu.menuOpen && (
@@ -437,9 +475,10 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               <span className="material-symbols-outlined">attach_file</span>
             </button>
             <textarea
+              aria-busy={chatGenerating}
               className="miva-scrollbar-hidden max-h-[9rem] min-h-11 flex-1 resize-none overflow-y-auto border-none bg-transparent py-3 text-sm leading-6 text-[var(--miva-text)] outline-none placeholder:text-[var(--miva-text-soft)]"
-              disabled={busyAction === "chat"}
-              placeholder={busyAction === "chat" ? t.generatingResponse : t.messagePlaceholder}
+              placeholder={chatGenerating ? t.generatingResponse : t.messagePlaceholder}
+              readOnly={chatGenerating}
               ref={chatInputRef}
               rows={1}
               value={chatInput}
@@ -458,6 +497,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                   event.preventDefault();
                   if (!chatSubmitDisabled) {
                     void sendMessage();
+                    focusChatInput();
                   }
                 }
               }}
@@ -629,15 +669,32 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                 {characterActivity}
               </span>
             </div>
-            <button
-              aria-label="Minimize assistant panel"
-              className="absolute right-4 top-4 z-30 grid h-10 w-10 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] text-[var(--miva-text-muted)] shadow-[var(--miva-shadow-sm)] backdrop-blur transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
-              type="button"
-              title="Minimize"
-              onClick={() => setAssistantPanelMinimized(true)}
-            >
-              <span className="material-symbols-outlined text-[20px]">remove</span>
-            </button>
+            <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
+              {canUseCharacterOverlay && (
+                <button
+                  aria-label={overlayOpen ? "Close floating character window" : "Open floating character window"}
+                  className={`grid h-10 w-10 place-items-center rounded-full border shadow-[var(--miva-shadow-sm)] backdrop-blur transition ${
+                    overlayOpen
+                      ? "border-[var(--miva-primary)] bg-[var(--miva-primary-soft)] text-[var(--miva-primary)]"
+                      : "border-[var(--miva-border)] bg-[var(--miva-floating-surface)] text-[var(--miva-text-muted)] hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+                  }`}
+                  type="button"
+                  title={overlayOpen ? "Close floating window" : "Open floating window"}
+                  onClick={() => void toggleOverlay()}
+                >
+                  <span className="material-symbols-outlined text-[20px]">picture_in_picture_alt</span>
+                </button>
+              )}
+              <button
+                aria-label="Minimize assistant panel"
+                className="grid h-10 w-10 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] text-[var(--miva-text-muted)] shadow-[var(--miva-shadow-sm)] backdrop-blur transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+                type="button"
+                title="Minimize"
+                onClick={() => setAssistantPanelMinimized(true)}
+              >
+                <span className="material-symbols-outlined text-[20px]">remove</span>
+              </button>
+            </div>
             {characterSettings.renderer === "live2d" ? (
               <div className="relative z-20 h-full min-h-0 flex-1 overflow-visible px-2 pt-10">
                 <Live2DStage
