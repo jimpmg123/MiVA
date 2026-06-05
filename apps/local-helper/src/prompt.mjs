@@ -1,3 +1,6 @@
+import { buildProviderCapabilityInstructions } from "./extensions/providers.mjs";
+import { buildToolCapabilityInstructions } from "./extensions/tools.mjs";
+
 function getCurrentDateLabel(locale) {
   const language = locale === "ko" ? "ko-KR" : "en-US";
   return new Intl.DateTimeFormat(language, {
@@ -97,25 +100,7 @@ function buildProfileInstructions(profile, provider) {
       ? promptSettings.toolConnections
       : null;
     if (toolConnections) {
-      const googleWorkspace = toolConnections.googleWorkspace === true;
-      const daisoCli = toolConnections.daisoCli === true;
-
-      instructions.push(`Google Workspace profile setting: ${googleWorkspace ? "enabled" : "disabled"}.`);
-      if (googleWorkspace) {
-        instructions.push("Google Workspace access is usable only when a later Workspace context or Workspace action result is included in this prompt. Do not assume access from the profile setting alone.");
-        instructions.push("When Google Workspace context is provided, it was retrieved by MiVA using the user's approved Google permissions. Use that retrieved context to answer the user.");
-        instructions.push("Do not claim you lack access if the needed Gmail, Calendar, Drive, Docs, or Sheets information is included in the provided Workspace context.");
-        instructions.push("Workspace write actions such as sending email, creating calendar events, editing files, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion.");
-      } else {
-        instructions.push("Google Workspace context is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.");
-      }
-
-      instructions.push(`Daiso CLI tool access: ${daisoCli ? "on" : "off"}.`);
-      if (daisoCli) {
-        instructions.push("When Daiso CLI is available, you may prepare approved Daiso CLI workflows. Ask before tool use and only report completion after the connected CLI confirms it.");
-      } else {
-        instructions.push("Daiso CLI is off. Do not claim Daiso CLI actions are available or completed.");
-      }
+      instructions.push(...buildToolCapabilityInstructions(toolConnections));
     }
 
     const coding = promptSettings.coding && typeof promptSettings.coding === "object"
@@ -276,6 +261,7 @@ export function buildSystemPrompt({ locale = "ko", provider = "ollama", model = 
     "You are MiVA, the user's personal AI assistant.",
     languageInstruction,
     "Be practical, concise, and direct. If you are unsure, say so instead of inventing facts.",
+    ...buildProviderCapabilityInstructions(provider),
     ...buildProfileInstructions(profile, provider),
     "If any stored language preference conflicts with the user's latest message language, answer in the user's latest message language.",
     `Current date and time in Korea: ${getCurrentDateLabel(locale)}.`,

@@ -6,6 +6,7 @@ import {
   scheduleModeCopy,
   workspacePolicyCopy,
 } from "./profile";
+import { buildToolPromptPreviewLines } from "../extensions/registry";
 
 export function buildSystemPromptPreview(
   profile: Pick<LocalAssistantProfile, "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "provider" | "model">,
@@ -23,8 +24,7 @@ export function buildSystemPromptPreview(
     `- Preferred tone: ${promptSettings.simple.preferredTone}`,
     `- Avoidances: ${promptSettings.simple.avoidances}`,
     "Tools for AI:",
-    `- Google Workspace direct API context: ${promptSettings.toolConnections.googleWorkspace ? "on" : "off"}. When on, MiVA may use retrieved read-only context from Google Calendar, Gmail, Drive, Docs, or Sheets. It must only say an action is done after a connected tool confirms completion.`,
-    `- Daiso CLI: ${promptSettings.toolConnections.daisoCli ? "on" : "off"}. When on, MiVA may prepare approved Daiso CLI workflows, but it must only run or report actions after the connected tool confirms completion.`,
+    ...buildToolPromptPreviewLines(promptSettings.toolConnections),
     "Coding policy:",
     `- Capability: ${codingCapabilityCopy[promptSettings.coding.capability]}.`,
     `- Model policy: ${codingProviderPolicyCopy[promptSettings.coding.providerPolicy]}.`,

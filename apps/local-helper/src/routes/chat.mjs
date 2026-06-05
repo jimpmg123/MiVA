@@ -1,4 +1,4 @@
-import { GEMINI_DEFAULT_MODEL, GROQ_DEFAULT_MODEL, OPENAI_DEFAULT_MODEL } from "../config.mjs";
+import { allowedProviderIds, getProviderDefaultModel, isProviderAllowed } from "../extensions/providers.mjs";
 import { buildSystemPrompt, getLastUserMessage, normalizeChatMessages } from "../prompt.mjs";
 import { getGeminiAnswerWithFallback } from "../services/gemini.mjs";
 import { getGroqAnswer } from "../services/groq.mjs";
@@ -12,6 +12,7 @@ import {
   ollamaFetch
 } from "../services/ollama.mjs";
 import { getOpenAiAnswer } from "../services/openai.mjs";
+import { isActionConfirmationMessage } from "../services/action-confirmation.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
 import { buildWorkspaceActionContext, buildWorkspaceContext } from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
@@ -62,19 +63,13 @@ export async function handleChat(req, res, origin) {
   const model =
     typeof body.model === "string" && body.model.trim()
       ? body.model.trim()
-      : provider === "openai"
-        ? OPENAI_DEFAULT_MODEL
-        : provider === "gemini"
-          ? GEMINI_DEFAULT_MODEL
-          : provider === "groq"
-            ? GROQ_DEFAULT_MODEL
-          : "llama3.2:3b";
+      : getProviderDefaultModel(provider);
   const locale = body.locale === "en" ? "en" : "ko";
 
-  if (!["ollama", "openai", "gemini", "groq"].includes(provider)) {
+  if (!isProviderAllowed(provider)) {
     sendJson(res, 400, {
       error: "PROVIDER_NOT_ALLOWED",
-      allowedProviders: ["ollama", "openai", "gemini", "groq"]
+      allowedProviders: allowedProviderIds
     }, origin);
     return;
   }
@@ -124,8 +119,7 @@ export async function handleChat(req, res, origin) {
       workspaceActionContext.includes("write action failed") ||
       workspaceActionContext.includes("draft-only schedule mode") ||
       workspaceActionContext.includes("needs user confirmation") ||
-      workspaceActionContext.includes("Should I run this?") ||
-      workspaceActionContext.includes("실행할까요?")
+      isActionConfirmationMessage(workspaceActionContext)
     )
   ) {
     sendJson(res, 200, {
@@ -143,6 +137,16 @@ export async function handleChat(req, res, origin) {
         "Rolling summary memory for this assistant:",
         body.memorySummary.trim(),
         "Use this summary only as background context. The user's latest message has priority."
+      ].join("\n")
+    });
+  }
+  if (typeof body.toolContext === "string" && body.toolContext.trim()) {
+    messages.splice(1, 0, {
+      role: "system",
+      content: [
+        "Connected local tool context:",
+        body.toolContext.trim(),
+        "This tool context was produced by MiVA before the model response. Use it when it directly answers the user request.",
       ].join("\n")
     });
   }

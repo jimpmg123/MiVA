@@ -1,23 +1,17 @@
-﻿import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type {
   CloudModelInfo,
   LocalAssistantProfile,
   OllamaStatus,
   ProviderId,
   ProviderKeyState,
-  ProviderMode,
   SettingsSection,
 } from "../types";
 import { Badge, Button, IconTile, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select } from "../components/ui";
+import { ThemeSelector } from "../components/ThemeSelector";
 import { ActivityLogPanel } from "../features/logs/ActivityLogPanel";
-
-type ProviderMeta = Record<ProviderId, { label: string; mode: ProviderMode; icon: string }>;
-
-const providerKeyLinks = {
-  openai: "https://platform.openai.com/api-keys",
-  gemini: "https://aistudio.google.com/app/apikey",
-  groq: "https://console.groq.com/keys",
-};
+import type { UiThemeId } from "../features/theme/themes";
+import { cloudProviderManifests, providerManifestList } from "../features/extensions/registry";
 
 type SettingsPageProps = {
   activeLocalProfile: LocalAssistantProfile | null;
@@ -31,7 +25,6 @@ type SettingsPageProps = {
   logs: string[];
   providerKeys: ProviderKeyState;
   providerKeysSaved: boolean;
-  providerMeta: ProviderMeta;
   providerText: Record<string, string>;
   selectedCloudModel: string;
   selectedProvider: ProviderId;
@@ -46,6 +39,8 @@ type SettingsPageProps = {
   onSelectedCloudModelChange: (modelId: string) => void;
   onSelectedProviderChange: (providerId: ProviderId) => void;
   onProviderKeysChange: Dispatch<SetStateAction<ProviderKeyState>>;
+  themeId: UiThemeId;
+  onThemeChange: (themeId: UiThemeId) => void;
 };
 
 export function SettingsPage({
@@ -60,7 +55,6 @@ export function SettingsPage({
   logs,
   providerKeys,
   providerKeysSaved,
-  providerMeta,
   providerText,
   selectedCloudModel,
   selectedProvider,
@@ -75,6 +69,8 @@ export function SettingsPage({
   onSelectedCloudModelChange,
   onSelectedProviderChange,
   onProviderKeysChange,
+  themeId,
+  onThemeChange,
 }: SettingsPageProps) {
   const activeSettingsSection = settingsSections.find((section) => section.id === settingsSection) ?? settingsSections[0];
 
@@ -94,6 +90,18 @@ export function SettingsPage({
 
           <InfoTile label={t.modelStorage} value={t.defaultStorage} className="p-4" />
           <InfoTile label={t.currentModel} value={`${activeProviderLabel} / ${activeModelLabel}`} className="p-4" />
+        </div>
+      </Panel>
+
+      <Panel className="mb-6">
+        <div className="grid gap-4">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Appearance</span>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
+              Switch the app color palette. Text and surfaces adjust automatically for readability.
+            </p>
+          </div>
+          <ThemeSelector onThemeChange={onThemeChange} themeId={themeId} />
         </div>
       </Panel>
 
@@ -136,8 +144,8 @@ export function SettingsPage({
       </div>
 
       <div className="mt-6 grid gap-3 md:grid-cols-3">
-        {(["ollama", "openai", "gemini", "groq"] as ProviderId[]).map((providerId) => {
-          const meta = providerMeta[providerId];
+        {providerManifestList.map((providerManifest) => {
+          const providerId = providerManifest.id;
           const isActive = selectedProvider === providerId;
           const providerKey = providerId === "ollama" ? "" : providerKeys[providerId];
           const statusLabel =
@@ -167,13 +175,13 @@ export function SettingsPage({
             >
               <div className="flex items-start justify-between gap-3">
                 <IconTile className="h-10 w-10">
-                  <span className="material-symbols-outlined text-[20px]">{meta.icon}</span>
+                  <span className="material-symbols-outlined text-[20px]">{providerManifest.icon}</span>
                 </IconTile>
-                <Badge tone={meta.mode === "local" ? "success" : "action"}>
-                  {meta.mode === "local" ? providerText.localHeader : providerText.cloudHeader}
+                <Badge tone={providerManifest.mode === "local" ? "success" : "action"}>
+                  {providerManifest.mode === "local" ? providerText.localHeader : providerText.cloudHeader}
                 </Badge>
               </div>
-              <h4 className="mt-4 font-heading text-lg font-bold text-[var(--miva-text)]">{meta.label}</h4>
+              <h4 className="mt-4 font-heading text-lg font-bold text-[var(--miva-text)]">{providerManifest.label}</h4>
               <p className="mt-1 text-sm font-semibold text-[var(--miva-text-muted)]">{statusLabel}</p>
             </Button>
           );
@@ -181,77 +189,35 @@ export function SettingsPage({
       </div>
 
       <div className="mt-6 grid gap-5">
-        <label className="grid gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">{t.openaiApiKey}</span>
-            <div className="flex items-center gap-2">
-              <a
-                className="rounded-full border border-[var(--miva-border)] px-3 py-2 text-xs font-bold text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
-                href={providerKeyLinks.openai}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Get API key
-              </a>
-              <Badge tone={providerKeys.openai ? "action" : "neutral"}>{providerKeys.openai ? t.userOverrideKey : t.defaultEnvKey}</Badge>
-            </div>
-          </div>
-          <Input
-            autoComplete="off"
-            placeholder="sk-..."
-            type="password"
-            value={providerKeys.openai}
-            onChange={(event) => onProviderKeysChange((current) => ({ ...current, openai: event.target.value }))}
-          />
-        </label>
-
-        <label className="grid gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">{t.geminiApiKey}</span>
-            <div className="flex items-center gap-2">
-              <a
-                className="rounded-full border border-[var(--miva-border)] px-3 py-2 text-xs font-bold text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
-                href={providerKeyLinks.gemini}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Get API key
-              </a>
-              <Badge tone={providerKeys.gemini ? "action" : "neutral"}>{providerKeys.gemini ? t.userOverrideKey : t.defaultEnvKey}</Badge>
-            </div>
-          </div>
-          <Input
-            autoComplete="off"
-            placeholder="AIza..."
-            type="password"
-            value={providerKeys.gemini}
-            onChange={(event) => onProviderKeysChange((current) => ({ ...current, gemini: event.target.value }))}
-          />
-        </label>
-
-        <label className="grid gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">{t.groqApiKey}</span>
-            <div className="flex items-center gap-2">
-              <a
-                className="rounded-full border border-[var(--miva-border)] px-3 py-2 text-xs font-bold text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
-                href={providerKeyLinks.groq}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Get API key
-              </a>
-              <Badge tone={providerKeys.groq ? "action" : "neutral"}>{providerKeys.groq ? t.userOverrideKey : t.defaultEnvKey}</Badge>
-            </div>
-          </div>
-          <Input
-            autoComplete="off"
-            placeholder="gsk_..."
-            type="password"
-            value={providerKeys.groq}
-            onChange={(event) => onProviderKeysChange((current) => ({ ...current, groq: event.target.value }))}
-          />
-        </label>
+        {cloudProviderManifests.map((providerManifest) => {
+          const providerId = providerManifest.id;
+          const providerKey = providerKeys[providerId];
+          return (
+            <label className="grid gap-2" key={providerId}>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">{providerManifest.auth.label}</span>
+                <div className="flex items-center gap-2">
+                  <a
+                    className="rounded-full border border-[var(--miva-border)] px-3 py-2 text-xs font-bold text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
+                    href={providerManifest.auth.helpUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Get API key
+                  </a>
+                  <Badge tone={providerKey ? "action" : "neutral"}>{providerKey ? t.userOverrideKey : t.defaultEnvKey}</Badge>
+                </div>
+              </div>
+              <Input
+                autoComplete="off"
+                placeholder={providerManifest.auth.placeholder}
+                type="password"
+                value={providerKey}
+                onChange={(event) => onProviderKeysChange((current) => ({ ...current, [providerId]: event.target.value }))}
+              />
+            </label>
+          );
+        })}
 
         <div className="rounded-lg bg-[var(--miva-warning-soft)] p-4 text-sm leading-6 text-[var(--miva-warning)]">
           {t.keyStorageNotice}

@@ -1,4 +1,10 @@
 import { CLOUD_API_URL } from "../config.mjs";
+import {
+  buildActionConfirmationMessage,
+  createActionPlan,
+  hasExplicitActionConfirmation,
+  summarizeActionRequest,
+} from "./action-confirmation.mjs";
 
 const serviceKeywords = {
   calendar: ["calendar", "schedule", "event", "meeting", "\uc77c\uc815", "\uce98\ub9b0\ub354", "\ud68c\uc758", "\ubbf8\ud305", "\uc2a4\ucf00\uc904"],
@@ -125,67 +131,16 @@ function extractJsonObject(value) {
   }
 }
 
-function hasExplicitActionConfirmation(prompt) {
-  const normalized = String(prompt || "").toLowerCase();
-  return [
-    "confirm",
-    "confirmed",
-    "approve",
-    "approved",
-    "yes, do it",
-    "go ahead",
-    "proceed",
-    "\ud655\uc778",
-    "\uc2b9\uc778",
-    "\uc9c4\ud589\ud574",
-    "\uc751",
-    "\uadf8\ub798",
-  ].some((marker) => normalized.includes(marker));
-}
-
-function latestUserInstruction(prompt) {
-  return String(prompt || "")
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .at(-1) || String(prompt || "").trim();
-}
-
-function summarizeWorkspaceWriteRequest(prompt, locale) {
-  const instruction = latestUserInstruction(prompt)
-    .replace(/\s+/g, " ")
-    .trim();
-  const maxLength = locale === "en" ? 140 : 90;
-  if (!instruction) {
-    return locale === "en" ? "Run the requested Google Workspace change" : "요청한 Google Workspace 변경 작업";
-  }
-  return instruction.length > maxLength ? `${instruction.slice(0, maxLength - 1)}...` : instruction;
-}
-
 function buildWorkspaceWriteConfirmationMessage({ prompt, locale }) {
   const services = mentionedWorkspaceServices(prompt);
   const serviceLabel = joinWorkspaceServiceNames(services, locale);
-  const summary = summarizeWorkspaceWriteRequest(prompt, locale);
-
-  if (locale === "en") {
-    return [
-      "Before I change Google Workspace, please confirm.",
-      "",
-      `Request summary: ${summary}`,
-      `Google Workspace used: ${serviceLabel}`,
-      "",
-      "Should I run this?",
-    ].join("\n");
-  }
-
-  return [
-    "Google Workspace를 변경하기 전에 확인이 필요합니다.",
-    "",
-    `요청 요약: ${summary}`,
-    `사용할 Google Workspace: ${serviceLabel}`,
-    "",
-    "실행할까요?",
-  ].join("\n");
+  return buildActionConfirmationMessage(createActionPlan({
+    toolId: "googleWorkspace",
+    toolLabel: "Google Workspace",
+    requestSummary: summarizeActionRequest(prompt, locale),
+    affectedResources: [serviceLabel],
+    locale,
+  }));
 }
 
 function buildWorkspacePlannerPrompt({ prompt, locale, workspaceContext = "" }) {

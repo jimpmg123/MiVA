@@ -9,6 +9,8 @@
 import { useState } from "react";
 import { Badge, Button, IconButton, IconTile, InfoTile, Input, ModalBackdrop, ModalPanel, Panel, PrimaryButton, SecondaryButton, Select, Switch, Textarea } from "../components/ui";
 import { defaultPromptSettings } from "../features/assistants/profile";
+import { toolManifestList } from "../features/extensions/registry";
+import type { ToolConnectionKey } from "../features/extensions/registry";
 
 type PromptStudioPanelProps = {
   profile: LocalAssistantProfile;
@@ -105,9 +107,7 @@ export function PromptStudioPanel({
       updateValue(defaultValue);
     }
   };
-type BooleanToolConnectionKey = "googleWorkspace" | "daisoCli";
-
-  const updateToolConnection = (key: BooleanToolConnectionKey, enabled: boolean) => {
+  const updateToolConnection = (key: ToolConnectionKey, enabled: boolean) => {
     onPromptSettingsChange((current) => ({
       ...current,
       toolConnections: {
@@ -134,34 +134,7 @@ type BooleanToolConnectionKey = "googleWorkspace" | "daisoCli";
       [key]: current[key].filter((_, itemIndex) => itemIndex !== index),
     }));
   };
-  const toolOptions: Array<{
-    id: BooleanToolConnectionKey;
-    title: string;
-    label: string;
-    icon: string;
-    description: string;
-    role: string;
-    features: string[];
-  }> = [
-    {
-      id: "googleWorkspace",
-      title: "Google Workspace",
-      label: "Google apps",
-      icon: "workspaces",
-      description: "Uses direct Google APIs to provide read-only Gmail, Drive, Docs, Calendar, and Sheets context after OAuth.",
-      role: "Lets the assistant answer with retrieved Workspace context. Until a write tool confirms completion, MiVA should explain the draft action instead of saying it is done.",
-      features: ["Calendar context", "Gmail summaries", "Drive and Docs context"],
-    },
-    {
-      id: "daisoCli",
-      title: "Daiso CLI",
-      label: "Daiso",
-      icon: "terminal",
-      description: "Reserved for Daiso CLI workflows that can run approved local or external commands later.",
-      role: "Lets the assistant understand that Daiso actions may become available. MiVA must still ask before tool use and only report completion after the connected CLI confirms it.",
-      features: ["Approved CLI workflows", "Local automation hooks", "Future tool actions"],
-    },
-  ];
+  const toolOptions = toolManifestList;
 
   const renderPromptPreview = () => (
     <Panel>
@@ -666,7 +639,7 @@ type BooleanToolConnectionKey = "googleWorkspace" | "daisoCli";
             <Button
               className={`rounded-xl px-5 py-2.5 text-sm font-bold transition ${
                 promptEditorMode === mode
-                  ? "bg-white text-[var(--miva-primary)] shadow-sm"
+                  ? "bg-[var(--miva-control-active-bg)] text-[var(--miva-control-active-text)] shadow-sm"
                   : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
               }`}
               key={mode}

@@ -1,11 +1,10 @@
-import { Badge, Button, Panel, Switch } from "../components/ui";
+import { Badge, Button, Panel, SelectionOptionCard, StatusAlert, Switch } from "../components/ui";
 import type { GoogleWorkspaceStatus, PromptSettings, WorkspaceServiceId } from "../types";
 
 type GoogleWorkspacePanelProps = {
   authConnected: boolean;
   googleWorkspaceStatus: GoogleWorkspaceStatus | null;
   settings: PromptSettings;
-  tauriRuntime: boolean;
   onOpenWorkspaceConsent: () => void;
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
   onRefreshGoogleWorkspaceStatus: () => void;
@@ -48,6 +47,24 @@ const workspaceServices: WorkspaceServiceOption[] = [
     title: "Google Sheets",
     body: "Read spreadsheet metadata and structured context later.",
     icon: "table",
+  },
+];
+
+const workspaceSteps = [
+  {
+    label: "Step 1",
+    title: "Sign in with Google",
+    body: "The account connection is handled by MiVA OAuth.",
+  },
+  {
+    label: "Step 2",
+    title: "Select products",
+    body: "Choose Gmail, Drive, Docs, Calendar, or Sheets per assistant.",
+  },
+  {
+    label: "Step 3",
+    title: "Confirm write actions",
+    body: "MiVA asks before changing Docs, Calendar, Gmail, Drive, or Sheets.",
   },
 ];
 
@@ -137,10 +154,10 @@ export function GoogleWorkspacePanel({
   );
 
   const productAccessHelper = (
-    <div className="mt-3 rounded-xl border border-[var(--miva-border)] bg-[var(--miva-surface-muted)] px-4 py-3">
+    <StatusAlert className="mt-3" tone="neutral">
       <p className="text-sm leading-5 text-[var(--miva-text)]">{productAccessDescription}</p>
       <p className="mt-1 text-xs leading-5 text-[var(--miva-text-muted)]">{productAccessHint}</p>
-    </div>
+    </StatusAlert>
   );
 
   return (
@@ -148,9 +165,9 @@ export function GoogleWorkspacePanel({
       <Panel>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Workspace integration</p>
-            <h3 className="mt-2 font-heading text-xl font-bold text-[#191c1d]">Connect Google Workspace</h3>
-            <p className="mt-2 max-w-[760px] text-sm leading-6 text-[#42474d]">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">Workspace integration</p>
+            <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Connect Google Workspace</h3>
+            <p className="mt-2 max-w-[760px] text-sm leading-6 text-[var(--miva-text-muted)]">
               Choose which Google products this assistant can use as read-only context. MiVA will use the connected Google account and direct Google APIs for Gmail, Drive, Docs, Calendar, and Sheets.
             </p>
           </div>
@@ -161,33 +178,25 @@ export function GoogleWorkspacePanel({
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-[#c2c7ce]/70 bg-[#f8f9fa] p-4">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">Step 1</p>
-            <p className="mt-2 text-sm font-bold text-[#191c1d]">Sign in with Google</p>
-            <p className="mt-2 text-xs leading-5 text-[#72787e]">The account connection is handled by MiVA OAuth.</p>
-          </div>
-          <div className="rounded-2xl border border-[#c2c7ce]/70 bg-[#f8f9fa] p-4">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">Step 2</p>
-            <p className="mt-2 text-sm font-bold text-[#191c1d]">Select products</p>
-            <p className="mt-2 text-xs leading-5 text-[#72787e]">Choose Gmail, Drive, Docs, Calendar, or Sheets per assistant.</p>
-          </div>
-          <div className="rounded-2xl border border-[#c2c7ce]/70 bg-[#f8f9fa] p-4">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">Step 3</p>
-            <p className="mt-2 text-sm font-bold text-[#191c1d]">Confirm write actions</p>
-            <p className="mt-2 text-xs leading-5 text-[#72787e]">MiVA asks before changing Docs, Calendar, Gmail, Drive, or Sheets.</p>
-          </div>
+          {workspaceSteps.map((step) => (
+            <article className="rounded-lg border border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-4" key={step.label}>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">{step.label}</p>
+              <p className="mt-2 text-sm font-bold text-[var(--miva-text)]">{step.title}</p>
+              <p className="mt-2 text-xs leading-5 text-[var(--miva-text-muted)]">{step.body}</p>
+            </article>
+          ))}
         </div>
       </Panel>
 
       <Panel>
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h3 className="font-heading text-lg font-bold text-[#191c1d]">Google account permission</h3>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Google account permission</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
               MiVA needs Google consent before it can read or update Docs and Calendar through direct Google APIs.
             </p>
             {googleWorkspaceStatus?.connectedAt && (
-              <p className="mt-2 text-xs font-semibold text-[#72787e]">Connected at {new Date(googleWorkspaceStatus.connectedAt).toLocaleString()}</p>
+              <p className="mt-2 text-xs font-semibold text-[var(--miva-text-soft)]">Connected at {new Date(googleWorkspaceStatus.connectedAt).toLocaleString()}</p>
             )}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -213,10 +222,10 @@ export function GoogleWorkspacePanel({
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="font-heading text-lg font-bold text-[#191c1d]">Product access</h3>
+              <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Product access</h3>
               {productAccessSummary}
             </div>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
               Select which Google products this assistant may read for context. Save changes to store this in the assistant profile.
             </p>
             {productAccessHelper}
@@ -235,23 +244,16 @@ export function GoogleWorkspacePanel({
           {workspaceServices.map((service) => {
             const selected = selectedServices.includes(service.id);
             return (
-              <Button
-                className={`flex h-auto min-h-0 w-full flex-col items-stretch justify-start whitespace-normal rounded-2xl border p-4 text-left transition ${
-                  selected ? "border-[#35607f] bg-[#cae6ff]/35 ring-2 ring-[#cae6ff]" : "border-[#c2c7ce]/70 bg-white hover:border-[#35607f]"
-                }`}
+              <SelectionOptionCard
+                active={selected}
+                description={service.body}
+                icon={<span className="material-symbols-outlined text-[20px]">{service.icon}</span>}
                 key={service.id}
                 onClick={() => toggleService(service.id)}
-                variant="ghost"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
-                    <span className="material-symbols-outlined text-[20px]">{service.icon}</span>
-                  </span>
-                  <Badge tone={selected ? "action" : "neutral"}>{selected ? "Selected" : "Off"}</Badge>
-                </div>
-                <p className="mt-4 font-heading text-base font-bold text-[#191c1d]">{service.title}</p>
-                <p className="mt-2 text-sm leading-5 text-[#42474d]">{service.body}</p>
-              </Button>
+                title={service.title}
+                trailing={<Badge tone={selected ? "action" : "neutral"}>{selected ? "Selected" : "Off"}</Badge>}
+                interaction="border"
+              />
             );
           })}
         </div>

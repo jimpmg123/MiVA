@@ -1,28 +1,41 @@
 import { spawnSync } from "node:child_process";
 
+function runCheck(label, command, args, options = {}) {
+  console.log(`Checking ${label}`);
+  const result = spawnSync(command, args, {
+    stdio: "inherit",
+    shell: false,
+    ...options,
+  });
+
+  if (result.status !== 0) {
+    process.exit(result.status || 1);
+  }
+}
+
 const files = [
+  "scripts/dev-services.mjs",
   "apps/local-helper/src/server.mjs",
+  "apps/local-helper/src/extensions/providers.mjs",
+  "apps/local-helper/src/extensions/tools.mjs",
   "apps/local-helper/src/routes/chat.mjs",
+  "apps/local-helper/src/routes/daiso.mjs",
   "apps/local-helper/src/routes/voice.mjs",
+  "apps/local-helper/src/services/daiso.mjs",
+  "apps/local-helper/src/services/daiso-utils.mjs",
+  "apps/local-helper/src/services/action-confirmation.mjs",
   "apps/local-helper/src/services/workspace.mjs",
   "apps/local-helper/src/services/voice-worker.mjs",
   "apps/local-helper/src/prompt.mjs",
   "apps/web/server.mjs",
   "apps/api/src/db.mjs",
   "apps/api/scripts/db-check.mjs",
+  "packages/shared/src/extensions.js",
   "packages/shared/src/index.js"
 ];
 
 for (const file of files) {
-  console.log(`Checking ${file}`);
-  const result = spawnSync(process.execPath, ["--check", file], {
-    stdio: "inherit",
-    shell: false
-  });
-
-  if (result.status !== 0) {
-    process.exit(result.status || 1);
-  }
+  runCheck(file, process.execPath, ["--check", file]);
 }
 
 const webChecks = [
@@ -36,28 +49,18 @@ const webChecks = [
   }
 ];
 
-console.log("Checking apps/api typecheck");
-const apiResult = spawnSync(process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--noEmit"], {
+runCheck("apps/api typecheck", process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--noEmit"], {
   cwd: "apps/api",
-  stdio: "inherit",
-  shell: false
 });
 
-if (apiResult.status !== 0) {
-  process.exit(apiResult.status || 1);
-}
-
 for (const check of webChecks) {
-  console.log(`Checking apps/web ${check.label}`);
-  const webResult = spawnSync(process.execPath, check.args, {
+  runCheck(`apps/web ${check.label}`, process.execPath, check.args, {
     cwd: "apps/web",
-    stdio: "inherit",
-    shell: false
   });
-
-  if (webResult.status !== 0) {
-    process.exit(webResult.status || 1);
-  }
 }
+
+runCheck("apps/desktop check", process.execPath, ["scripts/build.mjs"], {
+  cwd: "apps/desktop",
+});
 
 console.log("All checks passed.");

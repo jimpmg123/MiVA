@@ -57,3 +57,5 @@ export const lightweightModels = [
 export function isAllowedOllamaModel(modelName) {
   return lightweightModels.some((model) => model.ollamaName === modelName);
 }
+
+export * from "./extensions.js";
