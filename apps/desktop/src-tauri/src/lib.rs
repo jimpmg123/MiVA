@@ -13,7 +13,12 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use sysinfo::{Disks, System};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
+
+const CHARACTER_OVERLAY_LABEL: &str = "character-overlay";
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -33,6 +38,7 @@ const ALLOWED_MODELS: [&str; 6] = [
 ];
 const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
 const CHAT_HISTORY_STORE_FILE: &str = "chat-history.json";
+const APP_PREFERENCES_FILE: &str = "app-preferences.json";
 const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 const LIVE2D_MODEL_DIRS: [&str; 4] = ["mao_pro", "shizuku", "knight", "takodachi"];
 
@@ -194,6 +200,154 @@ fn save_assistant_profile_store_inner(app: AppHandle, store: Value) -> Result<Va
     let content = serde_json::to_string_pretty(&store).map_err(|error| error.to_string())?;
     fs::write(path, content).map_err(|error| error.to_string())?;
     Ok(store)
+}
+
+fn empty_app_preferences() -> Value {
+    json!({
+        "setupCompleted": false,
+        "lastAppMode": "studio",
+        "setupCompletedAt": null
+    })
+}
+
+fn app_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join(APP_PREFERENCES_FILE))
+}
+
+fn load_app_preferences_inner(app: AppHandle) -> Result<Value, String> {
+    let path = app_preferences_path(&app)?;
+    if !path.exists() {
+        return Ok(empty_app_preferences());
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    if content.trim().is_empty() {
+        return Ok(empty_app_preferences());
+    }
+
+    serde_json::from_str::<Value>(&content).map_err(|error| error.to_string())
+}
+
+fn save_app_preferences_inner(app: AppHandle, preferences: Value) -> Result<Value, String> {
+    let path = app_preferences_path(&app)?;
+    let content = serde_json::to_string_pretty(&preferences).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())?;
+    Ok(preferences)
+}
+
+const OPENAI_FALLBACK_MODEL: &str = "gpt-4o-mini";
+const OPENAI_FALLBACK_LABEL: &str = "GPT-4o mini";
+
+fn migrate_profile_to_openai(profile: &mut Value, deleted_model: &str) -> bool {
+    let provider = profile
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let model = profile
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if provider != "ollama" || model != deleted_model {
+        return false;
+    }
+
+    profile["provider"] = json!("openai");
+    profile["model"] = json!(OPENAI_FALLBACK_MODEL);
+    profile["modelLabel"] = json!(OPENAI_FALLBACK_LABEL);
+    profile["providerMode"] = json!("cloud");
+    if profile.get("localMode").is_some() {
+        profile["localMode"] = json!("hybrid");
+    }
+
+    if let Some(recommendation) = profile
+        .get_mut("recommendation")
+        .and_then(Value::as_object_mut)
+    {
+        recommendation.insert("selectedProvider".to_string(), json!("openai"));
+        recommendation.insert("selectedCloudModel".to_string(), json!(OPENAI_FALLBACK_MODEL));
+    }
+
+    if let Some(survey) = profile.get_mut("survey").and_then(Value::as_object_mut) {
+        if survey.contains_key("localMode") {
+            survey.insert("localMode".to_string(), json!("hybrid"));
+        }
+    }
+
+    if let Some(summary_memory) = profile
+        .pointer_mut("/prompt/settings/summaryMemory")
+        .and_then(Value::as_object_mut)
+    {
+        let summary_provider = summary_memory
+            .get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let summary_model = summary_memory
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if summary_provider == "ollama"
+            && (summary_model.is_empty() || summary_model == deleted_model)
+        {
+            summary_memory.insert("provider".to_string(), json!("openai"));
+            summary_memory.insert("model".to_string(), json!(OPENAI_FALLBACK_MODEL));
+            summary_memory.insert("modelPolicy".to_string(), json!("cloudModel"));
+        }
+    }
+
+    profile["updatedAt"] = json!(timestamp_millis());
+    true
+}
+
+fn migrate_profiles_from_deleted_model_inner(
+    app: AppHandle,
+    deleted_model: &str,
+) -> Result<Value, String> {
+    let mut store = load_assistant_profile_store_inner(app.clone())?;
+    let profiles = store
+        .get_mut("profiles")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Assistant profile store is missing profiles.".to_string())?;
+
+    let mut migrated = 0usize;
+    for profile in profiles.iter_mut() {
+        if migrate_profile_to_openai(profile, deleted_model) {
+            migrated += 1;
+        }
+    }
+
+    if migrated == 0 {
+        return Ok(json!({
+            "migrated": 0,
+            "provider": "openai",
+            "model": OPENAI_FALLBACK_MODEL
+        }));
+    }
+
+    store["updatedAt"] = json!(timestamp_millis());
+    save_assistant_profile_store_inner(app.clone(), store)?;
+
+    let _ = app.emit(
+        "assistant-profiles-migrated",
+        json!({
+            "deletedModel": deleted_model,
+            "migrated": migrated,
+            "provider": "openai",
+            "model": OPENAI_FALLBACK_MODEL
+        }),
+    );
+
+    Ok(json!({
+        "migrated": migrated,
+        "provider": "openai",
+        "model": OPENAI_FALLBACK_MODEL
+    }))
 }
 
 fn timestamp_millis() -> String {
@@ -399,6 +553,86 @@ fn get_ollama_status_inner() -> OllamaStatus {
             error: Some(error).or(cli_error),
         },
     }
+}
+
+fn model_names_match(left: &str, right: &str) -> bool {
+    let left = left.trim().to_lowercase();
+    let right = right.trim().to_lowercase();
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    if left == right {
+        return true;
+    }
+
+    left.starts_with(&format!("{right}:")) || right.starts_with(&format!("{left}:"))
+}
+
+fn resolve_installed_model_name(requested: &str, installed: &[String]) -> Option<String> {
+    installed
+        .iter()
+        .find(|name| model_names_match(name, requested))
+        .cloned()
+}
+
+fn is_allowed_model(model: &str) -> bool {
+    ALLOWED_MODELS.iter().any(|allowed| model_names_match(allowed, model))
+}
+
+fn wait_until_model_removed(model: &str) -> Result<(), String> {
+    for _ in 0..6 {
+        let installed = get_installed_models()?;
+        if resolve_installed_model_name(model, &installed).is_none() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(300));
+    }
+
+    Err(format!("Model {model} is still present after delete."))
+}
+
+fn delete_ollama_model_inner(model: &str) -> Result<Value, String> {
+    let status = get_ollama_status_inner();
+    if !status.running {
+        return Err("Ollama is not running.".to_string());
+    }
+
+    let resolved_model = match resolve_installed_model_name(model, &status.installed_models) {
+        Some(resolved) => resolved,
+        None => {
+            return Ok(json!({
+                "ok": true,
+                "model": model,
+                "alreadyRemoved": true
+            }));
+        }
+    };
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .delete(format!("{OLLAMA_BASE_URL}/api/delete"))
+        .json(&json!({ "model": resolved_model }))
+        .send()
+        .map_err(|error| error.to_string())?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Ollama returned HTTP {} while deleting {resolved_model}.",
+            response.status()
+        ));
+    }
+
+    wait_until_model_removed(model)?;
+
+    Ok(json!({
+        "ok": true,
+        "model": model,
+        "resolvedModel": resolved_model
+    }))
 }
 
 fn run_command_to_string(mut command: Command) -> Result<String, String> {
@@ -1536,7 +1770,7 @@ fn analyze_document_inner(path: String) -> Result<Value, String> {
 fn http_json_response(status: &str, body: serde_json::Value) -> String {
     let body = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".to_string());
     format!(
-        "HTTP/1.1 {status}\r\ncontent-type: application/json; charset=utf-8\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\ncontent-type: application/json; charset=utf-8\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n{body}",
         body.len()
     )
 }
@@ -1565,43 +1799,157 @@ fn http_status_error(prefix: &str, status: reqwest::StatusCode, text: &str) -> S
 
 fn http_empty_response(status: &str) -> String {
     format!(
-        "HTTP/1.1 {status}\r\ncontent-length: 0\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n"
+        "HTTP/1.1 {status}\r\ncontent-length: 0\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n"
     )
 }
 
-fn handle_desktop_bridge_connection(mut stream: TcpStream) {
-    let mut buffer = [0_u8; 2048];
-    let bytes_read = match stream.read(&mut buffer) {
-        Ok(bytes_read) => bytes_read,
-        Err(_) => return,
-    };
+fn read_http_request(mut stream: &mut TcpStream) -> Result<(String, String, String), String> {
+    let mut buffer = Vec::new();
+    let mut temp = [0_u8; 1024];
 
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let request_line = request.lines().next().unwrap_or_default();
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or_default();
-    let path = parts.next().unwrap_or("/");
+    loop {
+        let bytes_read = stream.read(&mut temp).map_err(|error| error.to_string())?;
+        if bytes_read == 0 {
+            break;
+        }
 
-    let response = match (method, path) {
-        ("OPTIONS", _) => http_empty_response("204 No Content"),
-        ("GET", "/health") => http_json_response(
-            "200 OK",
+        buffer.extend_from_slice(&temp[..bytes_read]);
+
+        let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+            if buffer.len() > 65536 {
+                return Err("Request headers are too large.".to_string());
+            }
+            continue;
+        };
+
+        let header_end = header_end + 4;
+        let headers = String::from_utf8_lossy(&buffer[..header_end]).into_owned();
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower
+                    .strip_prefix("content-length:")
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+            })
+            .unwrap_or(0);
+
+        while buffer.len() < header_end + content_length {
+            let bytes_read = stream.read(&mut temp).map_err(|error| error.to_string())?;
+            if bytes_read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&temp[..bytes_read]);
+        }
+
+        let request_line = headers.lines().next().unwrap_or_default();
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or_default().to_string();
+        let path = parts.next().unwrap_or("/").to_string();
+        let body = String::from_utf8_lossy(&buffer[header_end..header_end + content_length]).to_string();
+        return Ok((method, path, body));
+    }
+
+    Err("Empty HTTP request.".to_string())
+}
+
+fn handle_desktop_bridge_connection(mut stream: TcpStream, app: AppHandle) {
+    let response = match read_http_request(&mut stream) {
+        Ok((method, path, body)) => match (method.as_str(), path.as_str()) {
+            ("OPTIONS", _) => http_empty_response("204 No Content"),
+            ("GET", "/health") => http_json_response(
+                "200 OK",
+                json!({
+                    "ok": true,
+                    "service": "miva-desktop",
+                    "port": 43111,
+                    "app": "MiVA Desktop",
+                    "capabilities": ["ollama-status", "hardware-info", "profile-migration", "model-delete"],
+                    "note": "Desktop bridge for web console local checks and profile migration."
+                }),
+            ),
+            ("GET", "/ollama/status") => http_json_response("200 OK", json!(get_ollama_status_inner())),
+            ("GET", "/hardware") => http_json_response("200 OK", json!(get_hardware_info_inner())),
+            ("POST", "/profiles/migrate-deleted-model") => {
+                let payload = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({}));
+                let deleted_model = payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim();
+
+                if deleted_model.is_empty() {
+                    http_json_response(
+                        "400 Bad Request",
+                        json!({
+                            "error": "MODEL_REQUIRED",
+                            "message": "Request body must include a model name."
+                        }),
+                    )
+                } else {
+                    match migrate_profiles_from_deleted_model_inner(app, deleted_model) {
+                        Ok(result) => http_json_response("200 OK", result),
+                        Err(error) => http_json_response(
+                            "500 Internal Server Error",
+                            json!({
+                                "error": "PROFILE_MIGRATION_FAILED",
+                                "message": error
+                            }),
+                        ),
+                    }
+                }
+            }
+            ("POST", "/models/delete") => {
+                let payload = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({}));
+                let model = payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim();
+
+                if model.is_empty() {
+                    http_json_response(
+                        "400 Bad Request",
+                        json!({
+                            "error": "MODEL_REQUIRED",
+                            "message": "Request body must include a model name."
+                        }),
+                    )
+                } else if !is_allowed_model(model) {
+                    http_json_response(
+                        "400 Bad Request",
+                        json!({
+                            "error": "MODEL_NOT_ALLOWED",
+                            "allowedModels": ALLOWED_MODELS
+                        }),
+                    )
+                } else {
+                    match delete_ollama_model_inner(model) {
+                        Ok(result) => http_json_response("200 OK", result),
+                        Err(error) => http_json_response(
+                            "502 Bad Gateway",
+                            json!({
+                                "ok": false,
+                                "model": model,
+                                "error": error
+                            }),
+                        ),
+                    }
+                }
+            }
+            _ => http_json_response(
+                "404 Not Found",
+                json!({
+                    "error": "NOT_FOUND",
+                    "path": path
+                }),
+            ),
+        },
+        Err(error) => http_json_response(
+            "400 Bad Request",
             json!({
-                "ok": true,
-                "service": "miva-desktop",
-                "port": 43111,
-                "app": "MiVA Desktop",
-                "capabilities": ["ollama-status", "hardware-info"],
-                "note": "Read-only desktop bridge for web console connection checks."
-            }),
-        ),
-        ("GET", "/ollama/status") => http_json_response("200 OK", json!(get_ollama_status_inner())),
-        ("GET", "/hardware") => http_json_response("200 OK", json!(get_hardware_info_inner())),
-        _ => http_json_response(
-            "404 Not Found",
-            json!({
-                "error": "NOT_FOUND",
-                "path": path
+                "error": "INVALID_REQUEST",
+                "message": error
             }),
         ),
     };
@@ -1610,8 +1958,8 @@ fn handle_desktop_bridge_connection(mut stream: TcpStream) {
     let _ = stream.flush();
 }
 
-fn start_desktop_bridge() {
-    thread::spawn(|| {
+fn start_desktop_bridge(app: AppHandle) {
+    thread::spawn(move || {
         let listener = match TcpListener::bind(DESKTOP_BRIDGE_ADDR) {
             Ok(listener) => listener,
             Err(error) => {
@@ -1622,7 +1970,10 @@ fn start_desktop_bridge() {
 
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => handle_desktop_bridge_connection(stream),
+                Ok(stream) => {
+                    let app = app.clone();
+                    thread::spawn(move || handle_desktop_bridge_connection(stream, app));
+                }
                 Err(error) => eprintln!("MiVA desktop bridge connection failed: {error}"),
             }
         }
@@ -1759,6 +2110,20 @@ async fn save_assistant_profile_store(app: AppHandle, store: Value) -> Result<Va
 }
 
 #[tauri::command]
+async fn load_app_preferences(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_app_preferences_inner(app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn save_app_preferences(app: AppHandle, preferences: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || save_app_preferences_inner(app, preferences))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn load_chat_history_store(app: AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || load_chat_history_store_inner(app))
         .await
@@ -1784,24 +2149,164 @@ async fn delete_runtime_chat_messages(
     .map_err(|error| error.to_string())?
 }
 
+fn focus_main_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_focus();
+    }
+}
+
+fn nudge_overlay_transparency(overlay: &WebviewWindow) -> Result<(), String> {
+    let size = overlay.inner_size().map_err(|error| error.to_string())?;
+    let nudged = PhysicalSize::new(size.width.saturating_add(1), size.height);
+    overlay
+        .set_size(nudged)
+        .map_err(|error| error.to_string())?;
+    overlay.set_size(size).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn position_character_overlay_beside_main(
+    app: &AppHandle,
+    overlay: &WebviewWindow,
+) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found.".to_string())?;
+    let main_pos = main.outer_position().map_err(|error| error.to_string())?;
+    let main_size = main.outer_size().map_err(|error| error.to_string())?;
+    let overlay_size = overlay.outer_size().map_err(|error| error.to_string())?;
+    let gap = 16_i32;
+    let monitor = overlay
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| main.current_monitor().ok().flatten());
+
+    let mut x = main_pos.x + main_size.width as i32 + gap;
+    let mut y = main_pos.y;
+
+    if let Some(monitor) = monitor {
+        let monitor_pos = monitor.position();
+        let monitor_size = monitor.size();
+        let monitor_right = monitor_pos.x + monitor_size.width as i32;
+        let monitor_bottom = monitor_pos.y + monitor_size.height as i32;
+        let overlay_width = overlay_size.width as i32;
+        let overlay_height = overlay_size.height as i32;
+
+        if x + overlay_width > monitor_right {
+            x = main_pos.x - overlay_width - gap;
+        }
+
+        if x < monitor_pos.x {
+            x = monitor_pos.x + ((monitor_size.width as i32 - overlay_width) / 2).max(gap);
+        }
+
+        if y + overlay_height > monitor_bottom {
+            y = (monitor_bottom - overlay_height).max(monitor_pos.y);
+        }
+
+        if y < monitor_pos.y {
+            y = monitor_pos.y;
+        }
+    }
+
+    overlay
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn build_character_overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    WebviewWindowBuilder::new(
+        app,
+        CHARACTER_OVERLAY_LABEL,
+        WebviewUrl::App("index.html?overlay=character".into()),
+    )
+    .title("MiVA Character")
+    .inner_size(380.0, 540.0)
+    .min_inner_size(280.0, 360.0)
+    .resizable(true)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .focused(false)
+    .focusable(true)
+    .always_on_top(true)
+    .skip_taskbar(false)
+    .build()
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn show_character_overlay(app: AppHandle) -> Result<Value, String> {
+    if let Some(window) = app.get_webview_window(CHARACTER_OVERLAY_LABEL) {
+        position_character_overlay_beside_main(&app, &window)?;
+        window.show().map_err(|error| error.to_string())?;
+        let _ = nudge_overlay_transparency(&window);
+        focus_main_window(&app);
+        return Ok(json!({
+            "open": true,
+            "created": false
+        }));
+    }
+
+    let app_handle = app.clone();
+    let overlay = tauri::async_runtime::spawn_blocking(move || build_character_overlay_window(&app_handle))
+        .await
+        .map_err(|error| error.to_string())??;
+
+    position_character_overlay_beside_main(&app, &overlay)?;
+    overlay.show().map_err(|error| error.to_string())?;
+    let _ = nudge_overlay_transparency(&overlay);
+    focus_main_window(&app);
+
+    Ok(json!({
+        "open": true,
+        "created": true
+    }))
+}
+
+#[tauri::command]
+fn close_character_overlay(app: AppHandle) -> Result<Value, String> {
+    if let Some(window) = app.get_webview_window(CHARACTER_OVERLAY_LABEL) {
+        window.close().map_err(|error| error.to_string())?;
+    }
+
+    Ok(json!({
+        "open": false
+    }))
+}
+
+#[tauri::command]
+fn is_character_overlay_open(app: AppHandle) -> Result<bool, String> {
+    Ok(app.get_webview_window(CHARACTER_OVERLAY_LABEL).is_some())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            start_desktop_bridge();
+            start_desktop_bridge(app.handle().clone());
             app.manage(LocalHelperProcess(Mutex::new(start_local_helper_process())));
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                if let Some(state) = window.app_handle().try_state::<LocalHelperProcess>() {
-                    if let Ok(mut child) = state.0.lock() {
-                        if let Some(process) = child.as_mut() {
-                            let _ = process.kill();
+                if window.label() == "main" {
+                    if let Some(overlay) = window.app_handle().get_webview_window(CHARACTER_OVERLAY_LABEL) {
+                        let _ = overlay.close();
+                    }
+
+                    if let Some(state) = window.app_handle().try_state::<LocalHelperProcess>() {
+                        if let Ok(mut child) = state.0.lock() {
+                            if let Some(process) = child.as_mut() {
+                                let _ = process.kill();
+                            }
+                            *child = None;
                         }
-                        *child = None;
                     }
                 }
             }
@@ -1822,9 +2327,14 @@ pub fn run() {
             get_live2d_runtime_status,
             load_assistant_profile_store,
             save_assistant_profile_store,
+            load_app_preferences,
+            save_app_preferences,
             load_chat_history_store,
             save_chat_history_store,
-            delete_runtime_chat_messages
+            delete_runtime_chat_messages,
+            show_character_overlay,
+            close_character_overlay,
+            is_character_overlay_open
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

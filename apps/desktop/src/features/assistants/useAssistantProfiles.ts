@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { isTauriRuntime } from "../../app/tauri";
 import type { Locale } from "../../i18n";
 import { deleteCloudAssistantProfile, listCloudAssistantProfiles, upsertCloudAssistantProfile } from "../cloud/client";
 import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
@@ -12,6 +14,7 @@ import {
   getNewAssistantDraftBaseline as getDefaultNewAssistantDraftFingerprint,
   hasDuplicateAssistantProfileName,
 } from "./profileIdentity";
+import { markSetupCompleted } from "../app/storage";
 import { emptyAssistantProfileStore, loadLocalAssistantProfileStore, saveLocalAssistantProfileStore } from "./storage";
 import {
   addAssistantProfileStore,
@@ -610,6 +613,8 @@ export function useAssistantProfiles({
         }
       }
       setAssistantProfileSaveState("idle");
+      await markSetupCompleted("studio");
+      onLog("Initial setup marked complete.");
       return true;
     } catch (error) {
       onLog(`Enter MiVA blocked: ${String(error)}`);
@@ -666,6 +671,50 @@ export function useAssistantProfiles({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+
+    void listen<{
+      deletedModel: string;
+      migrated: number;
+      provider: ProviderId;
+      model: string;
+    }>("assistant-profiles-migrated", async (event) => {
+      try {
+        const store = await loadLocalAssistantProfileStore();
+        setAssistantProfileStore(store);
+
+        const activeProfile = store.profiles.find((profile) => profile.id === store.activeProfileId)
+          ?? store.profiles[0]
+          ?? null;
+
+        if (activeProfile) {
+          setActiveLocalProfileId(activeProfile.id);
+          applyLocalAssistantProfile(activeProfile);
+        } else if (selectedProvider === "ollama" && selectedModel === event.payload.deletedModel) {
+          setSelectedProvider("openai");
+          setSelectedCloudModel(event.payload.model);
+        }
+
+        onLog(
+          `${event.payload.migrated} assistant(s) switched to ${event.payload.provider} (${event.payload.model}) after ${event.payload.deletedModel} was removed.`,
+        );
+      } catch (error) {
+        onLog(`Assistant profile reload after model deletion failed: ${String(error)}`);
+      }
+    }).then((dispose) => {
+      unlisten = dispose;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [onLog]);
 
   useEffect(() => {
     if (!authSession || assistantProfileSyncMessage !== SIGN_IN_BEFORE_SYNC_MESSAGE) {
