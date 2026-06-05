@@ -198,6 +198,7 @@ export interface CloudState {
   adminStats: AdminStats | null;
   apiKeys: ApiKeyRecord[];
   usageSummary: UsageSummary | null;
+  googleOAuthConfigured?: boolean;
   error?: string;
   lastChecked: Date | null;
 }
@@ -245,19 +246,41 @@ function buildRequestHeaders(url: string, initHeaders?: HeadersInit) {
   return headers;
 }
 
+function formatApiError(status: number, statusText: string, body: string) {
+  try {
+    const parsed = JSON.parse(body) as { error?: string; message?: string };
+    if (parsed.message && parsed.message !== parsed.error) {
+      return parsed.message;
+    }
+    if (parsed.error) {
+      return parsed.error;
+    }
+  } catch {
+    // Fall back to the raw response body below.
+  }
+
+  return body ? `${status} ${statusText}: ${body}` : `${status} ${statusText}`;
+}
+
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: buildRequestHeaders(url, init?.headers),
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    const body = await response.text();
+    throw new Error(formatApiError(response.status, response.statusText, body));
   }
   return response.json() as Promise<T>;
 }
 
 export async function checkCloudApi() {
-  return fetchJson<{ ok: boolean; service: string; note?: string }>(`${CLOUD_API_URL}/health`);
+  return fetchJson<{
+    ok: boolean;
+    service: string;
+    note?: string;
+    googleOAuthConfigured?: boolean;
+  }>(`${CLOUD_API_URL}/health`);
 }
 
 export async function login(email: string, password: string) {

@@ -4,6 +4,7 @@ import {
   DEV_USER_ID,
   fromDbProvider,
   normalizeApiKeyPayload,
+  RequestLike,
   serializeApiKey,
   toDbCredentialStatus,
   toDbProvider,
@@ -18,52 +19,97 @@ export class CredentialsService {
     @Inject(AuthService) private readonly auth: AuthService,
   ) {}
 
-  async getApiKeys() {
+  private async resolveUserId(req?: RequestLike) {
+    if (!req) {
+      return DEV_USER_ID;
+    }
+
+    const user = await this.auth.getRequestUser(req);
+    return user?.id || DEV_USER_ID;
+  }
+
+  async getApiKeys(req?: RequestLike) {
+    const userId = await this.resolveUserId(req);
     const keys = await this.prisma.providerCredential.findMany({
-      where: { userId: DEV_USER_ID },
+      where: { userId },
       orderBy: { updatedAt: "desc" },
     });
     return { keys: keys.map(serializeApiKey) };
   }
 
-  async saveApiKey(payload: any) {
+  async syncApiKeys(req: RequestLike) {
+    const token = this.auth.getBearerToken(req);
+    const sessionUser = await this.auth.getUserFromSessionToken(token);
+    if (!sessionUser) {
+      throwHttp(401, "UNAUTHORIZED", "Sign in before syncing provider API keys.");
+    }
+
+    const keys = await this.prisma.providerCredential.findMany({
+      where: { userId: sessionUser.id },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    const syncProviders = new Set(["openai", "gemini", "groq"]);
+    const synced: Record<string, string> = {};
+
+    for (const key of keys) {
+      const provider = fromDbProvider(key.provider);
+      if (!syncProviders.has(provider) || synced[provider]) {
+        continue;
+      }
+
+      const value = String(key.encryptedKey || "").trim();
+      if (value) {
+        synced[provider] = value;
+      }
+    }
+
+    return {
+      keys: synced,
+      syncedAt: new Date().toISOString(),
+    };
+  }
+
+  async saveApiKey(req: RequestLike, payload: any) {
+    const userId = await this.resolveUserId(req);
     const nextKey = normalizeApiKeyPayload({ ...payload });
     const existingKey = payload.id
       ? await this.prisma.providerCredential.findUnique({ where: { id: payload.id } })
       : payload.provider !== "custom"
         ? await this.prisma.providerCredential.findFirst({
             where: {
-              userId: DEV_USER_ID,
+              userId,
               provider: toDbProvider(payload.provider) as any,
             },
           })
         : null;
+    const incomingKey = String(payload.key || "").trim();
     const key = existingKey
       ? await this.prisma.providerCredential.update({
           where: { id: existingKey.id },
           data: {
             provider: toDbProvider(nextKey.provider) as any,
             label: nextKey.label,
-            encryptedKey: String(payload.key || ""),
-            maskedKey: nextKey.maskedKey,
+            encryptedKey: incomingKey || existingKey.encryptedKey,
+            maskedKey: incomingKey ? nextKey.maskedKey : existingKey.maskedKey,
             status: toDbCredentialStatus(nextKey.status) as any,
-            lastValidatedAt: null,
+            lastValidatedAt: incomingKey ? null : existingKey.lastValidatedAt,
           },
         })
       : await this.prisma.providerCredential.create({
           data: {
             id: nextKey.id,
-            userId: DEV_USER_ID,
+            userId,
             provider: toDbProvider(nextKey.provider) as any,
             label: nextKey.label,
-            encryptedKey: String(payload.key || ""),
+            encryptedKey: incomingKey,
             maskedKey: nextKey.maskedKey,
             status: toDbCredentialStatus(nextKey.status) as any,
             lastValidatedAt: null,
           },
         });
 
-    await this.auth.recordUsageEvent("api_key_configured", nextKey.provider);
+    await this.auth.recordUsageEvent("api_key_configured", nextKey.provider, userId);
     return { key: serializeApiKey(key) };
   }
 

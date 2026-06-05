@@ -1,6 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { DEV_PASSWORDS, DEV_USER_ID, assistantProfiles, hashSecret, toDbProvider, toDbProfileSource } from "./api.shared.js";
+import { getDemoProviderKey } from "../../../packages/shared/src/demo-env.mjs";
+import { DEV_PASSWORDS, DEV_USER_ID, assistantProfiles, hashSecret, maskApiKey, toDbProvider, toDbProfileSource } from "./api.shared.js";
 import { PrismaService } from "./prisma.service.js";
+
+const demoProviderCredentials = [
+  { id: "key_openai_demo", provider: "OPENAI", label: "OpenAI" },
+  { id: "key_gemini_demo", provider: "GEMINI", label: "Gemini" },
+  { id: "key_groq_demo", provider: "GROQ", label: "Groq" },
+] as const;
 
 @Injectable()
 export class SeedService {
@@ -76,16 +83,41 @@ export class SeedService {
       },
     });
 
-    const credentialCount = await this.prisma.providerCredential.count({ where: { userId: DEV_USER_ID } });
-    if (credentialCount === 0) {
+    for (const credential of demoProviderCredentials) {
+      const provider = credential.provider.toLowerCase();
+      const key = getDemoProviderKey(provider);
+      if (!key) {
+        continue;
+      }
+
+      const existing = await this.prisma.providerCredential.findFirst({
+        where: {
+          userId: DEV_USER_ID,
+          provider: credential.provider,
+        },
+      });
+
+      if (existing) {
+        await this.prisma.providerCredential.update({
+          where: { id: existing.id },
+          data: {
+            label: credential.label,
+            encryptedKey: key,
+            maskedKey: maskApiKey(key),
+            status: "CONFIGURED",
+          },
+        });
+        continue;
+      }
+
       await this.prisma.providerCredential.create({
         data: {
-          id: "key_gemini_dev",
+          id: credential.id,
           userId: DEV_USER_ID,
-          provider: "GEMINI",
-          label: "Gemini",
-          encryptedKey: "",
-          maskedKey: "AIza...demo",
+          provider: credential.provider,
+          label: credential.label,
+          encryptedKey: key,
+          maskedKey: maskApiKey(key),
           status: "CONFIGURED",
         },
       });

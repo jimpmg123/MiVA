@@ -23,7 +23,19 @@ import {
   CreditCard,
   Activity,
   CheckCircle2,
-  CircleStop
+  CircleStop,
+  MessageSquare,
+  Heart,
+  Share2,
+  Upload,
+  Users,
+  Bookmark,
+  ThumbsUp,
+  Send,
+  Sparkles,
+  Grid3x3,
+  List,
+  Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LandingPage } from './pages/LandingPage';
@@ -103,26 +115,48 @@ type AuthState = {
 const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
 const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
 const DEFAULT_MODEL_ID = 'qwen3:4b';
-const CLOUD_FALLBACK_ROUTES: Array<{ provider: ProviderId; model: string }> = [
-  { provider: 'openai', model: 'gpt-4o-mini' },
-  { provider: 'gemini', model: 'gemini-2.5-flash' },
-  { provider: 'groq', model: 'llama-3.1-8b-instant' },
-];
 
-function pickRandomCloudRoute(apiKeys: ApiKeyRecord[]) {
-  const configuredProviders = new Set(
-    apiKeys
-      .filter((key) => key.status === 'verified' || key.status === 'configured')
-      .map((key) => key.provider)
-      .filter((provider): provider is 'openai' | 'gemini' | 'groq' =>
-        provider === 'openai' || provider === 'gemini' || provider === 'groq'
-      ),
-  );
-
-  const eligible = CLOUD_FALLBACK_ROUTES.filter((route) => configuredProviders.has(route.provider));
-  const pool = eligible.length > 0 ? eligible : CLOUD_FALLBACK_ROUTES;
-  return pool[Math.floor(Math.random() * pool.length)];
+function clientDebugLog(
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+  hypothesisId: string,
+) {
+  fetch(`${LOCAL_HELPER_URL}/debug/client-log`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 'e45fd0',
+      location,
+      message,
+      data,
+      hypothesisId,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
 }
+function getLocalModelIconSrc(modelKey: string): string | null {
+  const key = modelKey.toLowerCase();
+  if (key.includes('qwen')) return '/images/qwen-icon.png';
+  if (key.includes('exaone')) return '/images/exaone-icon.png';
+  if (key.includes('llama')) return '/images/llama-icon.png';
+  if (key.includes('gemma')) return '/images/gemma-icon.png';
+  if (key.includes('gemini')) return '/images/gemini-icon.png';
+  if (key.includes('gpt') || key.includes('openai')) return '/images/gpt-icon.png';
+  return null;
+}
+
+function ModelCardIcon({ modelKey, className = 'w-6 h-6' }: { modelKey: string; className?: string }) {
+  const src = getLocalModelIconSrc(modelKey);
+  if (src) {
+    return <img alt="" className={`object-contain ${className}`} src={src} />;
+  }
+  return <Database className={className} />;
+}
+const OPENAI_FALLBACK_ROUTE = {
+  provider: 'openai' as const,
+  model: 'gpt-4o-mini',
+};
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 const GOOGLE_WORKSPACE_SCOPE = [
   'https://www.googleapis.com/auth/drive.readonly',
@@ -202,11 +236,12 @@ interface WebConsoleActions {
   refreshConnection: () => Promise<void>;
   startOllama: () => Promise<void>;
   pullModel: (model: string) => Promise<void>;
-  deleteModel: (model: string) => Promise<void>;
+  requestDeleteModel: (model: string) => void;
+  confirmDeleteModel: (model: string) => Promise<void>;
 }
 
 interface ActionState {
-  type: 'idle' | 'refreshing' | 'starting-ollama' | 'pulling-model';
+  type: 'idle' | 'refreshing' | 'starting-ollama' | 'pulling-model' | 'deleting-model';
   message?: string;
   progress?: number;
   model?: string;
@@ -275,11 +310,56 @@ function formatRelativeTime(date: Date | null) {
   return `${Math.round(seconds / 60)} mins ago`;
 }
 
+function modelNamesMatch(left: string, right: string) {
+  const a = left.trim().toLowerCase();
+  const b = right.trim().toLowerCase();
+  if (!a || !b) {
+    return false;
+  }
+  if (a === b) {
+    return true;
+  }
+
+  return a.startsWith(`${b}:`) || b.startsWith(`${a}:`);
+}
+
+function isModelInstalledOnDevice(model: LocalModel, connection: ConnectionState) {
+  const installedModels = connection.ollama?.installedModels || [];
+  return installedModels.some((name) => modelNamesMatch(name, model.ollamaName));
+}
+
+function applyDeletedModelToConnection(connection: ConnectionState, deletedModel: string): ConnectionState {
+  const installedModels = (connection.ollama?.installedModels || []).filter(
+    (name) => !modelNamesMatch(name, deletedModel),
+  );
+
+  return {
+    ...connection,
+    catalog: connection.catalog.map((item) =>
+      modelNamesMatch(item.ollamaName, deletedModel) ? { ...item, installed: false } : item,
+    ),
+    ollama: connection.ollama
+      ? {
+          ...connection.ollama,
+          installedModels,
+          installedModelCount: installedModels.length,
+        }
+      : connection.ollama,
+  };
+}
+
+function normalizeOllamaStatus(raw: OllamaStatus & { installed_models?: string[]; installed_model_count?: number }): OllamaStatus {
+  return {
+    ...raw,
+    installedModels: raw.installedModels ?? raw.installed_models,
+    installedModelCount: raw.installedModelCount ?? raw.installed_model_count ?? raw.installedModels?.length ?? raw.installed_models?.length,
+  };
+}
+
 function getActiveModel(connection: ConnectionState) {
-  const installed = connection.ollama?.installedModels || [];
   const catalog = connection.catalog.length > 0 ? connection.catalog : fallbackCatalog;
-  return catalog.find((model) => installed.includes(model.ollamaName) && model.ollamaName === DEFAULT_MODEL_ID)
-    || catalog.find((model) => installed.includes(model.ollamaName))
+  return catalog.find((model) => isModelInstalledOnDevice(model, connection) && model.ollamaName === DEFAULT_MODEL_ID)
+    || catalog.find((model) => isModelInstalledOnDevice(model, connection))
     || catalog.find((model) => model.ollamaName === DEFAULT_MODEL_ID)
     || catalog[0];
 }
@@ -727,13 +807,69 @@ const DevicesPage = ({ connection, actions }: { connection: ConnectionState; act
   );
 };
 
-const ModelsPage = ({ connection, action, actions }: { connection: ConnectionState; action: ActionState; actions: WebConsoleActions }) => {
+const ModelDeleteConfirmCard = ({
+  copy,
+  modelName,
+  modelLabel,
+  onConfirm,
+  onDismiss,
+}: {
+  copy: WebMessages['models'];
+  modelName: string;
+  modelLabel: string;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) => (
+  <div
+    className="rounded-2xl border border-red-100 bg-white p-5 shadow-xl"
+    onClick={(event) => event.stopPropagation()}
+  >
+    <p className="text-sm font-bold text-slate-900">{copy.deleteConfirmTitle}</p>
+    <p className="mt-2 text-xs leading-6 text-slate-500">
+      <span className="font-semibold text-slate-700">{modelLabel}</span>
+      <code className="mx-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">{modelName}</code>
+      {copy.deleteConfirmBody}
+    </p>
+    <div className="mt-4 flex justify-end gap-2">
+      <button
+        className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+        onClick={onDismiss}
+        type="button"
+      >
+        {copy.cancel}
+      </button>
+      <button
+        className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600 active:scale-[0.98]"
+        onClick={onConfirm}
+        type="button"
+      >
+        {copy.delete}
+      </button>
+    </div>
+  </div>
+);
+
+const ModelsPage = ({
+  connection,
+  action,
+  actions,
+  pendingDeleteModel,
+  onDismissDelete,
+}: {
+  connection: ConnectionState;
+  action: ActionState;
+  actions: WebConsoleActions;
+  pendingDeleteModel: string | null;
+  onDismissDelete: () => void;
+}) => {
+  const { copy } = useLocale();
   const catalog = connection.catalog.length > 0 ? connection.catalog : fallbackCatalog;
-  const installedSet = new Set(connection.ollama?.installedModels || []);
   const activeModel = getActiveModel(connection);
-  const installedCount = connection.ollama?.installedModelCount ?? installedSet.size;
+  const installedCount = catalog.filter((model) => isModelInstalledOnDevice(model, connection)).length;
   const ramTotal = connection.hardware?.memory?.total_gb;
-  const isBusy = action.type === 'starting-ollama' || action.type === 'pulling-model';
+  const helperReady = connection.helper === 'connected';
+  const canDeleteModels = helperReady || connection.desktop === 'connected';
+  const isBusy = action.type === 'starting-ollama' || action.type === 'pulling-model' || action.type === 'deleting-model';
 
   return (
   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-10">
@@ -756,11 +892,13 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
       </button>
     </div>
 
-    {action.type !== 'idle' && action.type !== 'pulling-model' && action.message && (
-      <Card className="p-5 border-primary-container/10">
+    {action.message && action.type !== 'pulling-model' && action.type !== 'refreshing' && (
+      <Card className={`p-5 ${action.type === 'idle' && action.message.toLowerCase().includes('failed') ? 'border-red-100 bg-red-50/40' : 'border-primary-container/10'}`}>
         <div className="flex items-center justify-between gap-6">
           <div>
-            <p className="text-xs font-black uppercase tracking-widest text-slate-400">{action.type.replace('-', ' ')}</p>
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400">
+              {action.type === 'idle' ? 'Status' : action.type.replace('-', ' ')}
+            </p>
             <p className="font-bold text-slate-800 mt-1">{action.message}</p>
           </div>
         </div>
@@ -769,12 +907,12 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
 
     <div className="grid grid-cols-12 gap-8">
       <div className="col-span-12 lg:col-span-8 h-[380px] group relative rounded-[32px] overflow-hidden shadow-2xl">
-         <img src="https://images.unsplash.com/photo-1614728263952-84ea256f960f?q=80&w=1200&auto=format&fit=crop" className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" />
+         <img src="/images/ai-background.png" alt="" className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" />
          <div className="absolute inset-0 bg-gradient-to-r from-slate-900/90 via-slate-900/40 to-transparent p-12 flex flex-col justify-center text-white">
             <div className="flex items-center gap-3 mb-4">
               <span className="bg-white/10 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold uppercase border border-white/10">Default Model</span>
-              <span className={`flex items-center gap-1 text-xs font-bold ${installedSet.has(activeModel?.ollamaName || '') ? 'text-green-400' : 'text-amber-300'}`}>
-                <RefreshCw className="w-3 h-3" /> {installedSet.has(activeModel?.ollamaName || '') ? 'Installed' : 'Available'}
+              <span className={`flex items-center gap-1 text-xs font-bold ${activeModel && isModelInstalledOnDevice(activeModel, connection) ? 'text-green-400' : 'text-amber-300'}`}>
+                <RefreshCw className="w-3 h-3" /> {activeModel && isModelInstalledOnDevice(activeModel, connection) ? 'Installed' : 'Available'}
               </span>
             </div>
             <h3 className="text-5xl font-black mb-2">{activeModel?.label || 'Qwen3 4B'}</h3>
@@ -782,10 +920,10 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
             <div className="flex gap-4 items-center">
               <button
                 onClick={() => activeModel?.ollamaName && actions.pullModel(activeModel.ollamaName)}
-                disabled={isBusy || !connection.ollama?.running || installedSet.has(activeModel?.ollamaName || '')}
+                disabled={isBusy || !connection.ollama?.running || (activeModel ? isModelInstalledOnDevice(activeModel, connection) : false)}
                 className="bg-white text-slate-900 px-8 py-3.5 rounded-2xl font-bold flex items-center gap-2 transition-all active:scale-95 shadow-xl hover:bg-slate-50 disabled:opacity-60 disabled:active:scale-100"
               >
-                <Download className="w-4 h-4" /> {installedSet.has(activeModel?.ollamaName || '') ? 'Ready' : 'Download Model'}
+                <Download className="w-4 h-4" /> {activeModel && isModelInstalledOnDevice(activeModel, connection) ? 'Ready' : 'Download Model'}
               </button>
               <div className="text-xs text-white/70">
                 <p className="font-bold text-white">{activeModel?.ollamaName || DEFAULT_MODEL_ID}</p>
@@ -841,15 +979,16 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
            {catalog.map((model) => {
-             const installed = installedSet.has(model.ollamaName);
+             const installed = isModelInstalledOnDevice(model, connection);
              const active = activeModel?.ollamaName === model.ollamaName;
+             const deletePending = pendingDeleteModel === model.ollamaName;
 
              return (
              <Card key={model.id || model.ollamaName} className="group hover:shadow-xl transition-all p-8 relative">
                <div className="flex justify-between items-start mb-8">
                  <div className="flex gap-4">
-                   <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-primary-container/10 group-hover:text-primary-container transition-colors">
-                     <Database className="w-6 h-6" />
+                   <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-primary-container/10 group-hover:text-primary-container transition-colors overflow-hidden">
+                     <ModelCardIcon className="w-9 h-9" modelKey={model.ollamaName || model.id || model.label} />
                    </div>
                    <div>
                      <h4 className="font-bold text-xl text-slate-900">{model.label}</h4>
@@ -879,14 +1018,31 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
                  </button>
                  <button
                    className="px-4 py-3 rounded-2xl border border-slate-100 text-slate-400 transition-all hover:border-transparent hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                   disabled={!installed || isBusy}
-                   onClick={() => actions.deleteModel(model.ollamaName)}
-                   title={installed ? 'Delete model' : 'Model is not installed'}
+                   disabled={!installed || isBusy || !canDeleteModels}
+                   onClick={() => actions.requestDeleteModel(model.ollamaName)}
+                   title={
+                     !canDeleteModels
+                       ? 'MiVA Desktop or local helper must be running to delete models'
+                       : installed
+                         ? 'Delete model'
+                         : 'Model is not installed'
+                   }
                    type="button"
                  >
                    <Trash2 className="w-5 h-5" />
                  </button>
                </div>
+               {deletePending && (
+                 <div className="absolute inset-x-6 bottom-6">
+                   <ModelDeleteConfirmCard
+                     copy={copy.models}
+                     modelLabel={model.label}
+                     modelName={model.ollamaName}
+                     onConfirm={() => void actions.confirmDeleteModel(model.ollamaName)}
+                     onDismiss={onDismissDelete}
+                   />
+                 </div>
+               )}
              </Card>
              );
            })}
@@ -1520,9 +1676,10 @@ const LoginPage = ({
   const [password, setPassword] = useState('miva1234');
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const [googleScriptReady, setGoogleScriptReady] = useState(false);
+  const googleLoginEnabled = Boolean(GOOGLE_CLIENT_ID && cloud.googleOAuthConfigured);
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) {
+    if (!googleLoginEnabled) {
       return;
     }
 
@@ -1544,10 +1701,10 @@ const LoginPage = ({
     script.dataset.mivaGoogleIdentity = 'true';
     script.onload = () => setGoogleScriptReady(true);
     document.head.appendChild(script);
-  }, []);
+  }, [googleLoginEnabled]);
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || !googleScriptReady || !googleButtonRef.current || !window.google?.accounts?.id) {
+    if (!googleLoginEnabled || !googleScriptReady || !googleButtonRef.current || !window.google?.accounts?.id) {
       return;
     }
 
@@ -1568,7 +1725,7 @@ const LoginPage = ({
       width: 336,
       text: 'continue_with',
     });
-  }, [googleScriptReady, onGoogleCredential]);
+  }, [googleLoginEnabled, googleScriptReady, onGoogleCredential]);
 
   const featureCards = [
     [login.featureLocalTitle, login.featureLocalBody],
@@ -1655,7 +1812,7 @@ const LoginPage = ({
               {googleLoginPending && <Badge variant="warning">{login.signingIn}</Badge>}
             </div>
             <div className="mt-4 flex min-h-[44px] justify-center">
-              {GOOGLE_CLIENT_ID ? (
+              {googleLoginEnabled ? (
                 <div ref={googleButtonRef} />
               ) : (
                 <button
@@ -1663,7 +1820,11 @@ const LoginPage = ({
                   disabled
                   type="button"
                 >
-                  {login.googleNotConfigured}
+                  {!GOOGLE_CLIENT_ID
+                    ? login.googleNotConfigured
+                    : cloud.status === 'checking'
+                      ? login.googleChecking
+                      : login.googleBackendNotConfigured}
                 </button>
               )}
             </div>
@@ -1896,7 +2057,161 @@ const IntegrationsPage = () => (
     </motion.div>
 );
 
-const VoiceCharacterPage = () => (
+type PersonaHubFilter = 'trending' | 'new' | 'voice' | 'character';
+type PersonaHubView = 'grid' | 'table';
+
+type PersonaHubComment = {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  likes: number;
+};
+
+type PersonaHubPreset = {
+  id: string;
+  title: string;
+  author: string;
+  avatar: string;
+  voice: string;
+  character: string;
+  useCase: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  commentCount: number;
+  description: string;
+  updatedAt: string;
+  featured?: boolean;
+  comments: PersonaHubComment[];
+};
+
+const personaHubPresets: PersonaHubPreset[] = [
+  {
+    id: 'preset-nova',
+    title: 'Nova Crystal — Calm Desk Companion',
+    author: 'mina.k',
+    avatar: 'https://images.unsplash.com/photo-1635336064449-d133f6311684?q=80&w=200&auto=format&fit=crop',
+    voice: 'Solomon (Deep)',
+    character: 'Nova Crystal',
+    useCase: 'daily',
+    tags: ['2D Avatar', 'Korean', 'Low VRAM'],
+    downloads: 1284,
+    likes: 312,
+    commentCount: 24,
+    description: 'A quiet office assistant with soft TTS and a reactive 2D avatar. Best for note-taking, calendar reminders, and short Q&A.',
+    updatedAt: '2026-06-04T09:12:00.000Z',
+    featured: true,
+    comments: [
+      { id: 'c1', author: 'jay.p', body: 'Imported this on a 8GB laptop — voice latency is great. Would love a night-mode variant.', createdAt: '2026-06-04T11:20:00.000Z', likes: 14 },
+      { id: 'c2', author: 'studio.team', body: 'We forked the voice profile and added a brighter greeting line. Sharing back next week.', createdAt: '2026-06-03T18:02:00.000Z', likes: 8 },
+    ],
+  },
+  {
+    id: 'preset-lyra',
+    title: 'Lyra Spark — Friendly Tutor',
+    author: 'edu.lab',
+    avatar: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?q=80&w=200&auto=format&fit=crop',
+    voice: 'Lyra (Bright)',
+    character: 'Pixel Mentor',
+    useCase: 'study',
+    tags: ['TTS', 'Explain Mode', 'EN/KR'],
+    downloads: 892,
+    likes: 201,
+    commentCount: 17,
+    description: 'Cheerful tutor preset with slower speech rate and step-by-step answer style. Includes character idle animations.',
+    updatedAt: '2026-06-03T14:40:00.000Z',
+    comments: [
+      { id: 'c3', author: 'hana.lee', body: 'Perfect for homework help. The explain-mode prompt is the best part.', createdAt: '2026-06-03T16:10:00.000Z', likes: 11 },
+    ],
+  },
+  {
+    id: 'preset-sol',
+    title: 'Solomon Night — Focus Mode',
+    author: 'dev.local',
+    avatar: 'https://images.unsplash.com/photo-1614726365723-49d988a6ef0e?q=80&w=200&auto=format&fit=crop',
+    voice: 'Solomon (Deep)',
+    character: 'Minimal Orb',
+    useCase: 'work',
+    tags: ['No Avatar', 'Whisper Small', 'Focus'],
+    downloads: 654,
+    likes: 148,
+    commentCount: 9,
+    description: 'Voice-only focus preset. Low distraction, short answers, optimized for coding sessions and late-night work.',
+    updatedAt: '2026-06-02T22:15:00.000Z',
+    comments: [
+      { id: 'c4', author: 'codex.user', body: 'No character overlay keeps CPU usage low. Imported in one click from Desktop.', createdAt: '2026-06-02T23:01:00.000Z', likes: 6 },
+    ],
+  },
+  {
+    id: 'preset-hana',
+    title: 'Hana Bloom — Character-first',
+    author: 'art.miva',
+    avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=200&auto=format&fit=crop',
+    voice: 'Custom (Warm)',
+    character: 'Hana Bloom',
+    useCase: 'character',
+    tags: ['Live2D-ready', 'Reactive', 'Emotive'],
+    downloads: 421,
+    likes: 97,
+    commentCount: 31,
+    description: 'Character-heavy preset with expressive reactions and longer greeting scripts. Upload includes overlay position defaults.',
+    updatedAt: '2026-06-01T08:30:00.000Z',
+    comments: [
+      { id: 'c5', author: 'overlay.fan', body: 'The hover-close behavior pairs nicely with this character pack.', createdAt: '2026-06-01T12:44:00.000Z', likes: 19 },
+      { id: 'c6', author: 'miva.team', body: 'Pinned for Phase 2 community import. Preview only in web console for now.', createdAt: '2026-05-30T09:00:00.000Z', likes: 22 },
+    ],
+  },
+];
+
+const personaHubFilters: Array<{ id: PersonaHubFilter; label: string }> = [
+  { id: 'trending', label: 'Trending' },
+  { id: 'new', label: 'New' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'character', label: 'Character' },
+];
+
+const VoiceCharacterPage = () => {
+  const [personaFilter, setPersonaFilter] = useState<PersonaHubFilter>('trending');
+  const [personaView, setPersonaView] = useState<PersonaHubView>('table');
+  const [selectedPresetId, setSelectedPresetId] = useState(personaHubPresets[0]?.id ?? '');
+  const [draftComment, setDraftComment] = useState('');
+  const [likedPresetIds, setLikedPresetIds] = useState<string[]>([]);
+  const [bookmarkedPresetIds, setBookmarkedPresetIds] = useState<string[]>(['preset-nova']);
+
+  const filteredPresets = useMemo(() => {
+    const sorted = [...personaHubPresets];
+    if (personaFilter === 'new') {
+      return sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+    if (personaFilter === 'voice') {
+      return sorted.filter((preset) => preset.tags.some((tag) => tag.toLowerCase().includes('tts') || tag.toLowerCase().includes('voice') || preset.voice));
+    }
+    if (personaFilter === 'character') {
+      return sorted.filter((preset) => preset.useCase === 'character' || preset.tags.some((tag) => tag.toLowerCase().includes('avatar') || tag.toLowerCase().includes('live2d')));
+    }
+    return sorted.sort((a, b) => b.downloads - a.downloads);
+  }, [personaFilter]);
+
+  const selectedPreset = filteredPresets.find((preset) => preset.id === selectedPresetId) ?? filteredPresets[0] ?? null;
+
+  const togglePresetLike = (presetId: string) => {
+    setLikedPresetIds((current) => (
+      current.includes(presetId)
+        ? current.filter((id) => id !== presetId)
+        : [...current, presetId]
+    ));
+  };
+
+  const togglePresetBookmark = (presetId: string) => {
+    setBookmarkedPresetIds((current) => (
+      current.includes(presetId)
+        ? current.filter((id) => id !== presetId)
+        : [...current, presetId]
+    ));
+  };
+
+  return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-10">
         <div className="flex justify-between items-end">
             <div>
@@ -2064,6 +2379,314 @@ const VoiceCharacterPage = () => (
                 </div>
             </Card>
         </div>
+
+        <section className="space-y-8 pt-8 border-t border-slate-200">
+            <div className="rounded-[28px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-6 md:p-8">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <Badge variant="warning">Preview Mockup</Badge>
+                            <Badge variant="info">Not connected to API</Badge>
+                        </div>
+                        <h3 className="text-2xl font-bold font-display tracking-tight">Persona Hub</h3>
+                        <p className="max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
+                            AI 비서의 <span className="font-semibold text-slate-800">음성·캐릭터·프롬프트 설정</span>을 업로드하고, 다른 사람 프리셋을 둘러본 뒤 댓글로 피드백하는 커뮤니티 보드입니다.
+                            실시간 대화방이 아니라 <span className="font-semibold text-slate-800">게시글 + 댓글 + 가져오기</span> 흐름을 가정한 UI 목업입니다.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                        <button type="button" className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50">
+                            <Share2 className="h-4 w-4" />
+                            Share my preset
+                        </button>
+                        <button type="button" className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20 transition-all hover:opacity-90">
+                            <Upload className="h-4 w-4" />
+                            Upload bundle
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-8">
+                <Card className="col-span-12 xl:col-span-7 p-0 overflow-hidden">
+                    <div className="border-b border-slate-100 p-6 md:p-8">
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <h4 className="text-xl font-bold font-display">Browse presets</h4>
+                                <p className="mt-1 text-sm text-slate-500">Shared assistant bundles ranked by downloads, freshness, and community feedback.</p>
+                            </div>
+                            <div className="flex items-center gap-2 rounded-2xl bg-slate-100 p-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setPersonaView('table')}
+                                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'table' ? 'bg-white text-primary-container shadow-sm' : 'text-slate-400'}`}
+                                >
+                                    <List className="h-3.5 w-3.5" />
+                                    Table
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPersonaView('grid')}
+                                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'grid' ? 'bg-white text-primary-container shadow-sm' : 'text-slate-400'}`}
+                                >
+                                    <Grid3x3 className="h-3.5 w-3.5" />
+                                    Cards
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex flex-wrap gap-2">
+                            {personaHubFilters.map((filter) => (
+                                <button
+                                    key={filter.id}
+                                    type="button"
+                                    onClick={() => setPersonaFilter(filter.id)}
+                                    className={`rounded-full px-4 py-2 text-xs font-bold transition-all ${personaFilter === filter.id ? 'bg-primary-container text-white shadow-md shadow-primary-container/20' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                >
+                                    {filter.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {personaView === 'table' ? (
+                        <div className="overflow-x-auto">
+                            <table className="w-full min-w-[760px] text-left">
+                                <thead className="bg-slate-50 border-b border-slate-100">
+                                    <tr>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Preset</th>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Author</th>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Voice</th>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Character</th>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Downloads</th>
+                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Comments</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {filteredPresets.map((preset) => {
+                                        const isSelected = selectedPreset?.id === preset.id;
+                                        return (
+                                            <tr
+                                                key={preset.id}
+                                                onClick={() => setSelectedPresetId(preset.id)}
+                                                className={`cursor-pointer transition-colors ${isSelected ? 'bg-primary-container/5' : 'hover:bg-slate-50/80'}`}
+                                            >
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <img src={preset.avatar} alt="" className="h-10 w-10 rounded-2xl object-cover" />
+                                                        <div>
+                                                            <p className="text-sm font-bold text-slate-800">{preset.title}</p>
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {preset.featured && <Badge variant="warning">Featured</Badge>}
+                                                                <Badge>{preset.useCase}</Badge>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-sm font-semibold text-slate-600">@{preset.author}</td>
+                                                <td className="px-6 py-4 text-sm text-slate-500">{preset.voice}</td>
+                                                <td className="px-6 py-4 text-sm text-slate-500">{preset.character}</td>
+                                                <td className="px-6 py-4 text-sm font-bold text-slate-700">{preset.downloads.toLocaleString()}</td>
+                                                <td className="px-6 py-4 text-sm font-bold text-slate-700">{preset.commentCount}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
+                            {filteredPresets.map((preset) => {
+                                const isSelected = selectedPreset?.id === preset.id;
+                                return (
+                                    <button
+                                        key={preset.id}
+                                        type="button"
+                                        onClick={() => setSelectedPresetId(preset.id)}
+                                        className={`rounded-[28px] border p-5 text-left transition-all ${isSelected ? 'border-primary-container bg-primary-container/5 shadow-lg shadow-primary-container/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white'}`}
+                                    >
+                                        <div className="flex items-start gap-4">
+                                            <img src={preset.avatar} alt="" className="h-16 w-16 rounded-[24px] object-cover" />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="font-bold text-slate-900">{preset.title}</p>
+                                                <p className="mt-1 text-xs font-semibold text-slate-400">@{preset.author}</p>
+                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                    {preset.tags.slice(0, 3).map((tag) => (
+                                                        <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 ring-1 ring-slate-200">
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+                                            <div className="rounded-2xl bg-white px-3 py-2">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Downloads</p>
+                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.downloads.toLocaleString()}</p>
+                                            </div>
+                                            <div className="rounded-2xl bg-white px-3 py-2">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Likes</p>
+                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.likes}</p>
+                                            </div>
+                                            <div className="rounded-2xl bg-white px-3 py-2">
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Comments</p>
+                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.commentCount}</p>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </Card>
+
+                <Card className="col-span-12 xl:col-span-5 p-0 overflow-hidden">
+                    {selectedPreset ? (
+                        <>
+                            <div className="border-b border-slate-100 p-6 md:p-8">
+                                <div className="flex items-start gap-4">
+                                    <img src={selectedPreset.avatar} alt="" className="h-20 w-20 rounded-[28px] object-cover shadow-lg" />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {selectedPreset.featured && <Badge variant="warning">Featured</Badge>}
+                                            <Badge variant="active">{selectedPreset.useCase}</Badge>
+                                        </div>
+                                        <h4 className="mt-2 text-xl font-bold font-display text-slate-900">{selectedPreset.title}</h4>
+                                        <p className="mt-1 text-sm font-semibold text-slate-500">Shared by @{selectedPreset.author} · {formatRelativeTime(new Date(selectedPreset.updatedAt))}</p>
+                                        <p className="mt-4 text-sm leading-relaxed text-slate-600">{selectedPreset.description}</p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 grid grid-cols-2 gap-3">
+                                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Voice</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-800">{selectedPreset.voice}</p>
+                                    </div>
+                                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Character</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-800">{selectedPreset.character}</p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 flex flex-wrap gap-3">
+                                    <button type="button" className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20">
+                                        <Download className="h-4 w-4" />
+                                        Import to Desktop
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => togglePresetLike(selectedPreset.id)}
+                                        className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${likedPresetIds.includes(selectedPreset.id) ? 'bg-rose-50 text-rose-600 ring-1 ring-rose-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                    >
+                                        <Heart className={`h-4 w-4 ${likedPresetIds.includes(selectedPreset.id) ? 'fill-current' : ''}`} />
+                                        {selectedPreset.likes + (likedPresetIds.includes(selectedPreset.id) ? 1 : 0)}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => togglePresetBookmark(selectedPreset.id)}
+                                        className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                    >
+                                        <Bookmark className={`h-4 w-4 ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'fill-current' : ''}`} />
+                                        Save
+                                    </button>
+                                    <button type="button" className="flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-200">
+                                        <Play className="h-4 w-4" />
+                                        Preview voice
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="border-b border-slate-100 px-6 py-4 md:px-8">
+                                <div className="flex items-center justify-between">
+                                    <h5 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                        <MessageSquare className="h-4 w-4 text-primary-container" />
+                                        Comments ({selectedPreset.comments.length})
+                                    </h5>
+                                    <span className="text-xs font-semibold text-slate-400">Async thread · not live chat</span>
+                                </div>
+                            </div>
+
+                            <div className="max-h-[360px] space-y-4 overflow-y-auto p-6 md:p-8">
+                                {selectedPreset.comments.map((comment) => (
+                                    <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 p-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <p className="text-sm font-bold text-slate-800">@{comment.author}</p>
+                                            <p className="text-xs font-semibold text-slate-400">{formatRelativeTime(new Date(comment.createdAt))}</p>
+                                        </div>
+                                        <p className="mt-2 text-sm leading-relaxed text-slate-600">{comment.body}</p>
+                                        <button type="button" className="mt-3 flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-primary-container">
+                                            <ThumbsUp className="h-3.5 w-3.5" />
+                                            {comment.likes} helpful
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="border-t border-slate-100 bg-slate-50 p-6 md:p-8">
+                                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Leave a comment</label>
+                                <div className="mt-3 flex gap-3">
+                                    <input
+                                        value={draftComment}
+                                        onChange={(event) => setDraftComment(event.target.value)}
+                                        placeholder="This preset worked well on my laptop..."
+                                        className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none ring-primary-container/20 transition-all focus:ring-4"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setDraftComment('')}
+                                        className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white"
+                                    >
+                                        <Send className="h-4 w-4" />
+                                        Post
+                                    </button>
+                                </div>
+                                <p className="mt-3 text-xs font-semibold text-slate-400">Mock only — comments are not saved yet.</p>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="flex h-full min-h-[420px] items-center justify-center p-10 text-center text-slate-400">
+                            Select a preset to open its detail thread.
+                        </div>
+                    )}
+                </Card>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                <Card className="p-6">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
+                            <Upload className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-bold text-slate-800">1. Upload bundle</p>
+                            <p className="text-xs text-slate-500">Export voice, character, prompt settings from Desktop.</p>
+                        </div>
+                    </div>
+                </Card>
+                <Card className="p-6">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
+                            <Users className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-bold text-slate-800">2. Community feedback</p>
+                            <p className="text-xs text-slate-500">Others comment, like, and fork your preset asynchronously.</p>
+                        </div>
+                    </div>
+                </Card>
+                <Card className="p-6">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
+                            <Sparkles className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-bold text-slate-800">3. Import locally</p>
+                            <p className="text-xs text-slate-500">One-click import into MiVA Desktop without sharing chat logs.</p>
+                        </div>
+                    </div>
+                </Card>
+            </div>
+        </section>
         
         <footer className="text-center py-10 opacity-40 border-t border-slate-100 mt-20">
             <p className="text-sm font-bold flex items-center justify-center gap-3">
@@ -2071,7 +2694,8 @@ const VoiceCharacterPage = () => (
             </p>
         </footer>
     </motion.div>
-);
+  );
+};
 
 const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refreshCloud: () => Promise<void> }) => {
   const stats = cloud.adminStats;
@@ -2200,6 +2824,7 @@ export default function App() {
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [showPullCancelConfirm, setShowPullCancelConfirm] = useState(false);
+  const [pendingDeleteModel, setPendingDeleteModel] = useState<string | null>(null);
   const pullAbortRef = useRef<AbortController | null>(null);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
@@ -2242,8 +2867,9 @@ export default function App() {
     };
 
     try {
-      await checkCloudApi();
+      const health = await checkCloudApi();
       next.status = 'connected';
+      next.googleOAuthConfigured = Boolean(health.googleOAuthConfigured);
 
       if (roleOverride === 'admin') {
         next.adminStats = await getAdminStats();
@@ -2264,6 +2890,7 @@ export default function App() {
       next.usageSummary = usageSummary;
     } catch (error) {
       next.status = 'offline';
+      next.googleOAuthConfigured = false;
       next.error = error instanceof Error ? error.message : 'Cloud API is offline.';
     }
 
@@ -2416,7 +3043,7 @@ export default function App() {
     }
   };
 
-  const refreshConnection = async () => {
+  const refreshConnection = async (options?: { completionMessage?: string }) => {
     setAction({ type: 'refreshing', message: 'Checking local MiVA services...' });
 
     const next: ConnectionState = {
@@ -2436,7 +3063,7 @@ export default function App() {
     if (next.helper === 'connected') {
       try {
         const modelState = await fetchJson<{ ollama: OllamaStatus; catalog: LocalModel[] }>(`${LOCAL_HELPER_URL}/models`);
-        next.ollama = modelState.ollama;
+        next.ollama = normalizeOllamaStatus(modelState.ollama);
         next.catalog = modelState.catalog?.length ? modelState.catalog : fallbackCatalog;
       } catch (error) {
         next.ollama = {
@@ -2459,7 +3086,9 @@ export default function App() {
 
       if (!next.ollama) {
         try {
-          next.ollama = await fetchJson<OllamaStatus>(`${DESKTOP_BRIDGE_URL}/ollama/status`);
+          next.ollama = normalizeOllamaStatus(
+            await fetchJson<OllamaStatus & { installed_models?: string[]; installed_model_count?: number }>(`${DESKTOP_BRIDGE_URL}/ollama/status`),
+          );
         } catch {
           next.ollama = null;
         }
@@ -2469,7 +3098,9 @@ export default function App() {
     }
 
     setConnection(next);
-    setAction({ type: 'idle' });
+    setAction(options?.completionMessage
+      ? { type: 'idle', message: options.completionMessage }
+      : { type: 'idle' });
   };
 
   const startOllama = async () => {
@@ -2498,7 +3129,7 @@ export default function App() {
       return { migrated: 0, route: null as { provider: ProviderId; model: string } | null };
     }
 
-    const route = pickRandomCloudRoute(cloud.apiKeys);
+    const route = OPENAI_FALLBACK_ROUTE;
     let migrated = 0;
 
     for (const profile of affectedProfiles) {
@@ -2521,6 +3152,35 @@ export default function App() {
     return { migrated, route };
   };
 
+  const migrateDesktopProfilesFromDeletedModel = async (deletedModel: string) => {
+    try {
+      const response = await fetch(`${DESKTOP_BRIDGE_URL}/profiles/migrate-deleted-model`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: deletedModel }),
+      });
+
+      if (!response.ok) {
+        return { migrated: 0, route: null as { provider: ProviderId; model: string } | null };
+      }
+
+      const payload = await response.json() as {
+        migrated?: number;
+        provider?: ProviderId;
+        model?: string;
+      };
+
+      return {
+        migrated: payload.migrated ?? 0,
+        route: payload.provider && payload.model
+          ? { provider: payload.provider, model: payload.model }
+          : OPENAI_FALLBACK_ROUTE,
+      };
+    } catch {
+      return { migrated: 0, route: null as { provider: ProviderId; model: string } | null };
+    }
+  };
+
   const cancelModelPull = async (model: string) => {
     setShowPullCancelConfirm(false);
     pullAbortRef.current?.abort();
@@ -2538,7 +3198,7 @@ export default function App() {
     pullAbortRef.current = null;
     setAction({
       type: 'idle',
-      message: `${model} download cancelled.`,
+      message: `${model} download cancelled. Partial files were cleared — the next download will start from 0%.`,
     });
     await refreshConnection();
   };
@@ -2619,39 +3279,123 @@ export default function App() {
     }
   };
 
-  const deleteModel = async (model: string) => {
-    if (action.type === 'pulling-model' && action.model === model) {
-      await cancelModelPull(model);
-    }
+  const requestDeleteModel = (model: string) => {
+    setPendingDeleteModel((current) => (current === model ? null : model));
+  };
 
-    setAction({ type: 'refreshing', message: `Removing ${model}...` });
+  const requestModelDelete = async (model: string) => {
+    const endpoints = [
+      ...(connection.helper === 'connected' ? [`${LOCAL_HELPER_URL}/models/delete`] : []),
+      ...(connection.desktop === 'connected' ? [`${DESKTOP_BRIDGE_URL}/models/delete`] : []),
+    ];
 
-    try {
-      const response = await fetch(`${LOCAL_HELPER_URL}/models/delete`, {
+    let lastError = 'MiVA Desktop or local helper must be running to delete models.';
+
+    // #region agent log
+    clientDebugLog('App.tsx:requestModelDelete:start', 'delete endpoints prepared', { model, endpoints, helper: connection.helper, desktop: connection.desktop, ollamaRunning: connection.ollama?.running, installedModels: connection.ollama?.installedModels }, 'B-C');
+    // #endregion
+
+    for (const endpoint of endpoints) {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model }),
       });
 
-      if (!response.ok) {
-        throw new Error(await response.text());
+      const payload = await response.json().catch(() => null) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        alreadyRemoved?: boolean;
+        resolvedModel?: string;
+      } | null;
+
+      // #region agent log
+      clientDebugLog('App.tsx:requestModelDelete:response', 'delete endpoint response', { model, endpoint, status: response.status, ok: response.ok, payload }, 'C-D');
+      // #endregion
+
+      if (response.ok && payload?.ok !== false) {
+        return;
       }
 
-      const migration = await migrateAssistantsFromDeletedModel(model);
-      await refreshConnection();
+      lastError = payload?.error || payload?.message || `Failed to remove ${model}.`;
+    }
 
+    throw new Error(lastError);
+  };
+
+  const deleteModel = async (model: string) => {
+    // #region agent log
+    clientDebugLog('App.tsx:deleteModel:start', 'deleteModel called', { model, helper: connection.helper, desktop: connection.desktop, ollamaRunning: connection.ollama?.running, installedModels: connection.ollama?.installedModels }, 'A-B');
+    // #endregion
+
+    if (!model.trim()) {
+      // #region agent log
+      clientDebugLog('App.tsx:deleteModel:earlyReturn', 'empty model name', { model }, 'A');
+      // #endregion
+      return;
+    }
+
+    if (connection.helper !== 'connected' && connection.desktop !== 'connected') {
+      // #region agent log
+      clientDebugLog('App.tsx:deleteModel:earlyReturn', 'services offline', { model }, 'B');
+      // #endregion
       setAction({
         type: 'idle',
-        message: migration.migrated > 0 && migration.route
-          ? `${model} removed. ${migration.migrated} assistant(s) switched to ${migration.route.provider}.`
-          : `${model} removed.`,
+        message: 'MiVA Desktop or local helper must be running to delete models.',
       });
+      return;
+    }
+
+    if (action.type === 'pulling-model' && action.model === model) {
+      await cancelModelPull(model);
+    }
+
+    setPendingDeleteModel(null);
+    setAction({ type: 'deleting-model', model, message: `Removing ${model}...` });
+
+    try {
+      await requestModelDelete(model);
+
+      setConnection((current) => applyDeletedModelToConnection(current, model));
+
+      const [cloudMigration, desktopMigration] = await Promise.all([
+        migrateAssistantsFromDeletedModel(model),
+        migrateDesktopProfilesFromDeletedModel(model),
+      ]);
+      const migratedCount = cloudMigration.migrated + desktopMigration.migrated;
+      const completionMessage = migratedCount > 0
+        ? `${model} removed. ${migratedCount} assistant(s) switched to OpenAI (${OPENAI_FALLBACK_ROUTE.model}).`
+        : `${model} removed.`;
+
+      await refreshConnection({ completionMessage });
+      // #region agent log
+      clientDebugLog('App.tsx:deleteModel:success', 'delete completed and refreshed', { model, completionMessage }, 'E');
+      // #endregion
     } catch (error) {
+      // #region agent log
+      clientDebugLog('App.tsx:deleteModel:error', 'delete failed', { model, error: error instanceof Error ? error.message : String(error) }, 'C');
+      // #endregion
       setAction({
         type: 'idle',
         message: error instanceof Error ? error.message : `Failed to remove ${model}.`,
       });
     }
+  };
+
+  const confirmDeleteModel = async (model: string) => {
+    // #region agent log
+    clientDebugLog('App.tsx:confirmDeleteModel', 'confirm clicked', { model, pendingDeleteModel }, 'A');
+    // #endregion
+    const target = model.trim() || pendingDeleteModel;
+    if (!target) {
+      // #region agent log
+      clientDebugLog('App.tsx:confirmDeleteModel:earlyReturn', 'no model to delete', { model, pendingDeleteModel }, 'A');
+      // #endregion
+      return;
+    }
+
+    await deleteModel(target);
   };
 
   useEffect(() => {
@@ -2709,7 +3453,8 @@ export default function App() {
     refreshConnection,
     startOllama,
     pullModel,
-    deleteModel,
+    requestDeleteModel,
+    confirmDeleteModel,
   };
 
   const topStatus = useMemo(() => {
@@ -2747,7 +3492,15 @@ export default function App() {
     switch (activePage) {
       case 'dashboard': return <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'devices': return <DevicesPage connection={connection} actions={actions} />;
-      case 'models': return <ModelsPage connection={connection} action={action} actions={actions} />;
+      case 'models': return (
+        <ModelsPage
+          action={action}
+          actions={actions}
+          connection={connection}
+          onDismissDelete={() => setPendingDeleteModel(null)}
+          pendingDeleteModel={pendingDeleteModel}
+        />
+      );
       case 'profiles': return (
         <MyAssistantsPage
           cloud={cloud}

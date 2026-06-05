@@ -1,5 +1,5 @@
+import "./load-env.js";
 import "reflect-metadata";
-import "dotenv/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { HttpErrorFilter } from "./http-error.filter.js";

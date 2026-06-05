@@ -5,7 +5,7 @@ import { AuthService } from "./auth.service.js";
 import { CatalogService } from "./catalog.service.js";
 import { CredentialsService } from "./credentials.service.js";
 import { DevicesService } from "./devices.service.js";
-import { RequestLike } from "./api.shared.js";
+import { GOOGLE_OAUTH_CLIENT_ID, RequestLike } from "./api.shared.js";
 import { SeedService } from "./seed.service.js";
 import { UsageService } from "./usage.service.js";
 import { WorkspaceService } from "./workspace.service.js";
@@ -33,6 +33,7 @@ export class MivaApiService {
       ok: true,
       service: "miva-api",
       note: "MiVA cloud API backed by NestJS, Prisma, and PostgreSQL.",
+      googleOAuthConfigured: Boolean(GOOGLE_OAUTH_CLIENT_ID),
     };
   }
 
@@ -72,12 +73,16 @@ export class MivaApiService {
     return this.devices.upsertDevice(req, payload);
   }
 
-  getApiKeys() {
-    return this.credentials.getApiKeys();
+  getApiKeys(req: RequestLike) {
+    return this.credentials.getApiKeys(req);
   }
 
-  saveApiKey(payload: any) {
-    return this.credentials.saveApiKey(payload);
+  syncApiKeys(req: RequestLike) {
+    return this.credentials.syncApiKeys(req);
+  }
+
+  saveApiKey(req: RequestLike, payload: any) {
+    return this.credentials.saveApiKey(req, payload);
   }
 
   testApiKey(keyId: string) {

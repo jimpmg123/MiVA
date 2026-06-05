@@ -189,7 +189,11 @@ export class AuthService {
 
   private async verifyGoogleCredential(credential: string) {
     if (!googleOAuthClient || !GOOGLE_OAUTH_CLIENT_ID) {
-      throwHttp(503, "GOOGLE_OAUTH_NOT_CONFIGURED");
+      throwHttp(
+        503,
+        "GOOGLE_OAUTH_NOT_CONFIGURED",
+        "Google sign-in is not configured on this API server. Use the development email and password below.",
+      );
     }
 
     const ticket = await googleOAuthClient.verifyIdToken({

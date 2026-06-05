@@ -615,27 +615,90 @@ export class WorkspaceService {
     return `Recent Google Docs documents and excerpts:\n${JSON.stringify(summaries, null, 2)}`;
   }
 
-  private async fetchCalendarContext(accessToken: string) {
-    const now = new Date();
-    const max = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  private normalizeSearchText(value: string) {
+    return value.trim().toLowerCase().replace(/\s+/g, "");
+  }
+
+  private eventMatchesSummary(event: any, summaryQuery: string) {
+    const eventSummary = this.normalizeSearchText(asString(event?.summary) || "");
+    const query = this.normalizeSearchText(summaryQuery);
+    if (!query) {
+      return true;
+    }
+
+    return eventSummary.includes(query) || query.includes(eventSummary);
+  }
+
+  private eventMatchesStart(event: any, startHint: string) {
+    if (!startHint) {
+      return true;
+    }
+
+    const eventStart = asString(event?.start?.dateTime || event?.start?.date);
+    const hintDigits = startHint.replace(/[^\d]/g, "");
+    const eventDigits = eventStart.replace(/[^\d]/g, "");
+    if (!hintDigits || !eventDigits) {
+      return true;
+    }
+
+    return eventDigits.includes(hintDigits.slice(0, 12)) || hintDigits.includes(eventDigits.slice(0, 12));
+  }
+
+  private async listCalendarEvents(accessToken: string, timeMin: Date, timeMax: Date, maxResults = 25) {
     const params = new URLSearchParams({
-      calendarId: "primary",
-      timeMin: now.toISOString(),
-      timeMax: max.toISOString(),
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
       singleEvents: "true",
       orderBy: "startTime",
-      maxResults: "10",
+      maxResults: String(maxResults),
     });
     const events = await this.googleFetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, accessToken);
-    const summaries = Array.isArray(events.items)
-      ? events.items.map((event: any) => ({
-        id: event.id,
-        summary: event.summary || "(no title)",
-        start: event.start?.dateTime || event.start?.date || "",
-        end: event.end?.dateTime || event.end?.date || "",
-      }))
-      : [];
-    return `Upcoming Google Calendar events:\n${JSON.stringify(summaries, null, 2)}`;
+    return Array.isArray(events.items) ? events.items : [];
+  }
+
+  private async resolveCalendarDeleteEventId(accessToken: string, params: Record<string, unknown>) {
+    const explicitId = asString(params.eventId);
+    if (explicitId) {
+      return explicitId;
+    }
+
+    const summary = asString(params.summary) || asString(params.query);
+    const start = asString(params.start);
+    if (!summary && !start) {
+      return null;
+    }
+
+    const now = new Date();
+    const timeMin = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const timeMax = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    const items = await this.listCalendarEvents(accessToken, timeMin, timeMax, 50);
+    const matches = items.filter((event) => (
+      this.eventMatchesSummary(event, summary) && this.eventMatchesStart(event, start)
+    ));
+
+    if (matches.length === 1) {
+      return asString(matches[0]?.id);
+    }
+
+    if (matches.length > 1) {
+      throwHttp(409, "CALENDAR_DELETE_AMBIGUOUS", "Multiple matching calendar events were found. Ask the user which event to cancel.");
+    }
+
+    return null;
+  }
+
+  private async fetchCalendarContext(accessToken: string) {
+    const now = new Date();
+    const min = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const max = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const events = await this.listCalendarEvents(accessToken, min, max, 10);
+    const summaries = events.map((event: any) => ({
+      id: event.id,
+      summary: event.summary || "(no title)",
+      start: event.start?.dateTime || event.start?.date || "",
+      end: event.end?.dateTime || event.end?.date || "",
+    }));
+    return `Recent and upcoming Google Calendar events:\n${JSON.stringify(summaries, null, 2)}`;
   }
 
   private async createCalendarEvent(accessToken: string, params: Record<string, unknown>) {
@@ -737,9 +800,9 @@ export class WorkspaceService {
   }
 
   private async deleteCalendarEvent(accessToken: string, params: Record<string, unknown>) {
-    const eventId = asString(params.eventId);
+    const eventId = await this.resolveCalendarDeleteEventId(accessToken, params);
     if (!eventId) {
-      throwHttp(400, "CALENDAR_DELETE_REQUIRES_EVENT_ID");
+      throwHttp(400, "CALENDAR_DELETE_REQUIRES_EVENT_ID", "No matching calendar event was found to cancel. Check the calendar and try again with the event title or id.");
     }
 
     await this.googleFetchWithBody(

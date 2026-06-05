@@ -59,13 +59,18 @@ export class ApiController {
   }
 
   @Get("api-keys")
-  getApiKeys() {
-    return this.api.getApiKeys();
+  getApiKeys(@Req() req: Request) {
+    return this.api.getApiKeys(req);
+  }
+
+  @Get("api-keys/sync")
+  syncApiKeys(@Req() req: Request) {
+    return this.api.syncApiKeys(req);
   }
 
   @Post("api-keys")
-  saveApiKey(@Body() body: unknown) {
-    return this.api.saveApiKey(body);
+  saveApiKey(@Req() req: Request, @Body() body: unknown) {
+    return this.api.saveApiKey(req, body);
   }
 
   @Post("api-keys/:keyId/test")

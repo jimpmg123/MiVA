@@ -49,6 +49,8 @@ export type WebMessages = {
     continueGoogle: string;
     signingIn: string;
     googleNotConfigured: string;
+    googleBackendNotConfigured: string;
+    googleChecking: string;
     email: string;
     password: string;
     signIn: string;
@@ -130,6 +132,12 @@ export type WebMessages = {
     footerTerms: string;
     footerCopyright: string;
   };
+  models: {
+    deleteConfirmTitle: string;
+    deleteConfirmBody: string;
+    cancel: string;
+    delete: string;
+  };
 };
 
 export const messages: Record<WebLocale, WebMessages> = {
@@ -182,6 +190,8 @@ export const messages: Record<WebLocale, WebMessages> = {
       continueGoogle: 'Google로 계속하기',
       signingIn: '로그인 중',
       googleNotConfigured: 'Google OAuth가 설정되지 않았습니다',
+      googleBackendNotConfigured: 'API 서버에 Google 로그인이 설정되지 않았습니다. 아래 개발 계정을 사용하세요.',
+      googleChecking: 'Google 로그인 상태 확인 중...',
       email: '이메일',
       password: '비밀번호',
       signIn: '로그인',
@@ -263,6 +273,13 @@ export const messages: Record<WebLocale, WebMessages> = {
       footerTerms: '이용약관',
       footerCopyright: '© 2024 miva. All rights reserved.',
     },
+    models: {
+      deleteConfirmTitle: '로컬 모델을 삭제할까요?',
+      deleteConfirmBody:
+        '파일이 Ollama 저장소에서 제거됩니다. 이 모델을 쓰는 비서가 있으면 OpenAI(gpt-4o-mini)로 자동 전환됩니다.',
+      cancel: '취소',
+      delete: '삭제',
+    },
   },
   en: {
     languageToggle: 'Change language',
@@ -313,6 +330,8 @@ export const messages: Record<WebLocale, WebMessages> = {
       continueGoogle: 'Continue with Google',
       signingIn: 'Signing in',
       googleNotConfigured: 'Google OAuth not configured',
+      googleBackendNotConfigured: 'Google sign-in is not enabled on the API server. Use the development account below.',
+      googleChecking: 'Checking Google sign-in status...',
       email: 'Email',
       password: 'Password',
       signIn: 'Sign in',
@@ -393,6 +412,13 @@ export const messages: Record<WebLocale, WebMessages> = {
       footerPrivacy: 'Privacy policy',
       footerTerms: 'Terms of use',
       footerCopyright: '© 2024 miva. All rights reserved.',
+    },
+    models: {
+      deleteConfirmTitle: 'Delete this local model?',
+      deleteConfirmBody:
+        'The file will be removed from the Ollama store. Assistants using this model will automatically switch to OpenAI (gpt-4o-mini).',
+      cancel: 'Cancel',
+      delete: 'Delete',
     },
   },
 };
