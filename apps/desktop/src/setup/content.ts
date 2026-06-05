@@ -1,4 +1,4 @@
-﻿import type { Locale } from "../i18n";
+import type { Locale } from "../i18n";
 import type { SettingsSection, StepId, StudioSection } from "../types";
 export const providerUiCopy = {
   ko: {},
@@ -61,7 +61,9 @@ export const studioSections: Array<{ id: StudioSection; label: string; detail: s
   { id: "character", label: "2D character", detail: "Avatar and expressions", icon: "face" },
   { id: "tts", label: "TTS / Voice", detail: "Speech settings", icon: "record_voice_over" },
   { id: "googleWorkspace", label: "Google Workspace", detail: "Calendar, Gmail, Drive", icon: "workspaces" },
-  { id: "tools", label: "Tools", detail: "MCP, skills, APIs", icon: "extension" },
+  { id: "code", label: "Code", detail: "Repository access", icon: "code" },
+  { id: "skills", label: "Rules & Skills", detail: "Reusable guidance", icon: "menu_book" },
+  { id: "mcp", label: "Tools & MCP", detail: "External connections", icon: "hub" },
 ];
 
 export const copy = {
@@ -71,6 +73,18 @@ export const copy = {
     setupMode: "Setup",
     studioMode: "Studio",
     runtimeMode: "Runtime",
+    historyMode: "History",
+    historyTitle: "Conversation History",
+    historyBody: "Browse past chats grouped by date and assistant. Everything stays on this device.",
+    historyEmptyTitle: "No conversations yet",
+    historyEmptyBody: "Start chatting in Runtime to save conversations here for later.",
+    historyMessages: "{count} messages",
+    historyConversations: "{count} conversations",
+    historyContinueInRuntime: "Continue in Runtime",
+    historyViewConversation: "View conversation",
+    stopGeneration: "Stop generating",
+    attachImage: "Attach image",
+    imageVisionNotice: "Attached images are analyzed with Gemini 2.5 Flash.",
     enterMiVA: "Enter MiVA",
     assistantWorkspace: "Assistant Workspace",
     newChat: "New Chat",

@@ -46,9 +46,9 @@ export function AppTopBar({
       {desktopChrome && <WindowDragLayer />}
 
       <div className={`relative z-10 grid h-full w-full items-center gap-3 pointer-events-none ${gridClass}`}>
-        <div className="pointer-events-auto flex min-w-0 items-center gap-3 overflow-hidden">
+        <div className="pointer-events-auto flex min-w-0 items-center gap-3">
           {!settingsOpen && appMode !== "setup" && (
-            <div className="flex min-w-0 shrink rounded-full border border-[var(--miva-border)] bg-[var(--miva-topbar-segment-bg)] p-0.5 shadow-sm">
+            <div className="flex shrink-0 rounded-full border border-[var(--miva-border)] bg-[var(--miva-topbar-segment-bg)] p-0.5 shadow-sm">
               <Button
                 className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                   appMode === "studio"
@@ -74,6 +74,19 @@ export function AppTopBar({
               >
                 <span className="material-symbols-outlined text-[14px]">rocket_launch</span>
                 {t.runtimeMode}
+              </Button>
+              <Button
+                className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                  appMode === "history"
+                    ? "bg-[var(--miva-topbar-segment-active-bg)] text-[var(--miva-topbar-segment-active-text)] shadow-sm"
+                    : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
+                }`}
+                onClick={() => onModeChange("history")}
+                size="sm"
+                variant="ghost"
+              >
+                <span className="material-symbols-outlined text-[14px]">history</span>
+                {t.historyMode}
               </Button>
             </div>
           )}

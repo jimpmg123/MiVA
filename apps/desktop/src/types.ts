@@ -19,9 +19,19 @@ export type LanguageUse = "korean" | "english" | "both";
 export type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 export type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
 export type MemorySyncMode = "profileOnly" | "summaryMemory";
-export type AppMode = "setup" | "studio" | "runtime" | "auth";
+export type AppMode = "setup" | "studio" | "runtime" | "history" | "auth";
 export type SettingsSection = "general" | "aiModels" | "security" | "logs";
-export type StudioSection = "myAssistants" | "overview" | "models" | "prompts" | "character" | "tts" | "googleWorkspace" | "tools";
+export type StudioSection =
+  | "myAssistants"
+  | "overview"
+  | "models"
+  | "prompts"
+  | "character"
+  | "tts"
+  | "googleWorkspace"
+  | "code"
+  | "skills"
+  | "mcp";
 export type ProviderId = "ollama" | "openai" | "gemini" | "groq";
 export type CloudProviderId = Exclude<ProviderId, "ollama">;
 export type ProviderMode = "local" | "cloud";
@@ -279,6 +289,59 @@ export type ChatMessage = {
   provider?: ProviderId;
   model?: string;
   latencyMs?: number;
+};
+
+export type DocumentAttachmentStatus = "analyzing" | "ready" | "error";
+
+export type DocumentAnalysisResult = {
+  ok: true;
+  name: string;
+  extension: string;
+  kind: "pdf" | "spreadsheet";
+  sizeBytes: number;
+  context: string;
+  truncated: boolean;
+  durationMs: number;
+  metadata: {
+    pageCount?: number;
+    extractedPages?: number;
+    textChars?: number;
+    sheetNames?: string[];
+    sheets?: Array<{
+      name: string;
+      rows: number;
+      columns: number;
+    }>;
+  };
+};
+
+export type DocumentAttachment = {
+  id: string;
+  path: string;
+  name: string;
+  extension: string;
+  status: DocumentAttachmentStatus;
+  context: string;
+  sizeBytes: number | null;
+  metadata: DocumentAnalysisResult["metadata"] | null;
+  truncated: boolean;
+  error: string | null;
+};
+
+export type ImageAttachment = {
+  id: string;
+  path: string;
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+  sizeBytes: number;
+  previewUrl: string;
+};
+
+export type ImageAttachmentPayload = {
+  name: string;
+  mimeType: string;
+  data: string;
 };
 
 export type RuntimeMemorySummary = {

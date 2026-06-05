@@ -1,4 +1,5 @@
 use reqwest::blocking::Client;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -32,6 +33,7 @@ const ALLOWED_MODELS: [&str; 6] = [
 ];
 const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
 const CHAT_HISTORY_STORE_FILE: &str = "chat-history.json";
+const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 const LIVE2D_MODEL_DIRS: [&str; 4] = ["mao_pro", "shizuku", "knight", "takodachi"];
 
 struct LocalHelperProcess(Mutex<Option<Child>>);
@@ -1346,6 +1348,7 @@ fn chat_via_local_helper(
     messages: Option<Value>,
     memory_summary: Option<String>,
     tool_context: Option<String>,
+    image_attachments: Option<Value>,
 ) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
@@ -1384,6 +1387,10 @@ fn chat_via_local_helper(
         body["toolContext"] = json!(tool_context);
     }
 
+    if let Some(image_attachments) = image_attachments {
+        body["imageAttachments"] = image_attachments;
+    }
+
     let response = client
         .post(format!("{LOCAL_HELPER_URL}/chat"))
         .json(&body)
@@ -1420,6 +1427,7 @@ fn chat_once_inner(
     messages: Option<Value>,
     memory_summary: Option<String>,
     tool_context: Option<String>,
+    image_attachments: Option<Value>,
 ) -> Result<String, String> {
     let normalized_provider = if provider.trim().is_empty() {
         "ollama".to_string()
@@ -1438,6 +1446,7 @@ fn chat_once_inner(
         messages,
         memory_summary,
         tool_context,
+        image_attachments,
     ) {
         Ok(answer) => Ok(answer),
         Err(error) if normalized_provider == "ollama" => {
@@ -1446,6 +1455,82 @@ fn chat_once_inner(
         }
         Err(error) => Err(error),
     }
+}
+
+fn image_mime_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("webp") => Some("image/webp"),
+        Some("gif") => Some("image/gif"),
+        _ => None,
+    }
+}
+
+fn read_image_attachment_inner(path: String) -> Result<Value, String> {
+    let file_path = PathBuf::from(path.trim());
+    if !file_path.is_file() {
+        return Err("Image file was not found.".to_string());
+    }
+
+    let mime_type = image_mime_type(&file_path).ok_or_else(|| {
+        "Unsupported image type. Use PNG, JPEG, WEBP, or GIF.".to_string()
+    })?;
+    let metadata = fs::metadata(&file_path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_IMAGE_ATTACHMENT_BYTES {
+        return Err("Image is too large. Maximum size is 20 MB.".to_string());
+    }
+
+    let bytes = fs::read(&file_path).map_err(|error| error.to_string())?;
+    let name = file_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image")
+        .to_string();
+
+    Ok(json!({
+        "name": name,
+        "mimeType": mime_type,
+        "dataBase64": STANDARD.encode(bytes),
+        "sizeBytes": metadata.len(),
+    }))
+}
+
+fn analyze_document_inner(path: String) -> Result<Value, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .post(format!("{LOCAL_HELPER_URL}/documents/analyze"))
+        .json(&json!({ "path": path }))
+        .send()
+        .map_err(|error| error.to_string())?;
+
+    let status = response.status();
+    let text = response.text().map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        return Err(format!("Local helper returned HTTP {status}: {text}"));
+    }
+
+    let result = serde_json::from_str::<Value>(&text)
+        .map_err(|error| format!("Failed to parse document analysis response: {error}"))?;
+    if result.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = result
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| result.get("error").and_then(Value::as_str))
+            .unwrap_or("Document analysis failed.");
+        return Err(message.to_string());
+    }
+
+    Ok(result)
 }
 
 fn http_json_response(status: &str, body: serde_json::Value) -> String {
@@ -1584,6 +1669,7 @@ async fn chat_once(
     messages: Option<Value>,
     memory_summary: Option<String>,
     tool_context: Option<String>,
+    image_attachments: Option<Value>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         chat_once_inner(
@@ -1597,10 +1683,25 @@ async fn chat_once(
             messages,
             memory_summary,
             tool_context,
+            image_attachments,
         )
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_image_attachment(path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || read_image_attachment_inner(path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn analyze_document(path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || analyze_document_inner(path))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1711,6 +1812,8 @@ pub fn run() {
             start_ollama,
             pull_model,
             chat_once,
+            read_image_attachment,
+            analyze_document,
             get_hardware_info,
             get_runtime_requirements,
             get_default_python_install_dir,

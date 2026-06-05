@@ -33,6 +33,7 @@ type SettingsPageProps = {
   status: OllamaStatus | null;
   t: Record<string, string>;
   onClearProviderKeys: () => void;
+  onClearLogs: () => void;
   onExitSettings: () => void;
   onOpenInitialSetup: () => void;
   onSaveProviderKeys: () => void;
@@ -63,6 +64,7 @@ export function SettingsPage({
   status,
   t,
   onClearProviderKeys,
+  onClearLogs,
   onExitSettings,
   onOpenInitialSetup,
   onSaveProviderKeys,
@@ -248,6 +250,7 @@ export function SettingsPage({
     <ActivityLogPanel
       logs={logs}
       noLogsLabel={t.noLogs}
+      onClearLogs={onClearLogs}
       onOpenInitialSetup={onOpenInitialSetup}
       showDeveloperAccess
     />

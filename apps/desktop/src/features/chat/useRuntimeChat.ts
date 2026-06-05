@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
+import { chooseImagePaths, createImageAttachment, readImageAttachment } from "../images/imageRuntime";
+import {
+  getDefaultImagePrompt,
+  IMAGE_VISION_MODEL,
+  IMAGE_VISION_PROVIDER,
+} from "./imageVision";
+import { analyzeDocument, chooseDocumentPaths, openDocument } from "../documents/documentRuntime";
 import { runDaisoRequest } from "../daiso/daisoRuntime";
 import { runChatOnce } from "../models/ollamaRuntime";
+import { streamChatOnce } from "./chatStream";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
   applySlashCommandProfile,
@@ -20,6 +28,7 @@ import {
   cleanSpeechText,
   estimateChatTokens,
   estimateTokensFromText,
+  buildImageAnalysisMemoryPrompt,
   getRuntimeSummaryModel,
   hasExplicitMemoryRequest,
   MEMORY_COMPACTION_FALLBACK_BUDGET,
@@ -31,6 +40,8 @@ import type {
   AuthSession,
   ChatMessage,
   ChatMetrics,
+  DocumentAttachment,
+  ImageAttachment,
   LocalAssistantProfile,
   PromptSettings,
   ProviderId,
@@ -123,6 +134,8 @@ export function useRuntimeChat({
   const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>([]);
   const [activeRuntimeConversationId, setActiveRuntimeConversationId] = useState<string | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
+  const [documentAttachments, setDocumentAttachments] = useState<DocumentAttachment[]>([]);
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [ttsPlaybackState, setTtsPlaybackState] = useState<TtsPlaybackState>("idle");
   const [ttsError, setTtsError] = useState<string | null>(null);
@@ -133,6 +146,7 @@ export function useRuntimeChat({
   const loadedRuntimeProfileIdRef = useRef(promptProfileId);
   const runtimeChatStoreRef = useRef(emptyRuntimeChatStore);
   const runtimeChatStoreLoadedRef = useRef(false);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
   const currentConversationId = activeRuntimeConversationId ?? runtimeChatStore.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
@@ -242,6 +256,8 @@ export function useRuntimeChat({
   function clearCurrentChat() {
     updateChatMessages(appMode, () => []);
     setChatInput("");
+    setDocumentAttachments([]);
+    setImageAttachments([]);
     if (appMode === "runtime") {
       setActiveRuntimeConversationId(createRuntimeConversationId(promptProfileId));
     }
@@ -258,6 +274,8 @@ export function useRuntimeChat({
 
     setRuntimeChatMessages([]);
     setChatInput("");
+    setDocumentAttachments([]);
+    setImageAttachments([]);
     setActiveRuntimeConversationId(createRuntimeConversationId(assistantId));
     setAppMode("runtime");
     shouldAutoScrollChatRef.current = true;
@@ -271,6 +289,8 @@ export function useRuntimeChat({
       applyLocalAssistantProfile(profile);
     }
     setRuntimeChatMessages(runtimeChatStore.conversations[conversation.id]?.messages ?? []);
+    setDocumentAttachments([]);
+    setImageAttachments([]);
     setActiveRuntimeConversationId(conversation.id);
     setAppMode("runtime");
   }
@@ -296,6 +316,123 @@ export function useRuntimeChat({
     const nearBottom = distanceFromBottom < 120;
     shouldAutoScrollChatRef.current = nearBottom;
     setShowJumpToLatest((current) => (current === !nearBottom ? current : !nearBottom));
+  }
+
+  function stopChat() {
+    chatAbortControllerRef.current?.abort();
+    stopRuntimeTts();
+    setBusyAction(null);
+  }
+
+  async function chooseAndAttachImages() {
+    try {
+      const selectedPaths = await chooseImagePaths();
+      const existingPaths = new Set(imageAttachments.map((attachment) => attachment.path.toLowerCase()));
+      const availableSlots = Math.max(0, 4 - imageAttachments.length - documentAttachments.length);
+      const paths = selectedPaths
+        .filter((path) => !existingPaths.has(path.toLowerCase()))
+        .slice(0, availableSlots);
+
+      if (paths.length === 0) {
+        return;
+      }
+
+      const loaded = await Promise.all(paths.map(async (path) => {
+        const payload = await readImageAttachment(path);
+        return createImageAttachment(path, payload);
+      }));
+
+      setImageAttachments((current) => [...current, ...loaded]);
+    } catch (error) {
+      onLog(`Image attach failed: ${String(error)}`);
+    }
+  }
+
+  function removeImageAttachment(id: string) {
+    setImageAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  async function chooseAndAttachDocuments() {
+    try {
+      const selectedPaths = await chooseDocumentPaths();
+      const existingPaths = new Set(documentAttachments.map((attachment) => attachment.path.toLowerCase()));
+      const availableSlots = Math.max(0, 4 - documentAttachments.length - imageAttachments.length);
+      const paths = selectedPaths
+        .filter((path) => !existingPaths.has(path.toLowerCase()))
+        .slice(0, availableSlots);
+
+      if (paths.length === 0) {
+        return;
+      }
+
+      const pendingAttachments = paths.map<DocumentAttachment>((path) => {
+        const name = path.split(/[\\/]/).pop() || "Document";
+        const extension = name.includes(".") ? name.split(".").pop()?.toLowerCase() || "" : "";
+        return {
+          id: globalThis.crypto?.randomUUID?.() ?? `document-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          path,
+          name,
+          extension,
+          status: "analyzing",
+          context: "",
+          sizeBytes: null,
+          metadata: null,
+          truncated: false,
+          error: null,
+        };
+      });
+
+      setDocumentAttachments((current) => [...current, ...pendingAttachments]);
+
+      await Promise.all(pendingAttachments.map(async (attachment) => {
+        try {
+          const result = await analyzeDocument(attachment.path);
+          setDocumentAttachments((current) => current.map((item) => (
+            item.id === attachment.id
+              ? {
+                  ...item,
+                  name: result.name,
+                  extension: result.extension,
+                  status: "ready",
+                  context: result.context,
+                  sizeBytes: result.sizeBytes,
+                  metadata: result.metadata,
+                  truncated: result.truncated,
+                  error: null,
+                }
+              : item
+          )));
+          onLog(`Document ready: ${result.name}.`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setDocumentAttachments((current) => current.map((item) => (
+            item.id === attachment.id
+              ? { ...item, status: "error", error: message }
+              : item
+          )));
+          onLog(`Document analysis failed for ${attachment.name}: ${message}`);
+        }
+      }));
+    } catch (error) {
+      onLog(`Document selection failed: ${String(error)}`);
+    }
+  }
+
+  function removeDocumentAttachment(id: string) {
+    setDocumentAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  async function openDocumentAttachment(id: string) {
+    const attachment = documentAttachments.find((item) => item.id === id);
+    if (!attachment) {
+      return;
+    }
+
+    try {
+      await openDocument(attachment.path);
+    } catch (error) {
+      onLog(`Could not open ${attachment.name}: ${String(error)}`);
+    }
   }
 
   function getApiKeyForProvider(provider: ProviderId) {
@@ -480,20 +617,90 @@ export function useRuntimeChat({
     onLog(`Updated rolling summary memory for ${input.assistantProfile.name}.`);
   }
 
+  async function updateMemoryFromImageAnalysis(input: {
+    assistantProfile: LocalAssistantProfile;
+    userMessage: string;
+    imageNames: string[];
+    visionAnswer: string;
+    messageCount: number;
+  }) {
+    const settings = input.assistantProfile.prompt?.settings.summaryMemory;
+    if (appMode !== "runtime" || !settings?.rollingSummary) {
+      return;
+    }
+
+    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? "";
+    const mivaProvider = selectedProvider;
+    const mivaModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
+    const summaryModel = getRuntimeSummaryModel({
+      profile: input.assistantProfile,
+      fallbackProvider: mivaProvider,
+      fallbackModel: mivaModel,
+      selectedModel,
+      selectedCloudModel,
+    });
+    const summaryPrompt = buildImageAnalysisMemoryPrompt({
+      currentSummary,
+      userMessage: input.userMessage,
+      imageNames: input.imageNames,
+      visionAnswer: input.visionAnswer,
+    });
+
+    const summary = await runChatOnce({
+      provider: summaryModel.provider,
+      model: summaryModel.model,
+      prompt: summaryPrompt,
+      locale: activeLocale,
+      apiKey: getApiKeyForProvider(summaryModel.provider) || null,
+      authToken: authSession?.token ?? null,
+      profile: input.assistantProfile,
+    });
+    const nextSummary: RuntimeMemorySummary = {
+      content: summary.trim(),
+      updatedAt: new Date().toISOString(),
+      provider: summaryModel.provider,
+      model: summaryModel.model,
+      sourceMessageCount: input.messageCount,
+      estimatedTokens: estimateTokensFromText(summary) + estimateTokensFromText(input.visionAnswer),
+    };
+    const savedStore = await saveRuntimeMemorySummary(runtimeChatStoreRef.current, promptProfileId, nextSummary);
+    runtimeChatStoreRef.current = savedStore;
+    setRuntimeChatStore(savedStore);
+    await updateAssistantProfileRollingSummary(promptProfileId, nextSummary);
+    onLog(`Stored image analysis in assistant memory for ${input.assistantProfile.name}.`);
+  }
+
   async function sendMessage() {
     const rawInput = chatInput.trim();
-    const parsed = parseSlashCommand(rawInput);
-    const prompt = parsed?.prompt ?? rawInput;
+    const readyAttachments = documentAttachments.filter((attachment) => attachment.status === "ready");
+    const readyImageAttachments = imageAttachments;
+    const attachmentsAnalyzing = documentAttachments.some((attachment) => attachment.status === "analyzing");
+    const usesImageVision = readyImageAttachments.length > 0;
+    const parsed = rawInput ? parseSlashCommand(rawInput) : null;
+    const prompt = parsed?.prompt ?? (rawInput || (usesImageVision
+      ? getDefaultImagePrompt()
+      : readyAttachments.length > 0
+        ? "Analyze the attached document data and summarize the information relevant to me."
+        : ""));
     const isDaisoSlashCommand = parsed?.command.id === "daiso";
-    const displayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput;
+    const imageLabel = readyImageAttachments.length > 0
+      ? `\n\nAttached images: ${readyImageAttachments.map((attachment) => attachment.name).join(", ")}`
+      : "";
+    const baseDisplayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput || (usesImageVision ? "Analyze the attached image(s)." : "Analyze the attached document data.");
+    const attachmentLabel = readyAttachments.length > 0
+      ? `\n\nAttached: ${readyAttachments.map((attachment) => attachment.name).join(", ")}`
+      : "";
+    const displayContent = `${baseDisplayContent}${attachmentLabel}${imageLabel}`;
     let assistantProfile = buildCurrentLocalAssistantProfile();
     if (parsed) {
       assistantProfile = applySlashCommandProfile(assistantProfile, parsed.command.id);
     }
     const chatMode = appMode;
-    const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const apiKey = getApiKeyForProvider(selectedProvider);
-    const localUnavailable = selectedProvider === "ollama" && !statusInstalled;
+    const activeProvider = usesImageVision ? IMAGE_VISION_PROVIDER : selectedProvider;
+    const activeModel = usesImageVision ? IMAGE_VISION_MODEL : (selectedProvider === "ollama" ? selectedModel : selectedCloudModel);
+    const providerModel = activeModel;
+    const apiKey = getApiKeyForProvider(activeProvider);
+    const localUnavailable = !usesImageVision && selectedProvider === "ollama" && !statusInstalled;
     const currentMessages = chatMode === "runtime" ? runtimeChatMessages : testChatMessages;
     const recentContextMessages = currentMessages
       .slice(-RECENT_CONTEXT_MESSAGE_LIMIT)
@@ -502,7 +709,32 @@ export function useRuntimeChat({
       ? runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? null
       : null;
 
-    if ((!prompt && !isDaisoSlashCommand) || localUnavailable || busyAction === "chat") {
+    if (
+      attachmentsAnalyzing ||
+      (!prompt && !isDaisoSlashCommand) ||
+      localUnavailable ||
+      busyAction === "chat"
+    ) {
+      return;
+    }
+
+    if (usesImageVision && !providerKeys.gemini.trim()) {
+      const requestedAt = new Date().toISOString();
+      setChatInput("");
+      shouldAutoScrollChatRef.current = true;
+      setShowJumpToLatest(false);
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+        {
+          role: "assistant",
+          content: "Image analysis requires a Gemini API key. Add it in Settings > AI models, then try again.",
+          createdAt: new Date().toISOString(),
+          provider: activeProvider,
+          model: providerModel,
+        },
+      ]);
+      onLog("Image analysis blocked because no Gemini API key is configured.");
       return;
     }
 
@@ -520,12 +752,12 @@ export function useRuntimeChat({
         setShowJumpToLatest(false);
         updateChatMessages(chatMode, (current) => [
           ...current,
-          { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+          { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
           {
             role: "assistant",
             content: "Google Workspace permission is required. Complete Google consent in the browser, then try again.",
             createdAt: new Date().toISOString(),
-            provider: selectedProvider,
+            provider: activeProvider,
             model: providerModel,
           },
         ]);
@@ -533,19 +765,19 @@ export function useRuntimeChat({
       }
     }
 
-    if (selectedProvider !== "ollama" && !authSession) {
+    if (!usesImageVision && selectedProvider !== "ollama" && !authSession) {
       const requestedAt = new Date().toISOString();
       setChatInput("");
       shouldAutoScrollChatRef.current = true;
       setShowJumpToLatest(false);
       updateChatMessages(chatMode, (current) => [
         ...current,
-        { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
         {
           role: "assistant",
           content: "Sign in to use cloud models. Continue without signing in only supports local Ollama assistants.",
           createdAt: new Date().toISOString(),
-          provider: selectedProvider,
+          provider: activeProvider,
           model: providerModel,
         },
       ]);
@@ -554,24 +786,40 @@ export function useRuntimeChat({
     }
 
     setBusyAction("chat");
-    const runtimeReady = await ensureOllamaReadyForChat(providerModel);
-    if (!runtimeReady) {
-      setBusyAction(null);
-      return;
+    if (!usesImageVision) {
+      const runtimeReady = await ensureOllamaReadyForChat(providerModel);
+      if (!runtimeReady) {
+        setBusyAction(null);
+        return;
+      }
     }
 
     setChatInput("");
+    setDocumentAttachments([]);
+    setImageAttachments([]);
     shouldAutoScrollChatRef.current = true;
     setShowJumpToLatest(false);
     const startedAt = performance.now();
     const requestedAt = new Date().toISOString();
     updateChatMessages(chatMode, (current) => [
       ...current,
-      { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
+      { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
     ]);
 
     try {
-      let toolContext: string | null = null;
+      const toolContexts: string[] = [];
+      if (readyAttachments.length > 0) {
+        toolContexts.push([
+          "The user attached local documents. MiVA parsed these files locally before this model request.",
+          "Use only the extracted content below. Do not claim access to other parts of the user's computer.",
+          ...readyAttachments.map((attachment) => [
+            `===== ${attachment.name} =====`,
+            attachment.context,
+            attachment.truncated ? "[MiVA truncated this document context because it was large.]" : "",
+          ].filter(Boolean).join("\n")),
+        ].join("\n\n"));
+      }
+
       if (isDaisoSlashCommand) {
         const daisoResult = await runDaisoRequest(prompt);
         if (!daisoResult.ok || daisoResult.needsUserInput) {
@@ -591,16 +839,45 @@ export function useRuntimeChat({
           onLog(message);
           return;
         }
-        toolContext = daisoResult.context || [
+        toolContexts.push(daisoResult.context || [
           "Daiso CLI result was retrieved by MiVA.",
           `CLI command: ${daisoResult.commandLine || "unknown"}`,
           daisoResult.stdout || JSON.stringify(daisoResult.data ?? null, null, 2),
-        ].join("\n");
+        ].join("\n"));
         onLog(`Daiso CLI completed: ${daisoResult.commandLine || "unknown command"}`);
       }
+      const toolContext = toolContexts.length > 0 ? toolContexts.join("\n\n") : null;
 
-      const answer = await runChatOnce({
-        provider: selectedProvider,
+      chatAbortControllerRef.current?.abort();
+      chatAbortControllerRef.current = new AbortController();
+      const streamSignal = chatAbortControllerRef.current.signal;
+      const assistantCreatedAt = new Date().toISOString();
+
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        {
+          role: "assistant",
+          content: "",
+          createdAt: assistantCreatedAt,
+          provider: activeProvider,
+          model: providerModel,
+        },
+      ]);
+
+      const appendAssistantDelta = (delta: string) => {
+        updateChatMessages(chatMode, (current) => current.map((message) => (
+          message.role === "assistant" && message.createdAt === assistantCreatedAt
+            ? { ...message, content: `${message.content}${delta}` }
+            : message
+        )));
+        if (shouldAutoScrollChatRef.current) {
+          window.requestAnimationFrame(() => scrollChatToLatest("auto"));
+        }
+      };
+
+      let answer = "";
+      const chatPayload = {
+        provider: activeProvider,
         model: providerModel,
         prompt,
         locale: activeLocale,
@@ -610,46 +887,81 @@ export function useRuntimeChat({
         messages: recentContextMessages,
         memorySummary,
         toolContext,
-      });
+        imageAttachments: readyImageAttachments.map((attachment) => ({
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          data: attachment.dataBase64,
+        })),
+      };
+
+      try {
+        answer = await streamChatOnce(chatPayload, {
+          onDelta: appendAssistantDelta,
+        }, streamSignal);
+      } catch (streamError) {
+        const streamMessage = streamError instanceof Error ? streamError.message : String(streamError);
+        const fetchBlocked = streamError instanceof TypeError || /failed to fetch/i.test(streamMessage);
+        if (!fetchBlocked) {
+          throw streamError;
+        }
+
+        onLog("Streaming chat unavailable. Falling back to standard chat response.");
+        answer = await runChatOnce(chatPayload);
+        updateChatMessages(chatMode, (current) => current.map((message) => (
+          message.role === "assistant" && message.createdAt === assistantCreatedAt
+            ? { ...message, content: answer }
+            : message
+        )));
+      }
       const latencyMs = Math.round(performance.now() - startedAt);
       setChatMetrics({
-        provider: selectedProvider,
+        provider: activeProvider,
         model: providerModel,
         latencyMs,
         measuredAt: new Date().toISOString(),
       });
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: answer,
-          createdAt: new Date().toISOString(),
-          provider: selectedProvider,
+      updateChatMessages(chatMode, (current) => current.map((message) => (
+        message.role === "assistant" && message.createdAt === assistantCreatedAt
+          ? {
+              ...message,
+              content: answer || message.content,
+              latencyMs,
+            }
+          : message
+      )));
+      if (usesImageVision) {
+        void updateMemoryFromImageAnalysis({
+          assistantProfile,
+          userMessage: displayContent,
+          imageNames: readyImageAttachments.map((attachment) => attachment.name),
+          visionAnswer: answer,
+          messageCount: currentMessages.length + 2,
+        }).catch((summaryError) => {
+          onLog(`Image memory update failed: ${String(summaryError)}`);
+        });
+      } else {
+        void updateRollingSummaryIfNeeded({
+          assistantProfile,
+          messages: [
+            ...currentMessages,
+            { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+            {
+              role: "assistant",
+              content: answer,
+              createdAt: new Date().toISOString(),
+              provider: activeProvider,
+              model: providerModel,
+              latencyMs,
+            },
+          ],
+          latestUserMessage,
+          provider: activeProvider,
           model: providerModel,
-          latencyMs,
-        },
-      ]);
-      void updateRollingSummaryIfNeeded({
-        assistantProfile,
-        messages: [
-          ...currentMessages,
-          { role: "user", content: displayContent, createdAt: requestedAt, provider: selectedProvider, model: providerModel },
-          {
-            role: "assistant",
-            content: answer,
-            createdAt: new Date().toISOString(),
-            provider: selectedProvider,
-            model: providerModel,
-            latencyMs,
-          },
-        ],
-        latestUserMessage,
-        provider: selectedProvider,
-        model: providerModel,
-      }).catch((summaryError) => {
-        onLog(`Rolling summary update failed: ${String(summaryError)}`);
-      });
-      onLog("Chat response received.");
+        }).catch((summaryError) => {
+          onLog(`Rolling summary update failed: ${String(summaryError)}`);
+        });
+      }
+      onLog(usesImageVision ? "Image analysis response received." : "Chat response received.");
       if (chatMode === "runtime") {
         void speakAssistantAnswer(answer);
       }
@@ -667,18 +979,39 @@ export function useRuntimeChat({
         });
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        onLog("Chat generation stopped.");
+        return;
+      }
+
       const message = `Chat failed: ${String(error)}`;
       const latencyMs = Math.round(performance.now() - startedAt);
-      updateChatMessages(chatMode, (current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: message,
-          createdAt: new Date().toISOString(),
-          provider: selectedProvider,
-          model: providerModel,
-        },
-      ]);
+      updateChatMessages(chatMode, (current) => {
+        const lastMessage = current[current.length - 1];
+        if (lastMessage?.role === "assistant" && !lastMessage.content.trim()) {
+          return current.map((entry, index) => (
+            index === current.length - 1
+              ? { ...entry, content: message, latencyMs }
+              : entry
+          ));
+        }
+
+        if (lastMessage?.role === "assistant" && lastMessage.content.trim()) {
+          return current;
+        }
+
+        return [
+          ...current,
+          {
+            role: "assistant",
+            content: message,
+            createdAt: new Date().toISOString(),
+            provider: activeProvider,
+            model: providerModel,
+            latencyMs,
+          },
+        ];
+      });
       onLog(message);
       if (chatMode === "runtime" && authSession) {
         void recordRuntimeUsageEvent({
@@ -722,31 +1055,41 @@ export function useRuntimeChat({
   }, [currentConversationId, onLog, promptProfileId, runtimeChatMessages]);
 
   useEffect(() => {
-    if (appMode !== "runtime") {
+    if (appMode !== "runtime" && appMode !== "history") {
       return;
     }
 
     let cancelled = false;
-    void loadRuntimeChatStore(promptProfileId).then((store) => {
+    void loadRuntimeChatStore(appMode === "runtime" ? promptProfileId : undefined).then((store) => {
       if (cancelled) {
         return;
       }
-      loadedRuntimeProfileIdRef.current = promptProfileId;
+
       runtimeChatStoreLoadedRef.current = true;
       runtimeChatStoreRef.current = store;
       setRuntimeChatStore(store);
+
+      if (appMode !== "runtime") {
+        return;
+      }
+
+      loadedRuntimeProfileIdRef.current = promptProfileId;
       const conversationId = store.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
       setActiveRuntimeConversationId(conversationId);
       setRuntimeChatMessages(store.conversations[conversationId]?.messages ?? []);
     }).catch((error) => {
       onLog(`Runtime chat load failed: ${String(error)}`);
     });
-    setActiveRuntimeConversationId((current) => (
-      current?.startsWith(`runtime_${promptProfileId}_`) ? current : createRuntimeConversationId(promptProfileId)
-    ));
-    setChatInput("");
-    shouldAutoScrollChatRef.current = true;
-    setShowJumpToLatest(false);
+
+    if (appMode === "runtime") {
+      setActiveRuntimeConversationId((current) => (
+        current?.startsWith(`runtime_${promptProfileId}_`) ? current : createRuntimeConversationId(promptProfileId)
+      ));
+      setChatInput("");
+      shouldAutoScrollChatRef.current = true;
+      setShowJumpToLatest(false);
+    }
+
     return () => {
       cancelled = true;
     };
@@ -783,13 +1126,22 @@ export function useRuntimeChat({
     chatIntroKey,
     chatMetrics,
     chatScrollRef,
+    chooseAndAttachDocuments,
+    chooseAndAttachImages,
+    documentAttachments,
+    imageAttachments,
     handleChatScroll,
+    runtimeChatStore,
     scrollChatToLatest,
     sendMessage,
     setChatInput,
     setDismissedChatIntroKeys: onDismissedChatIntroKeysChange,
     showJumpToLatest,
+    openDocumentAttachment,
+    removeDocumentAttachment,
+    removeImageAttachment,
     stopRuntimeTts,
+    stopChat,
     startRuntimeChatForAssistant,
     selectRuntimeConversation,
     clearCurrentChat,

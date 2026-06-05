@@ -28,6 +28,34 @@ export function hasExplicitMemoryRequest(value: string) {
   ].some((marker) => normalized.includes(marker));
 }
 
+export function buildImageAnalysisMemoryPrompt(input: {
+  currentSummary: string;
+  userMessage: string;
+  imageNames: string[];
+  visionAnswer: string;
+}) {
+  const imageList = input.imageNames.length
+    ? input.imageNames.join(", ")
+    : "attached image";
+
+  return [
+    "Update this assistant memory for MiVA.",
+    "The user attached image(s) and a vision model analyzed them.",
+    "Store the important visual facts, visible text, objects, people, layout, and context from the analysis.",
+    "The local MiVA assistant must be able to use this information in later conversation without seeing the images again.",
+    "If the existing memory is getting long, compact it by merging duplicates and removing temporary details.",
+    "Use two short sections: Pinned memory and Working memory.",
+    "Output only the updated memory summary. Do not explain the process.",
+    input.currentSummary ? `Existing summary:\n${input.currentSummary}` : "Existing summary: none.",
+    "User message:",
+    input.userMessage.trim() || "Analyze the attached image(s).",
+    "Attached images:",
+    imageList,
+    "Vision analysis result:",
+    input.visionAnswer.trim(),
+  ].join("\n\n");
+}
+
 export function cleanSpeechText(value: string) {
   return value
     .replace(/```[\s\S]*?```/g, "Code block omitted.")

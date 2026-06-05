@@ -1,5 +1,5 @@
 import { invokeCommand } from "../../app/tauri";
-import type { ChatMessage, HardwareInfo, LocalAssistantProfile, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
+import type { ChatMessage, HardwareInfo, ImageAttachmentPayload, LocalAssistantProfile, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
 
 export function getOllamaStatus() {
   return invokeCommand<OllamaStatus>("get_ollama_status");
@@ -44,6 +44,7 @@ export function runChatOnce(input: {
   messages?: Pick<ChatMessage, "role" | "content">[];
   memorySummary?: string | null;
   toolContext?: string | null;
+  imageAttachments?: ImageAttachmentPayload[];
 }) {
   return invokeCommand<string>("chat_once", input);
 }

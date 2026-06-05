@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import type { Locale } from "./i18n";
 import { AppShell } from "./app/AppShell";
-import { RuntimeNavigation, SetupNavigation, StudioNavigation } from "./app/AppNavigation";
+import { RuntimeNavigation, SetupNavigation, StudioNavigation, HistoryNavigation } from "./app/AppNavigation";
 import { AppTopBar } from "./app/AppTopBar";
 import { isTauriRuntime } from "./app/tauri";
 import { useAppNavigation } from "./app/useAppNavigation";
@@ -21,6 +21,7 @@ import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles
 import { useRuntimeChat } from "./features/chat/useRuntimeChat";
 import { useCloudDevice } from "./features/cloud/useCloudDevice";
 import { getGoogleWorkspaceStatus } from "./features/cloud/client";
+import { HistoryHost } from "./hosts/HistoryHost";
 import { RuntimeHost } from "./hosts/RuntimeHost";
 import { SettingsHost } from "./hosts/SettingsHost";
 import { StudioHost } from "./hosts/StudioHost";
@@ -33,6 +34,7 @@ import type {
   PromptEditorMode,
   PromptSettings,
   ProviderId,
+  RuntimeStoredConversation,
   StudioSection,
   SurveyState,
   GoogleWorkspaceStatus,
@@ -287,15 +289,23 @@ function App() {
     chatIntroKey,
     chatMetrics,
     chatScrollRef,
+    chooseAndAttachDocuments,
+    chooseAndAttachImages,
+    documentAttachments,
+    imageAttachments,
     handleChatScroll,
     scrollChatToLatest,
     sendMessage,
     setChatInput,
     showJumpToLatest,
     stopRuntimeTts,
+    stopChat,
     startRuntimeChatForAssistant,
     selectRuntimeConversation,
     clearCurrentChat,
+    removeDocumentAttachment,
+    removeImageAttachment,
+    runtimeChatStore,
     ttsError,
     ttsPlaybackState,
   } = useRuntimeChat({
@@ -346,6 +356,19 @@ function App() {
     onStepChange: setActiveStep,
     onEnteringChatStep: () => undefined,
   });
+
+  const historyConversations = useMemo(() => {
+    const visibleAssistantIds = new Set(visibleAssistantProfileStore.profiles.map((profile) => profile.id));
+    const assistantNames = new Map(visibleAssistantProfileStore.profiles.map((profile) => [profile.id, profile.name]));
+
+    return Object.values(runtimeChatStore.conversations)
+      .filter((conversation) => visibleAssistantIds.has(conversation.assistantId))
+      .map((conversation): RuntimeStoredConversation => ({
+        ...conversation,
+        assistantName: conversation.assistantName || assistantNames.get(conversation.assistantId) || "Assistant",
+      }))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }, [runtimeChatStore.conversations, visibleAssistantProfileStore.profiles]);
 
   const renderNavigation = () => (
     <SetupNavigation
@@ -441,6 +464,27 @@ function App() {
     />
   );
 
+  const renderHistoryNavigation = () => (
+    <HistoryNavigation
+      authSession={authSession}
+      onOpenAuth={openAuth}
+      t={t}
+    />
+  );
+
+  const continueHistoryInRuntime = (conversation: RuntimeStoredConversation) => {
+    selectRuntimeConversation({
+      id: conversation.id,
+      assistantId: conversation.assistantId,
+      assistantName: conversation.assistantName || "Assistant",
+      title: conversation.title,
+      preview: conversation.messages[conversation.messages.length - 1]?.content,
+      modelLabel: conversation.modelLabel,
+      messageCount: conversation.messages.length,
+      updatedAtLabel: "Ready",
+    });
+  };
+
   const changeAppMode = (mode: AppMode) => {
     if (mode === appMode) {
       return;
@@ -458,7 +502,7 @@ function App() {
       activeProviderLabel={activeProviderLabel}
       activeProviderMode={activeProviderMode}
       appMode={appMode}
-      centerHidden={appMode === "studio" || appMode === "setup"}
+      centerHidden={appMode === "studio" || appMode === "history" || appMode === "setup"}
       onEnterSettings={enterGeneralSettingsFromTopBar}
       onModeChange={changeAppMode}
       onStudioSave={saveStudioDraft}
@@ -469,6 +513,14 @@ function App() {
       t={t}
     />
   );
+  const renderHistory = () => (
+    <HistoryHost
+      conversations={historyConversations}
+      onContinueInRuntime={continueHistoryInRuntime}
+      t={t}
+    />
+  );
+
   const renderChat = () => (
     <RuntimeHost
       activeChatMessages={activeChatMessages}
@@ -497,7 +549,13 @@ function App() {
       t={t}
       ttsError={ttsError}
       ttsPlaybackState={ttsPlaybackState}
+      chooseAndAttachDocuments={chooseAndAttachDocuments}
+      chooseAndAttachImages={chooseAndAttachImages}
+      documentAttachments={documentAttachments}
+      imageAttachments={imageAttachments}
       handleChatScroll={handleChatScroll}
+      removeDocumentAttachment={removeDocumentAttachment}
+      removeImageAttachment={removeImageAttachment}
       saveSetupAssistantProfile={saveSetupAssistantProfile}
       scrollChatToLatest={scrollChatToLatest}
       sendMessage={sendMessage}
@@ -519,6 +577,7 @@ function App() {
         }));
       }}
       stopRuntimeTts={stopRuntimeTts}
+      stopChat={stopChat}
     />
   );
   const renderAuth = () => (
@@ -612,6 +671,7 @@ function App() {
       status={status}
       t={t}
       onClearProviderKeys={clearProviderKeys}
+      onClearLogs={() => setLogs([])}
       onExitSettings={exitSettings}
       onOpenInitialSetup={openInitialSetup}
       onProviderKeysChange={setProviderKeys}
@@ -695,14 +755,30 @@ function App() {
     <AppShell
       appMode={appMode}
       authView={renderAuth()}
-      content={appMode === "setup" ? renderSetup() : appMode === "studio" ? renderStudio() : renderChat()}
+      content={
+        appMode === "setup"
+          ? renderSetup()
+          : appMode === "studio"
+            ? renderStudio()
+            : appMode === "history"
+              ? renderHistory()
+              : renderChat()
+      }
       downloadModal={(
         <>
           {renderDownloadProgressModal()}
           {renderUnsavedChangesModal()}
         </>
       )}
-      navigation={appMode === "setup" ? renderNavigation() : appMode === "studio" ? renderStudioNavigation() : renderRuntimeNavigation()}
+      navigation={
+        appMode === "setup"
+          ? renderNavigation()
+          : appMode === "studio"
+            ? renderStudioNavigation()
+            : appMode === "history"
+              ? renderHistoryNavigation()
+              : renderRuntimeNavigation()
+      }
       topBar={renderTopBar()}
     />
   );

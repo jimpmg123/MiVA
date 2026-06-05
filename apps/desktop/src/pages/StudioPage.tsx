@@ -8,7 +8,9 @@ import { CharacterStudioPanel } from "../studio/CharacterPage";
 import { GoogleWorkspacePanel } from "../studio/GoogleWorkspacePage";
 import { PromptStudioPanel } from "../studio/PromptsPage";
 import { StudioOverviewPanel } from "../studio/OverviewPage";
-import { StudioToolsPanel } from "../studio/ToolsPage";
+import { StudioCodePanel } from "../studio/CodePage";
+import { McpStudioPanel } from "../studio/McpPage";
+import { SkillsStudioPanel } from "../studio/SkillsPage";
 import { VoiceStudioPanel } from "../studio/VoicePage";
 
 const placeholderCards: Record<StudioSection, Array<[string, string, string]>> = {
@@ -47,10 +49,20 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
     ["OAuth connection", "Account connection and granted scopes are handled through MiVA Google login.", "verified_user"],
     ["Tool permissions", "Users will decide what the assistant can read or change.", "rule"],
   ],
-  tools: [
-    ["MCP servers", "Register local and remote model context protocol servers.", "hub"],
-    ["Agent skills", "Enable specialized abilities such as code help or file workflows.", "extension"],
-    ["External APIs", "Attach custom APIs after provider security is finalized.", "api"],
+  code: [
+    ["Code explanation", "Use local models for bounded read-only code help.", "terminal"],
+    ["Repository editing", "Use cloud coding models for larger multi-file changes.", "edit_square"],
+    ["Shell access", "Keep command execution behind explicit workspace controls.", "security"],
+  ],
+  skills: [
+    ["Rules", "Apply lightweight behavioral guidance to this assistant.", "rule"],
+    ["Agent skills", "Load specialized instructions only when they are relevant.", "menu_book"],
+    ["Local model fit", "Prefer short, bounded skills for lightweight models.", "memory"],
+  ],
+  mcp: [
+    ["Local servers", "Run focused MCP servers through stdio.", "dns"],
+    ["Remote servers", "Connect authenticated Streamable HTTP endpoints.", "cloud"],
+    ["Tool routing", "Expose only a small relevant tool set to the active model.", "filter_alt"],
   ],
 };
 
@@ -58,6 +70,9 @@ const studioSectionDescription: Partial<Record<StudioSection, string>> = {
   character: "Configure this assistant's visual persona, user address style, and future Live2D behavior. Runtime rendering is prepared here and connected later.",
   tts: "Prepare voice input and spoken output for this assistant. STT, TTS, and runtime voice behavior can be configured here.",
   googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products and set permission levels for direct Google API context.",
+  code: "Set code explanation, repository editing, and shell-access boundaries for this assistant.",
+  skills: "Preview assistant rules and progressively loaded Agent Skills without adding every instruction to each prompt.",
+  mcp: "Preview local stdio and remote HTTP MCP connections, tool budgets, and action safety.",
 };
 
 type StudioPageProps = {
@@ -172,7 +187,8 @@ export function StudioPage({
   toolsForAiOpen,
 }: StudioPageProps) {
     const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
-    const isAssistantEditorSection = studioSection !== "myAssistants";
+    const isMockupSection = studioSection === "skills" || studioSection === "mcp";
+    const isAssistantEditorSection = studioSection !== "myAssistants" && !isMockupSection;
     const currentEditorProfile = buildCurrentLocalAssistantProfile();
     const editingExistingAssistant = !isNewAssistantDraft
       && assistantProfileStore.profiles.some((profile) => profile.id === activeLocalProfileId);
@@ -293,11 +309,11 @@ export function StudioPage({
         />
       );
     };
-    const renderStudioTools = () => {
+    const renderStudioCode = () => {
       const profile = buildCurrentLocalAssistantProfile();
 
       return (
-        <StudioToolsPanel
+        <StudioCodePanel
           activeModelLabel={activeModelLabel}
           codingAccessModeCopy={codingAccessModeCopy}
           codingCapabilityCopy={codingCapabilityCopy}
@@ -409,8 +425,12 @@ export function StudioPage({
           renderVoiceStudio()
         ) : studioSection === "googleWorkspace" ? (
           renderGoogleWorkspaceStudio()
-        ) : studioSection === "tools" ? (
-          renderStudioTools()
+        ) : studioSection === "code" ? (
+          renderStudioCode()
+        ) : studioSection === "skills" ? (
+          <SkillsStudioPanel />
+        ) : studioSection === "mcp" ? (
+          <McpStudioPanel />
         ) : (
           null
         )}

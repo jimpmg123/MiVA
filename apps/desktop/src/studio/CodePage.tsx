@@ -32,7 +32,7 @@ type CodingOption = {
   workspaceAllowlistRequired: boolean;
 };
 
-type StudioToolsPanelProps = {
+type StudioCodePanelProps = {
   activeModelLabel: string;
   codingAccessModeCopy: Record<CodingAccessMode, string>;
   codingCapabilityCopy: Record<CodingCapability, string>;
@@ -86,7 +86,7 @@ const codingOptions: CodingOption[] = [
   },
 ];
 
-export function StudioToolsPanel({
+export function StudioCodePanel({
   activeModelLabel,
   codingAccessModeCopy,
   codingCapabilityCopy,
@@ -99,7 +99,7 @@ export function StudioToolsPanel({
   onSaveLocal,
   onSelectGeminiFlash,
   onSyncAll,
-}: StudioToolsPanelProps) {
+}: StudioCodePanelProps) {
   const coding = profile.prompt.settings.coding;
   const selectedOption = codingOptions.find((option) => option.id === coding.capability) ?? codingOptions[0];
   const cloudRequired = coding.providerPolicy === "cloudRequired" && !coding.localExperimental;

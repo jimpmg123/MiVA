@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { AppMode, ChatMessage, ChatMetrics, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
+import type { AppMode, ChatMessage, ChatMetrics, DocumentAttachment, ImageAttachment, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
 import { PrimaryButton } from "../components/ui";
 import { ChatSlashMenu } from "../components/ChatSlashMenu";
 import { getCharacterAsset } from "../features/characters/catalog";
@@ -16,6 +16,10 @@ type RuntimePageProps = {
   appMode: AppMode;
   assistantPanelMinimized: boolean;
   busyAction: string | null;
+  chooseAndAttachDocuments: () => Promise<void> | void;
+  chooseAndAttachImages: () => Promise<void> | void;
+  documentAttachments: DocumentAttachment[];
+  imageAttachments: ImageAttachment[];
   chatEndRef: RefObject<HTMLDivElement | null>;
   chatInput: string;
   chatIntroKey: string;
@@ -39,6 +43,9 @@ type RuntimePageProps = {
   handleChatScroll: () => void;
   scrollChatToLatest: (behavior?: ScrollBehavior) => void;
   sendMessage: () => Promise<void> | void;
+  stopChat: () => void;
+  removeDocumentAttachment: (id: string) => void;
+  removeImageAttachment: (id: string) => void;
   setAppMode: (mode: AppMode) => void;
   setAssistantPanelMinimized: Dispatch<SetStateAction<boolean>>;
   setChatInput: Dispatch<SetStateAction<string>>;
@@ -57,6 +64,10 @@ export function RuntimePage({
   appMode,
   assistantPanelMinimized,
   busyAction,
+  chooseAndAttachDocuments,
+  chooseAndAttachImages,
+  documentAttachments,
+  imageAttachments,
   chatEndRef,
   chatInput,
   chatIntroKey,
@@ -80,6 +91,9 @@ export function RuntimePage({
   handleChatScroll,
   scrollChatToLatest,
   sendMessage,
+  stopChat,
+  removeDocumentAttachment,
+  removeImageAttachment,
   setAppMode,
   setAssistantPanelMinimized,
   setChatInput,
@@ -125,7 +139,13 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
     const chatUnavailable = selectedProvider === "ollama"
       ? !status?.installed || (status.running && !selectedModelInstalled)
       : false;
-    const chatSubmitDisabled = chatUnavailable || busyAction === "chat";
+    const hasPendingAttachments = documentAttachments.some((attachment) => attachment.status === "analyzing");
+    const hasImageAttachments = imageAttachments.length > 0;
+    const lastAssistantMessage = activeChatMessages[activeChatMessages.length - 1];
+    const waitingForFirstToken = busyAction === "chat"
+      && lastAssistantMessage?.role === "assistant"
+      && !lastAssistantMessage.content.trim();
+    const chatSubmitDisabled = (chatUnavailable && !hasImageAttachments) || busyAction === "chat" || hasPendingAttachments;
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
@@ -168,14 +188,14 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
 
     const showAssistantRuntimePanel = characterRuntimeEnabled;
     const chatShellClass = !showAssistantRuntimePanel
-      ? "relative mx-auto h-full max-w-[880px] overflow-visible"
+      ? "relative mx-auto min-h-0 w-full max-w-[880px] flex-1 overflow-visible"
       : assistantPanelMinimized
       ? runtimeChat
-        ? "relative mx-auto h-full min-h-0 max-w-[1180px] overflow-visible"
-        : "relative mx-auto h-full min-h-0 max-w-[1180px] overflow-visible"
+        ? "relative mx-auto min-h-0 w-full max-w-[1180px] flex-1 overflow-visible"
+        : "relative mx-auto min-h-0 w-full max-w-[1180px] flex-1 overflow-visible"
       : runtimeChat
-        ? "relative mx-auto h-full min-h-0 max-w-[1320px] overflow-visible pr-[448px]"
-        : "relative mx-auto h-full min-h-0 max-w-[1320px] overflow-visible pr-[448px]";
+        ? "relative mx-auto min-h-0 w-full max-w-[1320px] flex-1 overflow-visible pr-[448px]"
+        : "relative mx-auto min-h-0 w-full max-w-[1320px] flex-1 overflow-visible pr-[448px]";
     const chatSectionClass = "flex h-full min-h-0 flex-col overflow-hidden";
     const chatMessagesClass = "miva-scrollbar-hidden flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain pb-6 pt-2";
     const assistantCardClass = runtimeChat
@@ -287,11 +307,14 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                 }`}
               >
                 {message.content}
+                {message.role === "assistant" && index === activeChatMessages.length - 1 && busyAction === "chat" ? (
+                  <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-[var(--miva-primary)] align-[-2px]" aria-hidden="true" />
+                ) : null}
               </div>
             </div>
           ))}
 
-          {busyAction === "chat" && (
+          {waitingForFirstToken && (
             <div className="flex max-w-[85%] items-end gap-4 self-start" aria-live="polite">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--miva-primary-soft)]">
                 <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">bolt</span>
@@ -329,7 +352,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
           <div ref={chatEndRef} className="h-1 shrink-0" />
         </div>
 
-        <div className="relative z-10 shrink-0 border-t border-[var(--miva-border)] bg-[var(--miva-input-bar-bg)] pb-2 pt-4 backdrop-blur">
+        <div className="relative z-10 shrink-0 border-t border-[var(--miva-border)] bg-[var(--miva-input-bar-bg)] pb-1 pt-4 backdrop-blur">
           {showJumpToLatest && (
             <button
               aria-label={t.jumpToLatest}
@@ -340,6 +363,43 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             >
               <span className="material-symbols-outlined text-[22px]">arrow_downward</span>
             </button>
+          )}
+
+          {(imageAttachments.length > 0 || documentAttachments.length > 0) && (
+            <div className="mb-3 px-1">
+              {hasImageAttachments ? (
+                <p className="mb-2 text-xs font-semibold text-[var(--miva-text-muted)]">{t.imageVisionNotice}</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+              {imageAttachments.map((attachment) => (
+                <div className="relative overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)]" key={attachment.id}>
+                  <img alt={attachment.name} className="h-20 w-20 object-cover" src={attachment.previewUrl} />
+                  <button
+                    aria-label={`Remove ${attachment.name}`}
+                    className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-[var(--miva-overlay)] text-white"
+                    onClick={() => removeImageAttachment(attachment.id)}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">close</span>
+                  </button>
+                </div>
+              ))}
+              {documentAttachments.map((attachment) => (
+                <div className="relative flex min-w-[140px] items-center gap-2 rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] px-3 py-2 text-xs font-semibold text-[var(--miva-text-muted)]" key={attachment.id}>
+                  <span className="material-symbols-outlined text-[16px] text-[var(--miva-primary)]">description</span>
+                  <span className="truncate">{attachment.name}</span>
+                  <button
+                    aria-label={`Remove ${attachment.name}`}
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[var(--miva-text-soft)] hover:text-[var(--miva-danger-hover)]"
+                    onClick={() => removeDocumentAttachment(attachment.id)}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">close</span>
+                  </button>
+                </div>
+              ))}
+              </div>
+            </div>
           )}
 
           <form
@@ -360,7 +420,20 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                 onSelect={(command) => slashMenu.selectCommand(command)}
               />
             )}
-            <button className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]" type="button">
+            <button
+              className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]"
+              onClick={() => void chooseAndAttachImages()}
+              title={t.attachImage}
+              type="button"
+            >
+              <span className="material-symbols-outlined">image</span>
+            </button>
+            <button
+              className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]"
+              onClick={() => void chooseAndAttachDocuments()}
+              title="Attach document"
+              type="button"
+            >
               <span className="material-symbols-outlined">attach_file</span>
             </button>
             <textarea
@@ -470,15 +543,25 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             <button className="p-2 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-success)]" type="button">
               <span className="material-symbols-outlined">mic</span>
             </button>
-            <button
-              className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-md transition hover:bg-[var(--miva-primary-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={chatSubmitDisabled}
-              type="submit"
-            >
-              <span className={`material-symbols-outlined ${busyAction === "chat" ? "animate-spin" : ""}`}>
-                {busyAction === "chat" ? "progress_activity" : "send"}
-              </span>
-            </button>
+            {busyAction === "chat" ? (
+              <button
+                aria-label={t.stopGeneration}
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--miva-danger-soft)] bg-[var(--miva-danger-soft)] text-[var(--miva-danger-hover)] shadow-md transition hover:bg-[var(--miva-danger-soft)] active:scale-95"
+                onClick={stopChat}
+                title={t.stopGeneration}
+                type="button"
+              >
+                <span className="material-symbols-outlined">stop_circle</span>
+              </button>
+            ) : (
+              <button
+                className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-md transition hover:bg-[var(--miva-primary-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={chatSubmitDisabled}
+                type="submit"
+              >
+                <span className="material-symbols-outlined">send</span>
+              </button>
+            )}
           </form>
           {ttsError && runtimeTtsAvailable && (
             <p className="mt-2 rounded-lg bg-[var(--miva-danger-soft)] px-4 py-2 text-xs font-semibold text-[var(--miva-danger-hover)]">
@@ -486,7 +569,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             </p>
           )}
 
-          <div className="mt-3 flex justify-center gap-6">
+          <div className="mt-2 flex justify-center gap-6">
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--miva-success)]" />
               <span className="text-[11px] font-semibold uppercase tracking-tight text-[var(--miva-text-muted)]">{chatLatencyMetric}</span>
