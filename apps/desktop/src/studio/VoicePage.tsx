@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { PromptSettings, SttProviderId, TtsProviderId } from "../types";
-import { Badge, Button, IconTile, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select, Switch } from "../components/ui";
+import { Badge, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select, SelectionOptionCard, StatusAlert, Switch } from "../components/ui";
 import { getVoiceWorkerStatus, installKokoroTts, startVoiceWorker } from "../features/voice/voiceRuntime";
 import type { VoiceWorkerStatus } from "../types";
 
@@ -105,52 +105,6 @@ const fallbackKokoroVoices = [
   { id: "zm_yunjian", label: "Yunjian", language: "Mandarin Chinese", gender: "Male" },
   { id: "zm_yunxi", label: "Yunxi", language: "Mandarin Chinese", gender: "Male" },
 ];
-
-function OptionCard<T extends string>({
-  active,
-  option,
-  onSelect,
-}: {
-  active: boolean;
-  option: ProviderOption<T>;
-  onSelect: (id: T) => void;
-}) {
-  return (
-    <Button
-      className={`flex h-auto min-h-0 w-full flex-col items-stretch justify-start whitespace-normal rounded-lg border bg-[var(--miva-surface)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-[var(--miva-shadow-md)] ${
-        active ? "border-[var(--miva-primary)] ring-4 ring-[var(--miva-primary-soft)]" : "border-[var(--miva-border)] hover:border-[var(--miva-primary)]"
-      }`}
-      onClick={() => onSelect(option.id)}
-      variant="ghost"
-    >
-      <div className="flex items-start justify-between gap-4">
-        <IconTile>
-          <span className="material-symbols-outlined text-[22px]">{option.icon}</span>
-        </IconTile>
-        <Badge tone={active ? "action" : "neutral"}>{active ? "Selected" : option.badge}</Badge>
-      </div>
-      <h4 className="mt-5 font-heading text-lg font-bold text-[var(--miva-text)]">{option.title}</h4>
-      <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{option.body}</p>
-    </Button>
-  );
-}
-
-function StatusAlert({
-  children,
-  tone = "neutral",
-}: {
-  children: ReactNode;
-  tone?: "neutral" | "success" | "warning" | "danger";
-}) {
-  const tones = {
-    neutral: "bg-[var(--miva-bg-soft)] text-[var(--miva-text-muted)]",
-    success: "bg-[var(--miva-success-surface)] text-[var(--miva-success)]",
-    warning: "bg-[var(--miva-warning-soft)] text-[var(--miva-warning)]",
-    danger: "bg-[var(--miva-danger-soft)] text-[var(--miva-danger-hover)]",
-  };
-
-  return <div className={`rounded-lg p-4 text-sm leading-6 ${tones[tone]}`}>{children}</div>;
-}
 
 export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStudioPanelProps) {
   const voice = settings.voice;
@@ -297,9 +251,9 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
 
         {voice.tts.provider === "localVoice" && !ttsInstalled && (
           <div className="mt-4">
-          <StatusAlert tone="warning">
-            Kokoro is required for local voice output. Install it for the current Python runtime, then refresh the status.
-          </StatusAlert>
+            <StatusAlert tone="warning">
+              Kokoro is required for local voice output. Install it for the current Python runtime, then refresh the status.
+            </StatusAlert>
           </div>
         )}
 
@@ -343,7 +297,7 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
               </Badge>
             </div>
 
-            <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/80 shadow-inner">
+            <div className="mt-4 h-3 overflow-hidden rounded-full bg-[var(--miva-surface-muted)] shadow-inner">
               <div
                 className={`h-full rounded-full bg-[var(--miva-primary)] transition-all ${
                   installBusy ? "w-2/3 animate-pulse" : "w-1/6"
@@ -357,9 +311,9 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
                   className={`rounded-lg px-3 py-2 text-xs font-semibold ${
                     installBusy
                       ? index === 1
-                        ? "bg-white text-[var(--miva-primary)] shadow-sm"
-                        : "bg-white/60 text-[var(--miva-text-muted)]"
-                      : "bg-white text-[var(--miva-text-muted)]"
+                        ? "bg-[var(--miva-control-active-bg)] text-[var(--miva-control-active-text)] shadow-sm"
+                        : "bg-[var(--miva-surface-muted)] text-[var(--miva-text-muted)]"
+                      : "bg-[var(--miva-surface)] text-[var(--miva-text-muted)]"
                   }`}
                   key={step}
                 >
@@ -401,11 +355,14 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
         />
         <div className="mt-6 grid gap-4 xl:grid-cols-2">
           {sttOptions.map((option) => (
-            <OptionCard
+            <SelectionOptionCard
               active={voice.stt.provider === option.id}
+              description={option.body}
+              icon={<span className="material-symbols-outlined text-[22px]">{option.icon}</span>}
               key={option.id}
-              option={option}
-              onSelect={selectSttProvider}
+              onClick={() => selectSttProvider(option.id)}
+              title={option.title}
+              trailing={<Badge tone={voice.stt.provider === option.id ? "action" : "neutral"}>{voice.stt.provider === option.id ? "Selected" : option.badge}</Badge>}
             />
           ))}
         </div>
@@ -418,9 +375,9 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
           actions={<Badge>Toggle recording</Badge>}
         />
         <div className="mt-4">
-        <StatusAlert>
-          Runtime voice will use one microphone control: tap once to start recording, tap again to stop. Recognized speech can be shown or hidden with the transcript option below.
-        </StatusAlert>
+          <StatusAlert>
+            Runtime voice will use one microphone control: tap once to start recording, tap again to stop. Recognized speech can be shown or hidden with the transcript option below.
+          </StatusAlert>
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="block">
@@ -451,11 +408,14 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
         />
         <div className="mt-6 grid gap-4 xl:grid-cols-2">
           {ttsOptions.map((option) => (
-            <OptionCard
+            <SelectionOptionCard
               active={voice.tts.provider === option.id}
+              description={option.body}
+              icon={<span className="material-symbols-outlined text-[22px]">{option.icon}</span>}
               key={option.id}
-              option={option}
-              onSelect={selectTtsProvider}
+              onClick={() => selectTtsProvider(option.id)}
+              title={option.title}
+              trailing={<Badge tone={voice.tts.provider === option.id ? "action" : "neutral"}>{voice.tts.provider === option.id ? "Selected" : option.badge}</Badge>}
             />
           ))}
         </div>

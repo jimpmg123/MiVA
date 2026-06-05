@@ -24,7 +24,8 @@ import { getGoogleWorkspaceStatus } from "./features/cloud/client";
 import { RuntimeHost } from "./hosts/RuntimeHost";
 import { SettingsHost } from "./hosts/SettingsHost";
 import { StudioHost } from "./hosts/StudioHost";
-import { PrimaryButton, SecondaryButton } from "./components/ui";
+import { Button, IconTile, ModalBackdrop, ModalPanel, SecondaryButton } from "./components/ui";
+import { useUiTheme } from "./features/theme/useUiTheme";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
@@ -40,6 +41,7 @@ import type {
 
 const ACTIVE_LOCALE: Locale = "en";
 function App() {
+  const { setThemeId, themeId } = useUiTheme();
   const {
     activeStep,
     appMode,
@@ -383,23 +385,23 @@ function App() {
 
   const renderUnsavedChangesModal = () => (
     pendingUnsavedAction ? (
-      <div className="fixed inset-0 z-[140] grid place-items-center bg-[#191c1d]/35 px-6 backdrop-blur-sm">
-        <section className="w-full max-w-[460px] rounded-2xl border border-[#c2c7ce]/70 bg-white p-6 text-center shadow-[0_24px_80px_rgba(25,28,29,0.24)]">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#fff2cc] text-[#6b4b00]">
+      <ModalBackdrop className="z-[140]">
+        <ModalPanel className="max-w-[460px] text-center">
+          <IconTile className="mx-auto h-14 w-14" tone="warning">
             <span className="material-symbols-outlined">warning</span>
-          </div>
-          <h3 className="mt-5 font-heading text-xl font-bold text-[#191c1d]">Leave without saving?</h3>
-          <p className="mt-3 text-sm leading-6 text-[#42474d]">
+          </IconTile>
+          <h3 className="mt-5 font-heading text-xl font-bold text-[var(--miva-text)]">Leave without saving?</h3>
+          <p className="mt-3 text-sm leading-6 text-[var(--miva-text-muted)]">
             Changes in Overview and its sections are not applied until you click Save changes.
           </p>
           <div className="mt-6 flex justify-center gap-3">
             <SecondaryButton onClick={cancelUnsavedAction}>Stay here</SecondaryButton>
-            <PrimaryButton className="bg-[#ba1a1a] hover:bg-[#93000a]" onClick={confirmUnsavedAction}>
+            <Button className="h-12 px-5" onClick={confirmUnsavedAction} variant="destructive">
               Leave without saving
-            </PrimaryButton>
+            </Button>
           </div>
-        </section>
-      </div>
+        </ModalPanel>
+      </ModalBackdrop>
     ) : null
   );
 
@@ -602,7 +604,6 @@ function App() {
       logs={logs}
       providerKeys={providerKeys}
       providerKeysSaved={providerKeysSaved}
-      providerMeta={providerMeta}
       providerText={providerText}
       selectedCloudModel={selectedCloudModel}
       selectedProvider={selectedProvider}
@@ -617,6 +618,8 @@ function App() {
       onSaveProviderKeys={saveProviderKeys}
       onSelectedCloudModelChange={setSelectedCloudModel}
       onSelectedProviderChange={setSelectedProvider}
+      onThemeChange={setThemeId}
+      themeId={themeId}
     />
   );
   const renderDownloadProgressModal = () => (

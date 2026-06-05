@@ -325,7 +325,6 @@ export function StudioPage({
           authConnected={signedIn}
           googleWorkspaceStatus={googleWorkspaceStatus}
           settings={profile.prompt.settings}
-          tauriRuntime={tauriRuntime}
           onOpenWorkspaceConsent={onOpenWorkspaceConsent}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
           onRefreshGoogleWorkspaceStatus={onRefreshGoogleWorkspaceStatus}
@@ -417,7 +416,7 @@ export function StudioPage({
         )}
 
         {(assistantProfileSaveState === "saving" || assistantProfileSaveState === "saved") && (
-          <div className="pointer-events-none fixed left-[calc(290px+(100vw-290px)/2)] top-6 z-[80] w-[min(520px,calc(100vw-338px))] rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.86)] px-5 py-4 text-center shadow-[var(--miva-shadow-md)] backdrop-blur-md save-toast-enter">
+          <div className="pointer-events-none fixed left-[calc(290px+(100vw-290px)/2)] top-6 z-[80] w-[min(520px,calc(100vw-338px))] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 text-center shadow-[var(--miva-shadow-md)] backdrop-blur-md save-toast-enter">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">
               {assistantProfileSaveState === "saving" ? "Saving assistant" : "Saved"}
             </p>
@@ -428,7 +427,7 @@ export function StudioPage({
         )}
 
         {isAssistantEditorSection && (
-          <div className="fixed bottom-5 left-[290px] right-10 z-40 mx-auto max-w-[980px] rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.92)] px-5 py-4 shadow-[var(--miva-shadow-md)] backdrop-blur-md">
+          <div className="fixed bottom-5 left-[290px] right-10 z-40 mx-auto max-w-[980px] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 shadow-[var(--miva-shadow-md)] backdrop-blur-md">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">

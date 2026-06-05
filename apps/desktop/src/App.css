@@ -28,6 +28,7 @@
   --miva-primary-hover: #3d5f91;
   --miva-primary-soft: #dce9fb;
   --miva-primary-surface: #edf5ff;
+  --miva-on-primary: #ffffff;
   --miva-success: #4f7b58;
   --miva-success-soft: #dff2e3;
   --miva-success-surface: #eef8f0;
@@ -43,11 +44,34 @@
   --miva-shadow-lg: 0 24px 80px rgba(31, 57, 88, 0.17);
   --miva-glass: rgba(255, 255, 255, 0.78);
   --miva-glass-border: rgba(219, 227, 238, 0.74);
+  --miva-floating-surface: rgba(255, 255, 255, 0.95);
+  --miva-input-bar-bg: rgba(248, 250, 252, 0.95);
+  --miva-overlay: rgba(23, 32, 38, 0.38);
   --miva-live-glow: 0 0 8px rgba(79, 123, 88, 0.38);
   --miva-radius-sm: 10px;
   --miva-radius-md: 14px;
   --miva-radius-lg: 18px;
   --miva-focus: 0 0 0 4px rgba(36, 73, 102, 0.16);
+  --miva-body-gradient: linear-gradient(180deg, rgba(220, 233, 251, 0.52) 0%, rgba(249, 249, 254, 0) 250px);
+  --miva-shell-gradient-a: radial-gradient(circle at 84% -8%, rgba(220, 233, 251, 0.82), transparent 28rem);
+  --miva-shell-gradient-b: radial-gradient(circle at 14% 10%, rgba(208, 225, 251, 0.46), transparent 24rem);
+  --miva-shell-gradient-c: linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+  --miva-sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(244, 247, 251, 0.88) 100%);
+  --miva-sidebar-border: rgba(184, 198, 210, 0.55);
+  --miva-sidebar-inset: inset -1px 0 0 rgba(255, 255, 255, 0.65);
+  --miva-topbar-bg: rgba(249, 249, 254, 0.82);
+  --miva-topbar-border: rgba(184, 198, 210, 0.58);
+  --miva-topbar-inset: 0 1px 0 rgba(255, 255, 255, 0.68);
+  --miva-topbar-segment-bg: rgba(238, 243, 247, 0.82);
+  --miva-topbar-segment-active-bg: #ffffff;
+  --miva-topbar-segment-active-text: var(--miva-primary);
+  --miva-topbar-chip-bg: rgba(255, 255, 255, 0.82);
+  --miva-topbar-chip-text: var(--miva-text-muted);
+  --miva-control-active-bg: #ffffff;
+  --miva-control-active-text: var(--miva-primary);
+  --miva-nav-active-border: rgba(36, 73, 102, 0.12);
+  --miva-card-shadow-soft: 0 4px 20px rgba(31, 57, 88, 0.06);
+  --miva-character-shadow: 0 24px 60px rgba(36, 73, 102, 0.28);
   font-family:
     var(--miva-font-sans);
   color: var(--miva-text);
@@ -58,12 +82,130 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-theme="midnight-cyan"] {
+  --miva-bg: #0d1117;
+  --miva-bg-soft: #161b22;
+  --miva-surface: #1c2128;
+  --miva-surface-muted: #21262d;
+  --miva-surface-raised: rgba(28, 33, 40, 0.92);
+  --miva-border: #30363d;
+  --miva-border-strong: #484f58;
+  --miva-text: #ffffff;
+  --miva-text-muted: #8ee4f0;
+  --miva-text-soft: #6ecde3;
+  --miva-primary: #22d3ee;
+  --miva-primary-hover: #06b6d4;
+  --miva-primary-soft: rgba(34, 211, 238, 0.16);
+  --miva-primary-surface: rgba(34, 211, 238, 0.1);
+  --miva-on-primary: #041316;
+  --miva-success: #3fb950;
+  --miva-success-soft: rgba(63, 185, 80, 0.18);
+  --miva-success-surface: rgba(63, 185, 80, 0.1);
+  --miva-warning: #d29922;
+  --miva-warning-soft: rgba(210, 153, 34, 0.18);
+  --miva-danger: #f85149;
+  --miva-danger-hover: #ff7b72;
+  --miva-danger-soft: rgba(248, 81, 73, 0.16);
+  --miva-switch-off: #484f58;
+  --miva-nav-icon-bg: #21262d;
+  --miva-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --miva-shadow-md: 0 12px 32px rgba(0, 0, 0, 0.34);
+  --miva-shadow-lg: 0 24px 80px rgba(0, 0, 0, 0.42);
+  --miva-glass: rgba(22, 27, 34, 0.88);
+  --miva-glass-border: rgba(48, 54, 61, 0.92);
+  --miva-floating-surface: rgba(28, 33, 40, 0.96);
+  --miva-input-bar-bg: rgba(13, 17, 23, 0.94);
+  --miva-overlay: rgba(0, 0, 0, 0.58);
+  --miva-live-glow: 0 0 8px rgba(34, 211, 238, 0.42);
+  --miva-focus: 0 0 0 4px rgba(34, 211, 238, 0.24);
+  --miva-body-gradient: linear-gradient(180deg, rgba(34, 211, 238, 0.08) 0%, rgba(13, 17, 23, 0) 250px);
+  --miva-shell-gradient-a: radial-gradient(circle at 84% -8%, rgba(34, 211, 238, 0.12), transparent 28rem);
+  --miva-shell-gradient-b: radial-gradient(circle at 14% 10%, rgba(6, 182, 212, 0.08), transparent 24rem);
+  --miva-shell-gradient-c: linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+  --miva-sidebar-bg: linear-gradient(180deg, rgba(22, 27, 34, 0.98) 0%, rgba(13, 17, 23, 0.94) 100%);
+  --miva-sidebar-border: rgba(48, 54, 61, 0.92);
+  --miva-sidebar-inset: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+  --miva-topbar-bg: rgba(13, 17, 23, 0.88);
+  --miva-topbar-border: rgba(48, 54, 61, 0.92);
+  --miva-topbar-inset: 0 1px 0 rgba(255, 255, 255, 0.04);
+  --miva-topbar-segment-bg: #21262d;
+  --miva-topbar-segment-active-bg: var(--miva-primary);
+  --miva-topbar-segment-active-text: var(--miva-on-primary);
+  --miva-topbar-chip-bg: #21262d;
+  --miva-topbar-chip-text: var(--miva-text);
+  --miva-control-active-bg: var(--miva-primary);
+  --miva-control-active-text: var(--miva-on-primary);
+  --miva-nav-active-border: rgba(34, 211, 238, 0.22);
+  --miva-card-shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.24);
+  --miva-character-shadow: 0 24px 60px rgba(34, 211, 238, 0.18);
+  color-scheme: dark;
+}
+
+[data-theme="ivory-sage"] {
+  --miva-bg: #f7f6f2;
+  --miva-bg-soft: #f0efe8;
+  --miva-surface: #fcfcfa;
+  --miva-surface-muted: #e8e6df;
+  --miva-surface-raised: rgba(252, 252, 250, 0.92);
+  --miva-border: #d4d0c4;
+  --miva-border-strong: #b8b3a6;
+  --miva-text: #1f2a22;
+  --miva-text-muted: #4a5c4d;
+  --miva-text-soft: #576758;
+  --miva-primary: #5a7d5c;
+  --miva-primary-hover: #4a6b4c;
+  --miva-primary-soft: #dfeadf;
+  --miva-primary-surface: #eef3ee;
+  --miva-on-primary: #ffffff;
+  --miva-success: #4a7350;
+  --miva-success-soft: #dce8dd;
+  --miva-success-surface: #ebf2ec;
+  --miva-warning: #7a5500;
+  --miva-warning-soft: #f5ecd0;
+  --miva-danger: #ba1a1a;
+  --miva-danger-hover: #93000a;
+  --miva-danger-soft: #ffdad6;
+  --miva-switch-off: #d4d0c4;
+  --miva-nav-icon-bg: #e8e6df;
+  --miva-shadow-sm: 0 1px 2px rgba(31, 42, 34, 0.08);
+  --miva-shadow-md: 0 12px 32px rgba(31, 42, 34, 0.1);
+  --miva-shadow-lg: 0 24px 80px rgba(31, 42, 34, 0.14);
+  --miva-glass: rgba(252, 252, 250, 0.84);
+  --miva-glass-border: rgba(212, 208, 196, 0.82);
+  --miva-floating-surface: rgba(252, 252, 250, 0.96);
+  --miva-input-bar-bg: rgba(247, 246, 242, 0.96);
+  --miva-overlay: rgba(31, 42, 34, 0.38);
+  --miva-live-glow: 0 0 8px rgba(90, 125, 92, 0.34);
+  --miva-focus: 0 0 0 4px rgba(90, 125, 92, 0.2);
+  --miva-body-gradient: linear-gradient(180deg, rgba(223, 234, 223, 0.55) 0%, rgba(247, 246, 242, 0) 250px);
+  --miva-shell-gradient-a: radial-gradient(circle at 84% -8%, rgba(223, 234, 223, 0.72), transparent 28rem);
+  --miva-shell-gradient-b: radial-gradient(circle at 14% 10%, rgba(238, 243, 238, 0.58), transparent 24rem);
+  --miva-shell-gradient-c: linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+  --miva-sidebar-bg: linear-gradient(180deg, rgba(252, 252, 250, 0.98) 0%, rgba(240, 239, 232, 0.94) 100%);
+  --miva-sidebar-border: rgba(184, 179, 166, 0.62);
+  --miva-sidebar-inset: inset -1px 0 0 rgba(255, 255, 255, 0.72);
+  --miva-topbar-bg: rgba(247, 246, 242, 0.9);
+  --miva-topbar-border: rgba(184, 179, 166, 0.62);
+  --miva-topbar-inset: 0 1px 0 rgba(255, 255, 255, 0.72);
+  --miva-topbar-segment-bg: rgba(232, 230, 223, 0.92);
+  --miva-topbar-segment-active-bg: var(--miva-primary);
+  --miva-topbar-segment-active-text: var(--miva-on-primary);
+  --miva-topbar-chip-bg: rgba(252, 252, 250, 0.94);
+  --miva-topbar-chip-text: var(--miva-text);
+  --miva-control-active-bg: var(--miva-primary);
+  --miva-control-active-text: var(--miva-on-primary);
+  --miva-nav-active-border: rgba(90, 125, 92, 0.22);
+  --miva-card-shadow-soft: 0 4px 20px rgba(31, 42, 34, 0.07);
+  --miva-character-shadow: 0 24px 60px rgba(90, 125, 92, 0.22);
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   min-width: 1000px;
   min-height: 720px;
   background:
-    linear-gradient(180deg, rgba(220, 233, 251, 0.52) 0%, rgba(249, 249, 254, 0) 250px),
+    var(--miva-body-gradient),
     var(--miva-bg);
 }
 
@@ -89,9 +231,9 @@ button:disabled {
 
 .miva-app-shell {
   background:
-    radial-gradient(circle at 84% -8%, rgba(220, 233, 251, 0.82), transparent 28rem),
-    radial-gradient(circle at 14% 10%, rgba(208, 225, 251, 0.46), transparent 24rem),
-    linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+    var(--miva-shell-gradient-a),
+    var(--miva-shell-gradient-b),
+    var(--miva-shell-gradient-c);
   color: var(--miva-text);
 }
 
@@ -105,17 +247,16 @@ button:disabled {
 }
 
 .miva-sidebar {
-  border-right: 1px solid rgba(184, 198, 210, 0.55);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(244, 247, 251, 0.88) 100%);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.65);
+  border-right: 1px solid var(--miva-sidebar-border);
+  background: var(--miva-sidebar-bg);
+  box-shadow: var(--miva-sidebar-inset);
   backdrop-filter: blur(18px);
 }
 
 .miva-topbar {
-  border-bottom: 1px solid rgba(184, 198, 210, 0.58);
-  background: rgba(249, 249, 254, 0.82);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.68);
+  border-bottom: 1px solid var(--miva-topbar-border);
+  background: var(--miva-topbar-bg);
+  box-shadow: var(--miva-topbar-inset);
   backdrop-filter: blur(18px);
 }
 
@@ -141,7 +282,7 @@ button:disabled {
 .miva-nav-item-active {
   color: var(--miva-primary);
   background: var(--miva-primary-surface);
-  border-color: rgba(36, 73, 102, 0.12);
+  border-color: var(--miva-nav-active-border);
   box-shadow: var(--miva-shadow-sm);
 }
 
@@ -152,7 +293,7 @@ button:disabled {
 
 .miva-nav-icon-active {
   background: var(--miva-primary);
-  color: white;
+  color: var(--miva-on-primary);
 }
 
 .miva-nav-icon-success {
@@ -163,14 +304,14 @@ button:disabled {
 .miva-soft-card {
   border: 1px solid var(--miva-glass-border);
   background: var(--miva-glass);
-  box-shadow: 0 4px 20px rgba(31, 57, 88, 0.06);
+  box-shadow: var(--miva-card-shadow-soft);
   backdrop-filter: blur(16px);
 }
 
 .miva-glass-card {
   border: 1px solid var(--miva-glass-border);
   background: var(--miva-glass);
-  box-shadow: 0 4px 20px rgba(31, 57, 88, 0.06);
+  box-shadow: var(--miva-card-shadow-soft);
   backdrop-filter: blur(18px);
 }
 

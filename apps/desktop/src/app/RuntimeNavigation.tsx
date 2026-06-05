@@ -65,7 +65,7 @@ export function RuntimeNavigation({
 
       <div className="border-b border-[var(--miva-border)]/60 p-4">
         <button
-          className="miva-soft-card flex min-h-11 w-full items-center justify-between rounded-2xl px-4 py-3 text-sm font-bold text-[var(--miva-text)] transition hover:border-[var(--miva-primary)]/60"
+          className="miva-soft-card flex min-h-11 w-full items-center justify-between rounded-lg px-4 py-3 text-sm font-bold text-[var(--miva-text)] transition hover:border-[var(--miva-primary)]/60"
           type="button"
           onClick={onClearCurrentChat}
         >
@@ -126,7 +126,7 @@ export function RuntimeNavigation({
                             <p className="min-w-0 truncate text-xs text-[var(--miva-text-muted)]">No conversations yet.</p>
                             <button
                               aria-label={`Start new chat with ${group.assistantName}`}
-                              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[var(--miva-border)] bg-white text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
                               onClick={() => onNewChatForAssistant(group.assistantId)}
                               type="button"
                             >

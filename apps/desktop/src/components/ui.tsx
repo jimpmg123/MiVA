@@ -8,7 +8,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-[var(--miva-primary)] text-white shadow-sm hover:bg-[var(--miva-primary-hover)]",
+        default: "bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-sm hover:bg-[var(--miva-primary-hover)]",
         secondary: "border border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] shadow-sm hover:border-[var(--miva-border-strong)] hover:bg-[var(--miva-bg-soft)]",
         ghost: "text-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]",
         destructive: "bg-[var(--miva-danger)] text-white shadow-sm hover:bg-[var(--miva-danger-hover)]",
@@ -205,7 +205,7 @@ export function InfoTile({ label, value, className }: { label: ReactNode; value:
 
 export function ModalBackdrop({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("fixed inset-0 z-[120] grid place-items-center bg-[rgba(23,32,38,0.38)] px-6 backdrop-blur-sm", className)}>
+    <div className={cn("fixed inset-0 z-[120] grid place-items-center bg-[var(--miva-overlay)] px-6 backdrop-blur-sm", className)}>
       {children}
     </div>
   );

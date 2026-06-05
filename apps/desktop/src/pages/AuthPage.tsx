@@ -1,5 +1,7 @@
-﻿import type { DeviceAuthStart, AuthFlowState, AuthSession } from "../types";
-import { PrimaryButton, SecondaryButton } from "../components/ui";
+import type { DeviceAuthStart, AuthFlowState, AuthSession } from "../types";
+import { isTauriRuntime } from "../app/tauri";
+import { IconButton, Panel, PrimaryButton, SecondaryButton, StatusAlert } from "../components/ui";
+import { WindowControls, WindowDragLayer } from "../components/WindowControls";
 
 type AuthPageProps = {
   authFlowError: string | null;
@@ -24,47 +26,60 @@ export function AuthPage({
   onOpenWebConsole,
   onStartBrowserSignIn,
 }: AuthPageProps) {
+  const desktopChrome = isTauriRuntime();
+
   return (
-    <main className="grid h-full w-full flex-1 place-items-center bg-[#f8f9fa] px-6 text-[#191c1d]">
-      <section className="w-full max-w-[440px] rounded-3xl border border-[#c2c7ce]/70 bg-white p-8 shadow-[0_24px_80px_rgba(53,96,127,0.16)]">
+    <main className="relative grid h-full w-full flex-1 place-items-center bg-[var(--miva-bg)] px-6 text-[var(--miva-text)]">
+      {desktopChrome && (
+        <div className="absolute inset-x-0 top-0 z-20 flex h-9 items-stretch border-b border-[var(--miva-border)] bg-[var(--miva-topbar-bg)] backdrop-blur">
+          <WindowDragLayer className="absolute inset-0 z-0" />
+          <div className="relative z-10 flex min-w-0 flex-1 items-center px-4 pointer-events-none">
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">MiVA Desktop</span>
+          </div>
+          <div className="relative z-10 pointer-events-auto">
+            <WindowControls className="-mr-1" />
+          </div>
+        </div>
+      )}
+      <Panel className={`w-full max-w-[440px] p-8 shadow-[var(--miva-shadow-lg)] ${desktopChrome ? "mt-8" : ""}`}>
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">MiVA Account</p>
-            <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[#191c1d]">Sign in</h1>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">MiVA Account</p>
+            <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[var(--miva-text)]">Sign in</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
               MiVA Desktop opens web login in your system browser, then receives a desktop session from the API.
             </p>
           </div>
-          <button
+          <IconButton
             aria-label="Close sign in"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[#72787e] transition hover:bg-[#f3f4f5] hover:text-[#191c1d]"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--miva-text-soft)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
             type="button"
             onClick={onCloseAuth}
           >
             <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
+          </IconButton>
         </div>
 
         {authFlowState === "admin-web-only" ? (
           <div className="grid gap-5">
-            <div className="rounded-2xl border border-[#cae6ff] bg-[#eff8ff] p-5">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#35607f]">Web analytics only</p>
-              <p className="mt-3 text-lg font-bold text-[#191c1d]">Continue in the web console</p>
-              <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <StatusAlert tone="neutral">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-primary)]">Web analytics only</p>
+              <p className="mt-3 text-lg font-bold text-[var(--miva-text)]">Continue in the web console</p>
+              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
                 Admin accounts are used only for MiVA web analytics. Desktop assistant creation and runtime stay unavailable for this account.
               </p>
-            </div>
+            </StatusAlert>
             <PrimaryButton className="w-full justify-center" onClick={onOpenWebConsole}>
               Continue in web console
             </PrimaryButton>
           </div>
         ) : authSession ? (
           <div className="grid gap-5">
-            <div className="rounded-2xl bg-[#f3f4f5] p-5">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#72787e]">Connected Account</p>
-              <p className="mt-3 text-lg font-bold text-[#191c1d]">{authSession.user.displayName}</p>
-              <p className="mt-1 text-sm text-[#42474d]">{authSession.user.email}</p>
-            </div>
+            <StatusAlert tone="success">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">Connected Account</p>
+              <p className="mt-3 text-lg font-bold text-[var(--miva-text)]">{authSession.user.displayName}</p>
+              <p className="mt-1 text-sm text-[var(--miva-text-muted)]">{authSession.user.email}</p>
+            </StatusAlert>
             <PrimaryButton className="w-full justify-center" onClick={onCloseAuth}>
               Continue to MiVA
             </PrimaryButton>
@@ -88,24 +103,24 @@ export function AuthPage({
             <SecondaryButton className="w-full justify-center" onClick={onContinueLocalOnly}>
               Continue without signing in
             </SecondaryButton>
-            <p className="rounded-2xl bg-[#f3f4f5] p-4 text-sm leading-6 text-[#42474d]">
+            <StatusAlert tone="neutral">
               Local-only mode can run Ollama assistants on this computer. Sign in later to sync assistants and use cloud models.
-            </p>
+            </StatusAlert>
 
             {deviceAuthRequest && authFlowState === "waiting" && (
-              <div className="rounded-2xl border border-[#cae6ff] bg-[#eff8ff] p-4">
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#35607f]">Browser login waiting</p>
-                <p className="mt-2 text-sm leading-6 text-[#42474d]">Complete sign-in in the browser window. MiVA Desktop will connect automatically.</p>
-                <p className="mt-3 font-mono text-sm font-bold text-[#191c1d]">Code: {deviceAuthRequest.userCode}</p>
-              </div>
+              <StatusAlert tone="neutral">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-primary)]">Browser login waiting</p>
+                <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Complete sign-in in the browser window. MiVA Desktop will connect automatically.</p>
+                <p className="mt-3 font-mono text-sm font-bold text-[var(--miva-text)]">Code: {deviceAuthRequest.userCode}</p>
+              </StatusAlert>
             )}
 
             {authFlowError && (
-              <p className="rounded-2xl bg-[#ffdad6] p-4 text-sm leading-6 text-[#93000a]">{authFlowError}</p>
+              <StatusAlert tone="danger">{authFlowError}</StatusAlert>
             )}
           </div>
         )}
-      </section>
+      </Panel>
     </main>
   );
 }

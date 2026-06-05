@@ -1,7 +1,7 @@
 ﻿import { useState } from "react";
 import type { Locale } from "../i18n";
 import type { CloudModelInfo, CloudProviderId, ModelInfo, OllamaStatus, ProviderId, ProviderMode } from "../types";
-import { Badge, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
+import { Badge, IconButton, IconTile, InfoTile, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
 
 type ProviderMeta = Record<ProviderId, { label: string; mode: ProviderMode; icon: string }>;
 
@@ -52,8 +52,8 @@ export function ModelsPanel({
       <Panel>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="font-heading text-xl font-bold text-[#191c1d]">Local model library</h3>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Local model library</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
               Select and download Ollama models for this computer. Recommendation only chooses a first model; Studio is where users can manage more models later.
             </p>
           </div>
@@ -61,16 +61,15 @@ export function ModelsPanel({
             <Badge tone={status?.running ? "success" : "neutral"}>
               {status?.running ? "Ollama running" : "Ollama offline"}
             </Badge>
-            <button
+            <IconButton
               aria-label={localModelsExpanded ? "Collapse local models" : "Expand local models"}
-              className="grid h-9 w-9 place-items-center rounded-full border border-[#c2c7ce] text-[#35607f] transition hover:border-[#35607f] hover:bg-[#cae6ff]/35"
+              className="h-9 w-9 rounded-full border border-[var(--miva-border)] text-[var(--miva-primary)] hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
               onClick={() => setLocalModelsExpanded((value) => !value)}
-              type="button"
             >
               <span className={`material-symbols-outlined text-[20px] transition-transform duration-300 ${localModelsExpanded ? "rotate-180" : "rotate-0"}`}>
                 {localModelsExpanded ? "remove" : "add"}
               </span>
-            </button>
+            </IconButton>
           </div>
         </div>
 
@@ -89,33 +88,27 @@ export function ModelsPanel({
 
               return (
                 <article
-                  className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
-                    active ? "border-[#35607f] ring-4 ring-[#cae6ff]" : "border-[#c2c7ce]/70 hover:border-[#35607f]"
+                  className={`rounded-lg border bg-[var(--miva-surface)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[var(--miva-shadow-md)] ${
+                    active ? "border-[var(--miva-primary)] ring-4 ring-[var(--miva-primary-soft)]" : "border-[var(--miva-border)] hover:border-[var(--miva-primary)]"
                   }`}
                   key={model.id}
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+                    <IconTile>
                       <span className="material-symbols-outlined text-[22px]">memory</span>
-                    </span>
+                    </IconTile>
                     <div className="flex flex-wrap justify-end gap-2">
                       {active && <Badge tone="action">{providerText.selected}</Badge>}
                       {installed && <Badge tone="success">{t.installed}</Badge>}
                     </div>
                   </div>
-                  <h4 className="mt-5 font-heading text-lg font-bold text-[#191c1d]">{model.label}</h4>
-                  <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[#72787e]">{model.category}</p>
-                  <p className="mt-3 text-sm leading-6 text-[#42474d]">{model.summary[activeLocale]}</p>
+                  <h4 className="mt-5 font-heading text-lg font-bold text-[var(--miva-text)]">{model.label}</h4>
+                  <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">{model.category}</p>
+                  <p className="mt-3 text-sm leading-6 text-[var(--miva-text-muted)]">{model.summary[activeLocale]}</p>
 
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                    <div className="rounded-xl bg-[#f3f4f5] p-3">
-                      <span className="font-bold uppercase tracking-[0.12em] text-[#72787e]">RAM</span>
-                      <p className="mt-1 font-semibold text-[#191c1d]">{model.recommendedRamGb} GB+</p>
-                    </div>
-                    <div className="rounded-xl bg-[#f3f4f5] p-3">
-                      <span className="font-bold uppercase tracking-[0.12em] text-[#72787e]">Size</span>
-                      <p className="mt-1 font-semibold text-[#191c1d]">{model.downloadSizeLabel ?? "Ollama tag"}</p>
-                    </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <InfoTile label="RAM" value={`${model.recommendedRamGb} GB+`} />
+                    <InfoTile label="Size" value={model.downloadSizeLabel ?? "Ollama tag"} />
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-2">
@@ -144,12 +137,12 @@ export function ModelsPanel({
       <Panel>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="font-heading text-xl font-bold text-[#191c1d]">Cloud models</h3>
-            <p className="mt-2 text-sm leading-6 text-[#42474d]">
+            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Cloud models</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
               Cloud models do not need downloads. API key management remains in Settings &gt; AI models.
             </p>
             {!signedIn && (
-              <p className="mt-2 text-sm font-semibold text-[#ba1a1a]">
+              <p className="mt-2 text-sm font-semibold text-[var(--miva-danger-hover)]">
                 Sign in is required to use cloud models.
               </p>
             )}
@@ -159,26 +152,26 @@ export function ModelsPanel({
         <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
           {visibleCloudModels.map((model) => (
             <button
-              className={`rounded-2xl border bg-white p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              className={`rounded-lg border bg-[var(--miva-surface)] p-4 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--miva-shadow-sm)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none ${
                 selectedProvider === model.provider && selectedCloudModel === model.id
-                  ? "border-[#35607f] ring-4 ring-[#cae6ff]"
+                  ? "border-[var(--miva-primary)] ring-4 ring-[var(--miva-primary-soft)]"
                   : signedIn
-                    ? "border-[#c2c7ce]/70 hover:border-[#35607f]"
-                    : "border-[#ffb4ab]"
+                    ? "border-[var(--miva-border)] hover:border-[var(--miva-primary)]"
+                    : "border-[var(--miva-danger-soft)]"
               }`}
               disabled={!signedIn}
               key={model.id}
               onClick={() => onSelectCloudModel(model.provider, model.id)}
               type="button"
             >
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#cae6ff]/55 text-[#35607f]">
+              <IconTile className="h-10 w-10">
                 <span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>
-              </span>
-              <p className="mt-4 font-heading text-base font-bold text-[#191c1d]">{model.label}</p>
-              <p className="mt-2 text-xs font-bold uppercase tracking-[0.12em] text-[#72787e]">
+              </IconTile>
+              <p className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">{model.label}</p>
+              <p className="mt-2 text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">
                 {providerMeta[model.provider].label}
               </p>
-              {!signedIn && <p className="mt-3 text-xs font-semibold text-[#ba1a1a]">Sign in required</p>}
+              {!signedIn && <p className="mt-3 text-xs font-semibold text-[var(--miva-danger-hover)]">Sign in required</p>}
             </button>
           ))}
         </div>

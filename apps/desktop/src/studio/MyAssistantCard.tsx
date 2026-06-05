@@ -1,5 +1,5 @@
 import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
-import { Badge, IconButton, IconTile, InfoTile } from "../components/ui";
+import { Badge, Button, IconButton, IconTile, InfoTile } from "../components/ui";
 
 type MyAssistantCardProps = {
   profile: LocalAssistantProfile;
@@ -53,22 +53,19 @@ type AssistantActionButtonProps = {
 
 function AssistantActionButton({ label, icon, active = false, disabled = false, onClick }: AssistantActionButtonProps) {
   return (
-    <button
+    <Button
       aria-label={label}
-      className={`grid h-12 w-full place-items-center rounded-xl border shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[color:rgba(36,73,102,0.32)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${
-        active
-          ? "border-[var(--miva-primary)] bg-[var(--miva-primary)] text-white hover:bg-[var(--miva-primary-hover)]"
-          : "border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-primary)] hover:border-[var(--miva-border-strong)] hover:bg-[var(--miva-bg-soft)]"
-      }`}
+      className="h-12 w-full rounded-lg p-0"
       disabled={disabled}
       onClick={onClick}
+      size="icon"
       title={label}
-      type="button"
+      variant={active ? "default" : "secondary"}
     >
       <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
         {icon}
       </span>
-    </button>
+    </Button>
   );
 }
 
