@@ -1,3 +1,4 @@
+import { getDemoProviderKey } from "../../../../packages/shared/src/demo-env.mjs";
 import { getProviderEnvKey } from "../extensions/providers.mjs";
 
 export function getProviderApiKey(provider, overrideKey) {
@@ -6,5 +7,10 @@ export function getProviderApiKey(provider, overrideKey) {
   }
 
   const envKey = getProviderEnvKey(provider);
-  return envKey ? process.env[envKey] || "" : "";
+  const fromEnv = envKey ? process.env[envKey] || "" : "";
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  return getDemoProviderKey(provider);
 }

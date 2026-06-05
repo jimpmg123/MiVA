@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { applyDemoEnv } from "../../../packages/shared/src/demo-env.mjs";
 import { lightweightModels } from "../../../packages/shared/src/index.js";
 
-function loadEnvFile() {
-  const envPath = fileURLToPath(new URL("../.env", import.meta.url));
+function loadEnvFile(fileName) {
+  const envPath = fileURLToPath(new URL(`../${fileName}`, import.meta.url));
 
   try {
     const content = readFileSync(envPath, "utf8");
@@ -21,11 +22,12 @@ function loadEnvFile() {
       }
     }
   } catch {
-    // .env is optional. Missing keys are reported by provider handlers.
+    // Optional env files are loaded best-effort.
   }
 }
 
-loadEnvFile();
+applyDemoEnv();
+loadEnvFile(".env");
 
 export const HELPER_PORT = Number(process.env.MIVA_HELPER_PORT || 43110);
 export const CLOUD_API_URL = process.env.MIVA_CLOUD_API_URL || "http://127.0.0.1:4000";

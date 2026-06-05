@@ -1,3 +1,6 @@
+# Local demo provider keys (copy from demo.env.example)
+apps/local-helper/demo.env
+
 # Logs
 logs
 .codex-run-logs/

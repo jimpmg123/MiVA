@@ -1,7 +1,16 @@
 import http from "node:http";
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { HELPER_PORT, OLLAMA_BASE_URL } from "./config.mjs";
 import { getOllamaStatus } from "./services/ollama.mjs";
 import { handleChat } from "./routes/chat.mjs";
+import {
+  handleClawCodeInstall,
+  handleClawCodeRun,
+  handleClawCodeStatus,
+  handleClawCodeWorkspace,
+} from "./routes/claw-code.mjs";
 import { handleDaisoRun, handleDaisoStatus } from "./routes/daiso.mjs";
 import { handleDocumentAnalyze } from "./routes/documents.mjs";
 import {
@@ -14,7 +23,11 @@ import {
   handleOllamaStart
 } from "./routes/ollama.mjs";
 import { handleVoiceInstallKokoro, handleVoiceStart, handleVoiceStatus, handleVoiceTts } from "./routes/voice.mjs";
-import { sendJson, serveStatic, writeCorsHeaders } from "./utils/http.mjs";
+import { readJson, sendJson, serveStatic, writeCorsHeaders } from "./utils/http.mjs";
+
+const DEBUG_LOG_PATH = path.resolve(
+  fileURLToPath(new URL("../../../debug-e45fd0.log", import.meta.url))
+);
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
@@ -67,6 +80,26 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/claw-code/status") {
+      await handleClawCodeStatus(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/claw-code/install") {
+      await handleClawCodeInstall(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/claw-code/workspace") {
+      await handleClawCodeWorkspace(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/claw-code/run") {
+      await handleClawCodeRun(req, res, origin);
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/daiso/status") {
       await handleDaisoStatus(req, res, origin);
       return;
@@ -94,6 +127,20 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/documents/analyze") {
       await handleDocumentAnalyze(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/debug/client-log") {
+      const entry = await readJson(req);
+      try {
+        appendFileSync(DEBUG_LOG_PATH, `${JSON.stringify({
+          ...entry,
+          timestamp: entry.timestamp || Date.now()
+        })}\n`);
+      } catch {
+        // ignore debug logging failures
+      }
+      sendJson(res, 204, {}, origin);
       return;
     }
 

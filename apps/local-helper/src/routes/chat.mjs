@@ -13,8 +13,9 @@ import {
   ollamaFetch
 } from "../services/ollama.mjs";
 import { getOpenAiAnswer, streamOpenAiAnswer } from "../services/openai.mjs";
-import { hasExplicitActionConfirmation } from "../services/action-confirmation.mjs";
+import { resolveWorkspaceActionPrompt } from "../services/action-confirmation.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
+import { runClawCodeAgent, shouldRouteToClawCode } from "../services/claw-code.mjs";
 import { buildWorkspaceActionContext, buildWorkspaceContext } from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import { sendOllamaUnavailable } from "./ollama.mjs";
@@ -23,7 +24,7 @@ function sendProviderMissingKey(res, origin, provider) {
   sendJson(res, 400, {
     error: "PROVIDER_KEY_REQUIRED",
     provider,
-    message: `${provider} API key is required. Set it in apps/local-helper/.env or pass an app override key.`
+    message: `${provider} API key is required. Set it in apps/local-helper/demo.env, apps/local-helper/.env, or pass an app override key.`
   }, origin);
 }
 
@@ -112,9 +113,11 @@ export async function handleChat(req, res, origin) {
     typeof body.prompt === "string" ? body.prompt : "",
   ].join("\n\n");
   const latestUserPrompt = String(lastUserMessage.content || "").trim();
-  const workspaceActionPrompt = hasExplicitActionConfirmation(latestUserPrompt)
-    ? workspacePrompt
-    : latestUserPrompt;
+  const workspaceActionPrompt = resolveWorkspaceActionPrompt({
+    messages,
+    latestUserPrompt,
+    fallbackPrompt: typeof body.prompt === "string" ? body.prompt : "",
+  });
 
   const apiKey = provider === "ollama" ? "" : getProviderApiKey(provider, body.apiKey);
   if (provider !== "ollama" && !apiKey) {
@@ -138,14 +141,73 @@ export async function handleChat(req, res, origin) {
     workspaceContext,
   });
   if (workspaceActionContext?.type === "direct-answer") {
+    const answer = workspaceActionContext.answer;
+    if (body.stream === true) {
+      writeCorsHeaders(res, origin);
+      res.writeHead(200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+        "cache-control": "no-cache",
+      });
+      res.write(`${JSON.stringify({ message: { content: answer } })}\n`);
+      res.write(`${JSON.stringify({ done: true, answer })}\n`);
+      res.end();
+      return;
+    }
+
     sendJson(res, 200, {
       ok: true,
       provider,
       model,
-      answer: workspaceActionContext.answer
+      answer,
     }, origin);
     return;
   }
+
+  if (shouldRouteToClawCode({ profile: body.profile, prompt: latestUserPrompt })) {
+    const clawOpenAiKey = typeof body.openAiApiKey === "string" && body.openAiApiKey.trim()
+      ? body.openAiApiKey.trim()
+      : typeof body.apiKey === "string" && body.provider === "openai"
+        ? body.apiKey
+        : "";
+    const clawResult = await runClawCodeAgent({
+      prompt: latestUserPrompt,
+      profile: body.profile,
+      apiKey: clawOpenAiKey,
+      messages: messages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({ role: message.role, content: message.content })),
+      locale,
+    });
+
+    if (clawResult?.type === "direct-answer") {
+      const answer = clawResult.answer;
+      if (body.stream === true) {
+        writeCorsHeaders(res, origin);
+        res.writeHead(200, {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "cache-control": "no-cache",
+        });
+        res.write(`${JSON.stringify({ message: { content: answer } })}\n`);
+        res.write(`${JSON.stringify({
+          done: true,
+          answer,
+          provider: clawResult.meta?.provider || "openai",
+          model: clawResult.meta?.model || "gpt-4o-mini",
+        })}\n`);
+        res.end();
+        return;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        provider: clawResult.meta?.provider || "openai",
+        model: clawResult.meta?.model || "gpt-4o-mini",
+        answer,
+      }, origin);
+      return;
+    }
+  }
+
   if (typeof body.memorySummary === "string" && body.memorySummary.trim()) {
     messages.splice(1, 0, {
       role: "system",
