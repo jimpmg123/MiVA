@@ -69,14 +69,18 @@ Required web variable:
 VITE_GOOGLE_CLIENT_ID=your-google-oauth-web-client-id.apps.googleusercontent.com
 ```
 
-Optional local-helper variables:
+Copy `apps/local-helper/demo.env.example` to `apps/local-helper/demo.env` and add your provider keys for local grading.
+MiVA loads those keys automatically when app Settings or web API key fields are left empty.
+
+Optional overrides:
 
 ```env
+# apps/local-helper/.env
 MIVA_HELPER_PORT=43110
 MIVA_CLOUD_API_URL=http://127.0.0.1:4000
 OLLAMA_BASE_URL=http://localhost:11434
-OPENAI_API_KEY=optional-openai-key
-GEMINI_API_KEY=optional-gemini-key
+OPENAI_API_KEY=optional-openai-override
+GEMINI_API_KEY=optional-gemini-override
 ```
 
 ### 3. Prepare Prisma and database

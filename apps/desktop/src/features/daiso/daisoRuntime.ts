@@ -30,6 +30,8 @@ export type DaisoStatus = {
 export type DaisoRunResult = {
   ok: boolean;
   needsUserInput: boolean;
+  featureGuide?: boolean;
+  directReply?: string;
   command?: string;
   commandLine?: string;
   context?: string;

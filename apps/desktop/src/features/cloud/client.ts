@@ -163,6 +163,17 @@ export function listCloudAssistantProfiles(input: {
   });
 }
 
+export function syncProviderKeysFromCloud(input: {
+  authSession: AuthSession | null;
+}) {
+  return fetchCloudJson<{
+    keys: Partial<Record<"openai" | "gemini" | "groq", string>>;
+    syncedAt: string;
+  }>("/api-keys/sync", {
+    headers: getCloudHeaders(input.authSession),
+  });
+}
+
 export async function deleteCloudAssistantProfile(input: {
   authSession: AuthSession | null;
   profileId: string;

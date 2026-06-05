@@ -9,6 +9,7 @@
     "dev:all": "node scripts/dev-services.mjs start all",
     "dev:app": "node scripts/dev-services.mjs start desktop",
     "dev:desktop": "node scripts/dev-services.mjs start desktop",
+    "tauri:dev": "npm run dev:app",
     "dev:helper": "node scripts/dev-services.mjs start helper",
     "dev:voice": "node scripts/dev-services.mjs start voice",
     "dev:web": "node scripts/dev-services.mjs start web",

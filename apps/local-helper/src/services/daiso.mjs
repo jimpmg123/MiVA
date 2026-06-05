@@ -7,6 +7,9 @@ import {
   commandLineFor,
   hasArg,
   includesAny,
+  hasMeaningfulInventoryKeyword,
+  isDaisoInventoryConceptQuestion,
+  isDaisoMetaQuestion,
   parseJsonOutput,
   todayKstYmd,
   tokenizeCommand,
@@ -210,6 +213,93 @@ function planConvenienceInventory(prompt, service) {
   return finalizePlan(["emart24-products", keyword, "--pageSize", "10"], `Search Emart24 product candidates for ${keyword}.`);
 }
 
+function formatDaisoFeatureGuideReply(prompt = "") {
+  const lines = [
+    "Daiso CLI는 MiVA 안에서 로컬로 실행되는 읽기 전용 조회 도구입니다.",
+    "",
+    "다이소, 편의점(GS25/CU/세븐일레븐/이마트24), 올리브영, 롯데마트, 주유소, 주변 장소, CGV/메가박스/롯데시네마 같은 외부 서비스에서 조회 결과를 가져와 답변에 활용합니다.",
+    "",
+    "할 수 있는 것",
+    "- 제품 검색: 상품 이름·가격·이미지 찾기",
+    "- 재고 확인: 특정 상품이 어느 매장에 있는지 조회 (제품 검색과 다름)",
+    "- 매장 찾기, 가격 비교, 주변 장소, 유가, 영화/상영 시간표",
+    "- 가격 비교, 주변 장소, 유가, 영화/상영 시간표",
+    "",
+    "사용 예시",
+    "- /daiso products 마스크",
+    "- /daiso 강남역 근처 매장",
+    "- /daiso compare 콜라",
+    "- /daiso health",
+    "",
+    "기능 설명이나 사용법을 물을 때는 제품 검색을 실행하지 않고 이 안내를 보여줍니다. 실제 조회가 필요하면 위 예시처럼 키워드나 명령을 함께 입력하세요.",
+  ];
+
+  if (prompt.trim()) {
+    lines.push("", `지금 질문: ${prompt.trim()}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildDaisoFeatureGuide(prompt = "") {
+  return [
+    "MiVA Daiso CLI feature guide. This is not a live retail lookup result.",
+    formatDaisoFeatureGuideReply(prompt),
+  ].join("\n");
+}
+
+function planDaisoMetaHelp(prompt) {
+  return {
+    metaHelp: true,
+    command: "guide",
+    commandLine: "daiso (feature guide)",
+    summary: "Explain what the Daiso CLI integration does in MiVA.",
+    context: buildDaisoFeatureGuide(prompt),
+  };
+}
+
+function formatDaisoInventoryGuideReply(prompt = "") {
+  const lines = [
+    "재고 확인은 '상품 목록 검색'과 다릅니다.",
+    "",
+    "제품 검색 (products)",
+    "- 다이소몰에 등록된 상품 후보를 찾습니다.",
+    "- 이름, 가격, 이미지 같은 카탈로그 정보가 나옵니다.",
+    "- 지금 보신 '3단부직포수납장 5,000원' 같은 목록이 이 단계입니다.",
+    "",
+    "재고 확인 (inventory)",
+    "- 특정 상품이 어느 오프라인 매장에 있는지 조회합니다.",
+    "- 상품번호(6자리 이상) 또는 상품명 + 매장 지역이 필요합니다.",
+    "",
+    "사용 예시",
+    "1) /daiso products 마스크",
+    "2) /daiso inventory 1234567 --keyword 강남역",
+    "또는 /daiso 강남역 마스크 재고",
+    "",
+    "편의점(GS25, CU, 세븐일레븐)도 'OO매장 YYYY 재고' 형태로 비슷하게 조회합니다.",
+  ];
+
+  if (prompt.trim()) {
+    lines.push("", `지금 질문: ${prompt.trim()}`);
+  }
+
+  return lines.join("\n");
+}
+
+function planDaisoInventoryGuide(prompt) {
+  return {
+    metaHelp: true,
+    command: "inventory-guide",
+    commandLine: "daiso (inventory guide)",
+    summary: "Explain the difference between Daiso product search and inventory lookup.",
+    context: [
+      "MiVA Daiso CLI inventory concept guide. This is not live retail data.",
+      formatDaisoInventoryGuideReply(prompt),
+    ].join("\n"),
+    directReply: formatDaisoInventoryGuideReply(prompt),
+  };
+}
+
 function planDaisoPrompt(prompt) {
   const explicit = parseExplicitCommand(prompt);
   if (explicit) {
@@ -220,8 +310,12 @@ function planDaisoPrompt(prompt) {
   const keyword = stripCommonWords(text);
   const location = extractNearLocation(text);
 
+  if (isDaisoMetaQuestion(text)) {
+    return planDaisoMetaHelp(text);
+  }
+
   if (!text) {
-    return finalizePlan(["help"], "Show Daiso CLI help.");
+    return planDaisoMetaHelp(text);
   }
 
   if (includesAny(text, ["health", "헬스", "상태"])) {
@@ -335,12 +429,37 @@ function planDaisoPrompt(prompt) {
   }
 
   if (includesAny(text, ["재고", "inventory", "stock"])) {
+    if (isDaisoInventoryConceptQuestion(text)) {
+      return planDaisoInventoryGuide(text);
+    }
+
     const productId = text.match(/\b\d{6,}\b/)?.[0];
     const parts = extractInventoryParts(text, [/다이소/g, /\bdaiso\b/gi]);
+    const productKeyword = parts.keyword || keyword;
+
     if (productId) {
       return finalizePlan(["inventory", productId, "--keyword", parts.storeKeyword || location || "강남역"], `Check Daiso inventory for product ${productId}.`);
     }
-    return finalizePlan(["products", parts.keyword || keyword || "수납박스"], "Search Daiso products before inventory lookup.");
+
+    if (!hasMeaningfulInventoryKeyword(productKeyword)) {
+      return finalizePlan([], "", true, [
+        "재고 확인은 '어느 매장에 이 상품이 있는지'를 조회하는 기능입니다.",
+        "상품명과 지역/매장 키워드를 함께 알려주세요.",
+        "예: /daiso 강남역 마스크 재고",
+        "예: /daiso inventory 1234567 --keyword 강남역",
+      ].join(" "));
+    }
+
+    const plan = finalizePlan(
+      ["products", productKeyword, "--pageSize", "10"],
+      `Search Daiso products for ${productKeyword} before inventory lookup.`,
+    );
+    return {
+      ...plan,
+      inventoryPrecursor: true,
+      productKeyword,
+      storeKeyword: parts.storeKeyword || location || "",
+    };
   }
 
   return finalizePlan(["products", keyword || text, "--pageSize", "10"], `Search Daiso products for ${keyword || text}.`);
@@ -350,16 +469,35 @@ function buildContext({ prompt, plan, result }) {
   const dataText = result.json
     ? JSON.stringify(result.json, null, 2)
     : result.stdout;
-  return [
+  const lines = [
     "Daiso CLI result was retrieved by MiVA for the user's request.",
     `User request: ${prompt}`,
     `CLI command: ${plan.commandLine}`,
     `Plan summary: ${plan.summary}`,
-    "Use this result as tool context. Summarize only useful product, store, inventory, place, price, movie, showtime, or seat details.",
+  ];
+
+  if (plan.inventoryPrecursor) {
+    lines.push(
+      "Important: this is a product catalog search, not a store inventory result.",
+      "Do not describe these items as confirmed in-store stock.",
+      "Explain that inventory lookup needs a product ID from these candidates plus a store keyword.",
+      plan.storeKeyword
+        ? `Next step example: daiso inventory <productId> --keyword ${plan.storeKeyword}`
+        : "Ask the user which product ID and store area to use for inventory lookup.",
+    );
+  } else {
+    lines.push(
+      "Use this result as tool context. Summarize only useful product, store, inventory, place, price, movie, showtime, or seat details.",
+    );
+  }
+
+  lines.push(
     "Do not claim the result is permanent; Daiso data comes from live external services and can change.",
     "CLI output:",
     truncateOutput(dataText),
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 function runProcess(args, timeoutMs = DAISO_TIMEOUT_MS) {
@@ -429,6 +567,19 @@ export async function runDaisoRequest({ prompt = "", args = null } = {}) {
   const plan = Array.isArray(args) && args.length
     ? finalizePlan(args.map(String), "Run explicit Daiso CLI arguments.")
     : planDaisoPrompt(prompt);
+
+  if (plan.metaHelp) {
+    return {
+      ok: true,
+      needsUserInput: false,
+      featureGuide: true,
+      command: plan.command,
+      commandLine: plan.commandLine,
+      message: plan.command === "inventory-guide" ? "Daiso CLI inventory guide." : "Daiso CLI feature guide.",
+      directReply: plan.directReply || formatDaisoFeatureGuideReply(prompt),
+      context: plan.context,
+    };
+  }
 
   if (plan.needsUserInput) {
     return {

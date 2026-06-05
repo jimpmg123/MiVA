@@ -1,7 +1,11 @@
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { modelCatalog } from "../config.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import {
+  cleanupCancelledPull,
   deleteModel,
   detectWinget,
   getAllowedModelNames,
@@ -11,10 +15,21 @@ import {
   isAllowedModel,
   isModelInstalled,
   ollamaFetch,
-  startOllama
+  resolveInstalledModelName,
+  startOllama,
+  waitUntilModelRemoved
 } from "../services/ollama.mjs";
 
 let activeModelPull = null;
+
+function agentDebugLog(location, message, data, hypothesisId) {
+  try {
+    const logPath = path.resolve(fileURLToPath(new URL("../../../../debug-e45fd0.log", import.meta.url)));
+    appendFileSync(logPath, `${JSON.stringify({ sessionId: "e45fd0", location, message, data, hypothesisId, timestamp: Date.now() })}\n`);
+  } catch {
+    // ignore debug logging failures
+  }
+}
 
 export function sendOllamaUnavailable(res, origin, status) {
   sendJson(res, 503, {
@@ -41,13 +56,12 @@ export async function handleModels(req, res, origin) {
   }, origin);
 }
 
-async function cleanupCancelledModel(model) {
-  const deleteResult = await deleteModel(model);
-  return {
-    deleted: deleteResult.ok,
-    attempted: true,
-    error: deleteResult.error
-  };
+function captureActivePullDigests(model) {
+  if (activeModelPull?.model !== model) {
+    return [];
+  }
+
+  return activeModelPull.digests ? [...activeModelPull.digests] : [];
 }
 
 function clearActiveModelPull(model) {
@@ -77,11 +91,66 @@ export async function handleModelDelete(req, res, origin) {
     return;
   }
 
-  const deleteResult = await deleteModel(model);
-  sendJson(res, deleteResult.ok ? 200 : 502, {
-    ok: deleteResult.ok,
+  const installedBefore = await getInstalledModels();
+  agentDebugLog("ollama.mjs:handleModelDelete:before", "delete requested", {
     model,
-    error: deleteResult.error,
+    installedBefore: installedBefore.models.map((entry) => entry?.name || entry?.model).filter(Boolean),
+    running: status.running
+  }, "D");
+
+  if (!isModelInstalled(model, installedBefore.models)) {
+    agentDebugLog("ollama.mjs:handleModelDelete:alreadyRemoved", "model not installed", { model }, "D");
+    sendJson(res, 200, {
+      ok: true,
+      model,
+      alreadyRemoved: true,
+      error: null
+    }, origin);
+    return;
+  }
+
+  const resolvedModel = resolveInstalledModelName(model, installedBefore.models);
+  const deleteResult = await deleteModel(resolvedModel);
+  agentDebugLog("ollama.mjs:handleModelDelete:deleteResult", "ollama delete api result", {
+    model,
+    resolvedModel,
+    deleteResult
+  }, "D");
+
+  if (!deleteResult.ok) {
+    sendJson(res, 502, {
+      ok: false,
+      model,
+      resolvedModel,
+      error: deleteResult.error || `Failed to delete ${resolvedModel}.`,
+      status: deleteResult.status
+    }, origin);
+    return;
+  }
+
+  const removed = await waitUntilModelRemoved(model);
+  agentDebugLog("ollama.mjs:handleModelDelete:removedCheck", "post-delete verification", {
+    model,
+    resolvedModel,
+    removed
+  }, "D-E");
+
+  if (!removed) {
+    sendJson(res, 502, {
+      ok: false,
+      model,
+      resolvedModel,
+      error: `Model ${model} is still present after delete.`,
+      status: deleteResult.status
+    }, origin);
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    model,
+    resolvedModel,
+    error: null,
     status: deleteResult.status
   }, origin);
 }
@@ -96,12 +165,14 @@ export async function handleModelPullCancel(req, res, origin) {
     return;
   }
 
+  const digests = captureActivePullDigests(model);
+
   if (activeModelPull?.model === model) {
     activeModelPull.abortController.abort();
     activeModelPull = null;
   }
 
-  const cleanup = await cleanupCancelledModel(model);
+  const cleanup = await cleanupCancelledPull(model, { digests });
   sendJson(res, 200, {
     cancelled: true,
     model,
@@ -142,7 +213,8 @@ export async function handleModelPull(req, res, origin) {
   const abortController = new AbortController();
   activeModelPull = {
     model,
-    abortController
+    abortController,
+    digests: new Set()
   };
 
   let clientClosed = false;
@@ -151,8 +223,9 @@ export async function handleModelPull(req, res, origin) {
     if (!abortController.signal.aborted) {
       abortController.abort();
     }
+    const digests = captureActivePullDigests(model);
     clearActiveModelPull(model);
-    void cleanupCancelledModel(model);
+    void cleanupCancelledPull(model, { digests });
   });
 
   writeCorsHeaders(res, origin);
@@ -189,15 +262,38 @@ export async function handleModelPull(req, res, origin) {
       return;
     }
 
+    let pullBuffer = "";
+
     for await (const chunk of response.body) {
       if (clientClosed || abortController.signal.aborted) {
         break;
       }
+
+      pullBuffer += Buffer.from(chunk).toString("utf8");
+      const lines = pullBuffer.split("\n");
+      pullBuffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        try {
+          const event = JSON.parse(line);
+          if (event?.digest && activeModelPull?.model === model) {
+            activeModelPull.digests.add(event.digest);
+          }
+        } catch {
+          // Ignore malformed pull stream lines.
+        }
+      }
+
       res.write(chunk);
     }
 
     if (abortController.signal.aborted) {
-      await cleanupCancelledModel(model);
+      const digests = captureActivePullDigests(model);
+      await cleanupCancelledPull(model, { digests });
     }
   } catch (error) {
     if (!clientClosed && !res.writableEnded) {
@@ -208,7 +304,8 @@ export async function handleModelPull(req, res, origin) {
     }
 
     if (abortController.signal.aborted) {
-      await cleanupCancelledModel(model);
+      const digests = captureActivePullDigests(model);
+      await cleanupCancelledPull(model, { digests });
     }
   } finally {
     clearActiveModelPull(model);

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import "./App.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Locale } from "./i18n";
+import { BootScreen } from "./app/BootScreen";
 import { AppShell } from "./app/AppShell";
+import { useAppBoot } from "./app/useAppBoot";
 import { RuntimeNavigation, SetupNavigation, StudioNavigation, HistoryNavigation } from "./app/AppNavigation";
 import { AppTopBar } from "./app/AppTopBar";
 import { isTauriRuntime } from "./app/tauri";
@@ -15,6 +16,8 @@ import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
 import { useModelRecommendation } from "./features/models/useModelRecommendation";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
 import { useAuthFlow } from "./features/auth/useAuthFlow";
+import { mergeProviderKeys } from "./features/auth/providerKeyMerge";
+import { useProviderKeySync } from "./features/auth/useProviderKeySync";
 import { useProviderKeys } from "./features/auth/useProviderKeys";
 import { AuthHost } from "./hosts/AuthHost";
 import { useAssistantProfiles } from "./features/assistants/useAssistantProfiles";
@@ -26,6 +29,8 @@ import { RuntimeHost } from "./hosts/RuntimeHost";
 import { SettingsHost } from "./hosts/SettingsHost";
 import { StudioHost } from "./hosts/StudioHost";
 import { Button, IconTile, ModalBackdrop, ModalPanel, SecondaryButton } from "./components/ui";
+import { updateLastAppMode } from "./features/app/storage";
+import { useClawCodeRuntime } from "./features/claw/useClawCodeRuntime";
 import { useUiTheme } from "./features/theme/useUiTheme";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
@@ -145,6 +150,31 @@ function App() {
     onClearCloudDevice: () => setCloudDevice(null),
     onContinueLocalOnly: closeAuth,
   });
+  const {
+    cloudProviderKeys,
+    providerKeysSyncedAt,
+    providerKeysSyncError,
+  } = useProviderKeySync({
+    authSession,
+    onLog: log,
+  });
+  const effectiveProviderKeys = useMemo(
+    () => mergeProviderKeys(providerKeys, cloudProviderKeys),
+    [providerKeys, cloudProviderKeys],
+  );
+  const {
+    clawCodeStatus,
+    clawCodeStatusError,
+    chooseClawCodeWorkspace,
+    installClawCode,
+    refreshClawCodeStatus,
+    setClawCodeWorkspace,
+  } = useClawCodeRuntime({
+    openAiApiKey: effectiveProviderKeys.openai,
+    tauriRuntime,
+    onLog: log,
+    setBusyAction,
+  });
   const signedIn = Boolean(authSession);
   const refreshGoogleWorkspaceStatus = useCallback(async () => {
     if (!authSession) {
@@ -243,6 +273,29 @@ function App() {
     setStudioSection,
     onLog: log,
   });
+  const runtimeReady = !tauriRuntime || status !== null;
+  const {
+    bootProgress,
+    bootReady,
+    bootStatusLine,
+    initialAppMode,
+    showBootScreen,
+  } = useAppBoot({
+    assistantProfileLoaded,
+    runtimeReady,
+    tauriRuntime,
+  });
+  const bootRouteAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!bootReady || bootRouteAppliedRef.current) {
+      return;
+    }
+
+    bootRouteAppliedRef.current = true;
+    setAppMode(initialAppMode);
+  }, [bootReady, initialAppMode, setAppMode]);
+
   const {
     recordRuntimeUsageEvent,
     setCloudDevice,
@@ -284,6 +337,7 @@ function App() {
     activeChatMessages,
     activeConversationId,
     assistantConversationGroups,
+    chatBusyLabel,
     chatEndRef,
     chatInput,
     chatIntroKey,
@@ -318,7 +372,7 @@ function App() {
     selectedProvider,
     selectedModel,
     selectedCloudModel,
-    providerKeys,
+    providerKeys: effectiveProviderKeys,
     statusInstalled: Boolean(status?.installed),
     busyAction,
     visibleAssistantProfiles: visibleAssistantProfileStore.profiles,
@@ -490,7 +544,12 @@ function App() {
       return;
     }
 
-    runAfterUnsavedCheck(() => setAppMode(mode));
+    runAfterUnsavedCheck(() => {
+      setAppMode(mode);
+      if (mode === "studio" || mode === "runtime" || mode === "history") {
+        void updateLastAppMode(mode);
+      }
+    });
   };
 
   const enterGeneralSettingsFromTopBar = () => runAfterUnsavedCheck(() => enterSettings("general"));
@@ -530,6 +589,7 @@ function App() {
       appMode={appMode}
       assistantPanelMinimized={assistantPanelMinimized}
       busyAction={busyAction}
+      chatBusyLabel={chatBusyLabel}
       chatEndRef={chatEndRef}
       chatInput={chatInput}
       chatIntroKey={chatIntroKey}
@@ -612,7 +672,9 @@ function App() {
       cloudModelCatalog={cloudModelCatalog}
       deleteLocalAssistantProfile={deleteLocalAssistantProfile}
       downloadModel={downloadModel}
+      clawCodeStatus={clawCodeStatus}
       enterAiModelSettings={() => enterSettings("aiModels")}
+      enterClawCodeSettings={() => enterSettings("clawCode")}
       editLocalAssistantProfile={editLocalAssistantProfile}
       installedModels={installedModels}
       isNewAssistantDraft={isNewAssistantDraft}
@@ -658,11 +720,18 @@ function App() {
       assistantProfileError={assistantProfileError}
       assistantProfileLoaded={assistantProfileLoaded}
       assistantProfileSaveState={assistantProfileSaveState}
+      busyAction={busyAction}
+      clawCodeStatus={clawCodeStatus}
+      clawCodeStatusError={clawCodeStatusError}
       cloudModelCatalog={cloudModelCatalog}
       locale={ACTIVE_LOCALE}
       logs={logs}
+      authSession={authSession}
+      cloudProviderKeys={cloudProviderKeys}
       providerKeys={providerKeys}
       providerKeysSaved={providerKeysSaved}
+      providerKeysSyncError={providerKeysSyncError}
+      providerKeysSyncedAt={providerKeysSyncedAt}
       providerText={providerText}
       selectedCloudModel={selectedCloudModel}
       selectedProvider={selectedProvider}
@@ -670,14 +739,19 @@ function App() {
       settingsSections={settingsSections}
       status={status}
       t={t}
+      tauriRuntime={tauriRuntime}
+      onChooseClawCodeWorkspace={chooseClawCodeWorkspace}
       onClearProviderKeys={clearProviderKeys}
       onClearLogs={() => setLogs([])}
       onExitSettings={exitSettings}
+      onInstallClawCode={installClawCode}
       onOpenInitialSetup={openInitialSetup}
       onProviderKeysChange={setProviderKeys}
+      onRefreshClawCodeStatus={refreshClawCodeStatus}
       onSaveProviderKeys={saveProviderKeys}
       onSelectedCloudModelChange={setSelectedCloudModel}
       onSelectedProviderChange={setSelectedProvider}
+      onSetClawCodeWorkspace={setClawCodeWorkspace}
       onThemeChange={setThemeId}
       themeId={themeId}
     />
@@ -700,7 +774,10 @@ function App() {
       assistantProfileError={assistantProfileError}
       busyAction={busyAction}
       chatStep={renderChat()}
+      chooseClawCodeWorkspace={chooseClawCodeWorkspace}
       choosePythonInstallPath={choosePythonInstallPath}
+      clawCodeStatus={clawCodeStatus}
+      clawCodeStatusError={clawCodeStatusError}
       cloudRecommended={cloudRecommended}
       downloadModel={downloadModel}
       downloadProgress={downloadProgress}
@@ -711,6 +788,7 @@ function App() {
       goToPreviousStep={goToPreviousStep}
       hardware={hardware}
       hardwareError={hardwareError}
+      installClawCode={installClawCode}
       installOllama={installOllama}
       installPython={installPython}
       installedModels={installedModels}
@@ -722,6 +800,7 @@ function App() {
       recommendedModel={recommendedModel}
       recommendedModelInfo={recommendedModelInfo}
       recommendedModelInstalled={recommendedModelInstalled}
+      refreshClawCodeStatus={refreshClawCodeStatus}
       refreshHardware={refreshHardware}
       refreshRuntimeRequirements={refreshRuntimeRequirements}
       refreshStatus={refreshStatus}
@@ -739,6 +818,7 @@ function App() {
       setSelectedModel={setSelectedModel}
       setSelectedProvider={setSelectedProvider}
       setSurvey={setSurvey}
+      setClawCodeWorkspace={setClawCodeWorkspace}
       setSurveyQuestionIndex={setSurveyQuestionIndex}
       settingsStep={renderSettings()}
       startOllama={startOllama}
@@ -750,6 +830,10 @@ function App() {
       t={t}
     />
   );
+
+  if (showBootScreen) {
+    return <BootScreen progress={bootProgress} statusLine={bootStatusLine} />;
+  }
 
   return (
     <AppShell

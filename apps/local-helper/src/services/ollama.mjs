@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
+import { readdir, rm, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 import { allowedModels, modelCatalog, OLLAMA_BASE_URL } from "../config.mjs";
 
@@ -54,8 +57,44 @@ export function normalizeModelName(model) {
   return model?.name || model?.model || "";
 }
 
+export function modelNamesMatch(left, right) {
+  const a = String(left || "").trim().toLowerCase();
+  const b = String(right || "").trim().toLowerCase();
+  if (!a || !b) {
+    return false;
+  }
+  if (a === b) {
+    return true;
+  }
+
+  return a.startsWith(`${b}:`) || b.startsWith(`${a}:`);
+}
+
 export function isModelInstalled(modelName, installedModels) {
-  return installedModels.some((model) => normalizeModelName(model) === modelName);
+  return installedModels.some((model) => modelNamesMatch(normalizeModelName(model), modelName));
+}
+
+export function resolveInstalledModelName(requestedModel, installedModels) {
+  const match = installedModels
+    .map(normalizeModelName)
+    .find((name) => modelNamesMatch(name, requestedModel));
+
+  return match || requestedModel;
+}
+
+export async function waitUntilModelRemoved(modelName, attempts = 6, delayMs = 300) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const installed = await getInstalledModels();
+    if (!isModelInstalled(modelName, installed.models)) {
+      return true;
+    }
+
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return false;
 }
 
 export async function getInstalledModels() {
@@ -191,22 +230,162 @@ export function getAllowedModelNames() {
   return Array.from(allowedModels);
 }
 
+async function requestOllamaDelete(modelName, method) {
+  return ollamaFetch("/api/delete", {
+    method,
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: modelName
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+}
+
+function resolveOllamaModelsDir() {
+  return process.env.OLLAMA_MODELS || path.join(homedir(), ".ollama", "models");
+}
+
+function splitModelRef(modelName) {
+  const [name, tag = "latest"] = String(modelName || "").split(":");
+  return { name, tag };
+}
+
+function digestMatchesBlobFile(digest, fileName) {
+  const normalized = String(digest || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const hash = normalized.replace(/^sha256:/, "");
+  const lowered = fileName.toLowerCase();
+  return lowered.includes(hash) || lowered.includes(`sha256-${hash}`);
+}
+
+async function removePartialBlobArtifacts(digests = []) {
+  const blobsDir = path.join(resolveOllamaModelsDir(), "blobs");
+  const removed = [];
+
+  try {
+    const files = await readdir(blobsDir);
+    for (const file of files) {
+      if (!file.includes("-partial")) {
+        continue;
+      }
+
+      const matchesDigest = digests.length === 0
+        || digests.some((digest) => digestMatchesBlobFile(digest, file));
+
+      if (!matchesDigest) {
+        continue;
+      }
+
+      await unlink(path.join(blobsDir, file));
+      removed.push(file);
+    }
+  } catch {
+    // Best-effort cleanup for interrupted pulls.
+  }
+
+  return removed;
+}
+
+async function removeModelManifestIfPresent(modelName) {
+  const { name, tag } = splitModelRef(modelName);
+  const manifestPath = path.join(
+    resolveOllamaModelsDir(),
+    "manifests",
+    "registry.ollama.ai",
+    "library",
+    name,
+    tag
+  );
+
+  try {
+    await rm(manifestPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runOllamaPruneIfAvailable() {
+  const cli = await detectOllamaCli();
+  if (!cli.installed || !cli.command) {
+    return { attempted: false, ok: false };
+  }
+
+  try {
+    await execFileAsync(cli.command, ["prune"], {
+      timeout: 30000,
+      windowsHide: true
+    });
+    return { attempted: true, ok: true };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+export async function cleanupCancelledPull(modelName, options = {}) {
+  const digests = Array.isArray(options.digests) ? options.digests : [];
+  const waitMs = Number.isFinite(options.waitMs) ? options.waitMs : 500;
+
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+
+  const deleteResult = await deleteModel(modelName);
+  const manifestRemoved = await removeModelManifestIfPresent(modelName);
+  const removedPartialBlobs = await removePartialBlobArtifacts(digests);
+  const prune = await runOllamaPruneIfAvailable();
+
+  return {
+    deleted: deleteResult.ok,
+    attempted: true,
+    error: deleteResult.error,
+    manifestRemoved,
+    removedPartialBlobs,
+    prune
+  };
+}
+
 export async function deleteModel(modelName) {
   try {
-    const response = await ollamaFetch("/api/delete", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        name: modelName
-      }),
-      signal: AbortSignal.timeout(30000)
-    });
+    let response = await requestOllamaDelete(modelName, "DELETE");
+
+    if (response.status === 405) {
+      response = await ollamaFetch("/api/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          name: modelName,
+          model: modelName
+        }),
+        signal: AbortSignal.timeout(30000)
+      });
+    }
+
+    let error = null;
+    if (!response.ok) {
+      try {
+        const payload = await response.json();
+        error = payload?.error || payload?.message || `Ollama returned HTTP ${response.status}`;
+      } catch {
+        error = `Ollama returned HTTP ${response.status}`;
+      }
+    }
 
     return {
       ok: response.ok,
-      status: response.status
+      status: response.status,
+      error
     };
   } catch (error) {
     return {
