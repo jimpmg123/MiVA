@@ -14,6 +14,7 @@ type Live2DStageProps = {
   fallback?: ReactNode;
   bottomReservePx?: number;
   topReservePx?: number;
+  blockPointerEvents?: boolean;
 };
 
 type StageState = "loading" | "ready" | "missing" | "error";
@@ -55,6 +56,7 @@ function loadScriptOnce(src: string) {
 
 export function Live2DStage({
   activity,
+  blockPointerEvents = false,
   character,
   fallback,
   bottomReservePx = 220,
@@ -139,7 +141,11 @@ export function Live2DStage({
           width: Math.max(240, containerRef.current.clientWidth),
         });
         containerRef.current.innerHTML = "";
-        containerRef.current.appendChild(app.view as HTMLCanvasElement);
+        const canvas = app.view as HTMLCanvasElement;
+        if (blockPointerEvents) {
+          canvas.style.pointerEvents = "none";
+        }
+        containerRef.current.appendChild(canvas);
 
         const model = await Live2DModel.from(resolvedModelUrl, { autoInteract: false });
         if (destroyed) {
@@ -229,7 +235,7 @@ export function Live2DStage({
       destroyed = true;
       cleanup?.();
     };
-  }, [coreUrl, modelUrl, runtimeStatus?.ready]);
+  }, [blockPointerEvents, coreUrl, modelUrl, runtimeStatus?.ready]);
 
   return (
     <div className="relative h-full min-h-[430px] w-full overflow-visible bg-transparent">

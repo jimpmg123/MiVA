@@ -8,6 +8,7 @@ import {
   StatusAlert,
   TextIconAction,
 } from "../components/ui";
+import { ModelCardIcon, ModelCardIconOrFallback } from "../features/models/modelIcons";
 import type { CloudModelInfo, HardwareInfo, ModelInfo, ProviderId, ProviderMode } from "../types";
 import { formatGb } from "../utils";
 
@@ -166,7 +167,7 @@ export function RecommendationStep({
                   description={card.bestFor}
                   disabled={!card.selectable}
                   eyebrow={card.category}
-                  icon={<span className="material-symbols-outlined text-[20px]">memory</span>}
+                  icon={<ModelCardIcon imageClassName="h-5 w-5" modelKey={card.model?.name ?? card.id} />}
                   interaction="border"
                   key={card.id}
                   onClick={() => {
@@ -215,7 +216,13 @@ export function RecommendationStep({
                   description={model.bestFor[activeLocale]}
                   disabled={!selectable}
                   eyebrow={`${providerMeta[model.provider].label} / ${model.category}`}
-                  icon={<span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>}
+                  icon={(
+                    <ModelCardIconOrFallback
+                      fallback={<span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>}
+                      imageClassName="h-5 w-5"
+                      modelKey={`${model.provider} ${model.id} ${model.label}`}
+                    />
+                  )}
                   interaction="border"
                   key={model.id}
                   onClick={() => {

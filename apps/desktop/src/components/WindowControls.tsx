@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauriRuntime } from "../app/tauri";
 
 type WindowDragLayerProps = {
@@ -20,7 +20,7 @@ export function WindowDragLayer({ className = "absolute inset-0 z-0" }: WindowDr
           return;
         }
 
-        void getCurrentWindow().startDragging();
+        void getCurrentWebviewWindow().startDragging();
       }}
     />
   );
@@ -38,7 +38,7 @@ export function WindowControls({ className = "" }: WindowControlsProps) {
       return;
     }
 
-    const appWindow = getCurrentWindow();
+    const appWindow = getCurrentWebviewWindow();
     let disposed = false;
     let unlistenResize: (() => void) | undefined;
 
@@ -68,17 +68,17 @@ export function WindowControls({ className = "" }: WindowControlsProps) {
   }
 
   async function minimizeWindow() {
-    await getCurrentWindow().minimize();
+    await getCurrentWebviewWindow().minimize();
   }
 
   async function toggleMaximizeWindow() {
-    const appWindow = getCurrentWindow();
+    const appWindow = getCurrentWebviewWindow();
     await appWindow.toggleMaximize();
     setIsMaximized(await appWindow.isMaximized());
   }
 
   async function closeWindow() {
-    await getCurrentWindow().close();
+    await getCurrentWebviewWindow().close();
   }
 
   return (

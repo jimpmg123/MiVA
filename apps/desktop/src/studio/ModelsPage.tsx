@@ -2,6 +2,7 @@
 import type { Locale } from "../i18n";
 import type { CloudModelInfo, CloudProviderId, ModelInfo, OllamaStatus, ProviderId, ProviderMode } from "../types";
 import { Badge, IconButton, IconTile, InfoTile, Panel, PrimaryButton, SecondaryButton } from "../components/ui";
+import { ModelCardIcon, ModelCardIconOrFallback } from "../features/models/modelIcons";
 
 type ProviderMeta = Record<ProviderId, { label: string; mode: ProviderMode; icon: string }>;
 
@@ -44,7 +45,7 @@ export function ModelsPanel({
   onSelectCloudModel,
   onSelectLocalModel,
 }: ModelsPanelProps) {
-  const [localModelsExpanded, setLocalModelsExpanded] = useState(false);
+  const [localModelsExpanded, setLocalModelsExpanded] = useState(true);
   const visibleCloudModels = cloudModelCatalog.filter((model) => model.id !== "custom-cloud");
 
   return (
@@ -95,7 +96,7 @@ export function ModelsPanel({
                 >
                   <div className="flex items-start justify-between gap-4">
                     <IconTile>
-                      <span className="material-symbols-outlined text-[22px]">memory</span>
+                      <ModelCardIcon modelKey={model.name} />
                     </IconTile>
                     <div className="flex flex-wrap justify-end gap-2">
                       {active && <Badge tone="action">{providerText.selected}</Badge>}
@@ -164,8 +165,12 @@ export function ModelsPanel({
               onClick={() => onSelectCloudModel(model.provider, model.id)}
               type="button"
             >
-              <IconTile className="h-10 w-10">
-                <span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>
+              <IconTile className="h-10 w-10 overflow-hidden">
+                <ModelCardIconOrFallback
+                  fallback={<span className="material-symbols-outlined text-[20px]">{providerMeta[model.provider].icon}</span>}
+                  imageClassName="h-6 w-6"
+                  modelKey={`${model.provider} ${model.id} ${model.label}`}
+                />
               </IconTile>
               <p className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">{model.label}</p>
               <p className="mt-2 text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">

@@ -38,11 +38,12 @@ export function AppTopBar({
 }: AppTopBarProps) {
   const desktopChrome = isTauriRuntime();
   const gridClass = desktopChrome
-    ? "grid-cols-[minmax(0,1fr)_minmax(180px,340px)_auto_auto]"
-    : "grid-cols-[minmax(0,1fr)_minmax(180px,340px)_auto]";
+    ? "grid-cols-[minmax(0,1fr)_auto_auto_auto]"
+    : "grid-cols-[minmax(0,1fr)_auto_auto]";
+  const modelChipTitle = `${activeProviderLabel} / ${activeModelLabel}`;
 
   return (
-    <header className="relative miva-topbar h-[60px] w-full min-w-0 shrink-0 px-5">
+    <header className="@container/topbar relative miva-topbar h-[60px] w-full min-w-0 shrink-0 px-5">
       {desktopChrome && <WindowDragLayer />}
 
       <div className={`relative z-10 grid h-full w-full items-center gap-3 pointer-events-none ${gridClass}`}>
@@ -105,7 +106,10 @@ export function AppTopBar({
             </Button>
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-[340px] min-w-0 items-center gap-2 rounded-full border border-[var(--miva-border)] bg-[var(--miva-topbar-chip-bg)] px-2.5 py-1.5 shadow-sm backdrop-blur">
+          <div
+            className="mx-auto flex w-fit min-w-0 max-w-[340px] items-center gap-2 rounded-full border border-[var(--miva-border)] bg-[var(--miva-topbar-chip-bg)] px-2 py-1.5 shadow-sm backdrop-blur @[840px]/topbar:w-full @[840px]/topbar:px-2.5"
+            title={modelChipTitle}
+          >
             <span
               className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black tracking-[0.14em] ${
                 activeProviderMode === "local"
@@ -115,9 +119,9 @@ export function AppTopBar({
             >
               {activeProviderMode === "local" ? providerText.localHeader : providerText.cloudHeader}
             </span>
-            <span className="material-symbols-outlined shrink-0 text-sm text-[var(--miva-success)]">{activeProviderIcon}</span>
-            <span className="truncate text-[13px] font-semibold text-[var(--miva-topbar-chip-text)]">
-              {activeProviderLabel} / {activeModelLabel}
+            <span className="material-symbols-outlined hidden shrink-0 text-sm text-[var(--miva-success)] @[840px]/topbar:inline">{activeProviderIcon}</span>
+            <span className="hidden truncate text-[13px] font-semibold text-[var(--miva-topbar-chip-text)] @[840px]/topbar:inline">
+              {modelChipTitle}
             </span>
           </div>
         )}

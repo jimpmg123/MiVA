@@ -292,6 +292,13 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
             </span>
             <Switch checked={character.showInRuntime} onCheckedChange={(checked) => updateCharacter((current) => ({ ...current, showInRuntime: checked }))} />
           </label>
+
+          <div className="rounded-lg border border-dashed border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-4 md:col-span-2">
+            <p className="text-sm font-bold text-[var(--miva-text)]">Floating overlay window</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--miva-text-muted)]">
+              In Runtime, use the picture-in-picture button on the character panel to open a transparent always-on-top window you can drag anywhere on screen.
+            </p>
+          </div>
         </div>
       </Panel>
 
