@@ -43,6 +43,7 @@ export function runChatOnce(input: {
   profile: LocalAssistantProfile;
   messages?: Pick<ChatMessage, "role" | "content">[];
   memorySummary?: string | null;
+  toolContext?: string | null;
 }) {
   return invokeCommand<string>("chat_once", input);
 }

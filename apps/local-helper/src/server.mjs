@@ -2,6 +2,7 @@ import http from "node:http";
 import { HELPER_PORT, OLLAMA_BASE_URL } from "./config.mjs";
 import { getOllamaStatus } from "./services/ollama.mjs";
 import { handleChat } from "./routes/chat.mjs";
+import { handleDaisoRun, handleDaisoStatus } from "./routes/daiso.mjs";
 import {
   handleCatalog,
   handleModelPull,
@@ -60,6 +61,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/voice/status") {
       await handleVoiceStatus(req, res, origin);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/daiso/status") {
+      await handleDaisoStatus(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/daiso/run") {
+      await handleDaisoRun(req, res, origin);
       return;
     }
 

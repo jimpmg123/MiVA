@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Locale } from "../../i18n";
+import { runDaisoRequest } from "../daiso/daisoRuntime";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
@@ -15,6 +16,15 @@ import {
   saveRuntimeChatMessages,
   saveRuntimeMemorySummary,
 } from "./storage";
+import {
+  cleanSpeechText,
+  estimateChatTokens,
+  estimateTokensFromText,
+  getRuntimeSummaryModel,
+  hasExplicitMemoryRequest,
+  MEMORY_COMPACTION_FALLBACK_BUDGET,
+  RECENT_CONTEXT_MESSAGE_LIMIT,
+} from "./runtimeMemory";
 import type { RuntimeConversationNavItem } from "../../app/AppNavigation";
 import type {
   AppMode,
@@ -28,44 +38,7 @@ import type {
   GoogleWorkspaceStatus,
 } from "../../types";
 
-const RECENT_CONTEXT_MESSAGE_LIMIT = 8;
-const MEMORY_COMPACTION_FALLBACK_BUDGET = 2000;
 type TtsPlaybackState = "idle" | "starting" | "speaking" | "error";
-
-function estimateTokensFromText(value: string) {
-  return Math.ceil(value.length / 3);
-}
-
-function estimateChatTokens(messages: Pick<ChatMessage, "content">[]) {
-  return messages.reduce((total, message) => total + estimateTokensFromText(message.content), 0);
-}
-
-function hasExplicitMemoryRequest(value: string) {
-  const normalized = value.toLowerCase();
-  return [
-    "remember",
-    "keep this in mind",
-    "save this",
-    "memorize",
-    "기억",
-    "기억해",
-    "기억해줘",
-    "저장해",
-    "저장해줘",
-    "다음에도 참고",
-    "앞으로 참고",
-  ].some((marker) => normalized.includes(marker));
-}
-
-function cleanSpeechText(value: string) {
-  return value
-    .replace(/```[\s\S]*?```/g, "Code block omitted.")
-    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
-    .replace(/[`*_#>]/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, 4000);
-}
 
 type RuntimeUsageEventInput = {
   assistantProfileId: string | null;
@@ -163,6 +136,10 @@ export function useRuntimeChat({
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
   const currentConversationId = activeRuntimeConversationId ?? runtimeChatStore.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
+  const visibleAssistantIds = useMemo(
+    () => new Set(visibleAssistantProfiles.map((profile) => profile.id)),
+    [visibleAssistantProfiles],
+  );
   const runtimeAssistantProfiles = (() => {
     const profiles = new Map<string, LocalAssistantProfile>();
     visibleAssistantProfiles.forEach((profile) => profiles.set(profile.id, profile));
@@ -176,7 +153,7 @@ export function useRuntimeChat({
   })();
   const assistantConversationGroups = runtimeAssistantProfiles.map((profile) => {
     const storedConversations = Object.values(runtimeChatStore.conversations)
-      .filter((conversation) => conversation.assistantId === profile.id)
+      .filter((conversation) => conversation.assistantId === profile.id && visibleAssistantIds.has(conversation.assistantId))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     const activeMessages = profile.id === promptProfileId ? runtimeChatMessages : [];
     const activeStoredConversation = currentConversationId ? runtimeChatStore.conversations[currentConversationId] : null;
@@ -218,6 +195,40 @@ export function useRuntimeChat({
       conversations,
     };
   });
+
+  useEffect(() => {
+    if (!runtimeChatStoreLoadedRef.current) {
+      return;
+    }
+
+    const nextConversations = Object.fromEntries(
+      Object.entries(runtimeChatStoreRef.current.conversations).filter(([, conversation]) => visibleAssistantIds.has(conversation.assistantId)),
+    );
+    const nextActiveConversationIds = Object.fromEntries(
+      Object.entries(runtimeChatStoreRef.current.activeConversationIds).filter(([assistantId]) => visibleAssistantIds.has(assistantId)),
+    );
+    const nextSummaries = Object.fromEntries(
+      Object.entries(runtimeChatStoreRef.current.summaries).filter(([assistantId]) => visibleAssistantIds.has(assistantId)),
+    );
+    const changed =
+      Object.keys(nextConversations).length !== Object.keys(runtimeChatStoreRef.current.conversations).length ||
+      Object.keys(nextActiveConversationIds).length !== Object.keys(runtimeChatStoreRef.current.activeConversationIds).length ||
+      Object.keys(nextSummaries).length !== Object.keys(runtimeChatStoreRef.current.summaries).length;
+
+    if (!changed) {
+      return;
+    }
+
+    const nextStore = {
+      ...runtimeChatStoreRef.current,
+      conversations: nextConversations,
+      activeConversationIds: nextActiveConversationIds,
+      summaries: nextSummaries,
+      updatedAt: new Date().toISOString(),
+    };
+    runtimeChatStoreRef.current = nextStore;
+    setRuntimeChatStore(nextStore);
+  }, [visibleAssistantProfiles, visibleAssistantIds]);
 
   function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
     if (mode === "runtime") {
@@ -285,20 +296,6 @@ export function useRuntimeChat({
     const nearBottom = distanceFromBottom < 120;
     shouldAutoScrollChatRef.current = nearBottom;
     setShowJumpToLatest((current) => (current === !nearBottom ? current : !nearBottom));
-  }
-
-  function getSummaryModel(profile: LocalAssistantProfile, fallbackProvider: ProviderId, fallbackModel: string) {
-    const settings = profile.prompt?.settings.summaryMemory;
-    if (!settings || settings.modelPolicy === "sameModel") {
-      return { provider: fallbackProvider, model: fallbackModel };
-    }
-
-    if (settings.modelPolicy === "localModel") {
-      return { provider: "ollama" as ProviderId, model: settings.model || selectedModel };
-    }
-
-    const cloudProvider = settings.provider === "ollama" ? "gemini" : settings.provider;
-    return { provider: cloudProvider, model: settings.model || selectedCloudModel };
   }
 
   function getApiKeyForProvider(provider: ProviderId) {
@@ -436,7 +433,13 @@ export function useRuntimeChat({
       ? input.messages.slice(-RECENT_CONTEXT_MESSAGE_LIMIT)
       : [];
     const estimatedTokens = estimateChatTokens(messagesForMemory) + currentSummaryTokens;
-    const summaryModel = getSummaryModel(input.assistantProfile, input.provider, input.model);
+    const summaryModel = getRuntimeSummaryModel({
+      profile: input.assistantProfile,
+      fallbackProvider: input.provider,
+      fallbackModel: input.model,
+      selectedModel,
+      selectedCloudModel,
+    });
     const summaryPrompt = [
       "Update this assistant memory for MiVA.",
       "Default policy: only store information the user explicitly asked the assistant to remember.",
@@ -481,6 +484,7 @@ export function useRuntimeChat({
     const rawInput = chatInput.trim();
     const parsed = parseSlashCommand(rawInput);
     const prompt = parsed?.prompt ?? rawInput;
+    const isDaisoSlashCommand = parsed?.command.id === "daiso";
     const displayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput;
     let assistantProfile = buildCurrentLocalAssistantProfile();
     if (parsed) {
@@ -488,13 +492,7 @@ export function useRuntimeChat({
     }
     const chatMode = appMode;
     const providerModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const apiKey = selectedProvider === "openai"
-      ? providerKeys.openai.trim()
-      : selectedProvider === "gemini"
-        ? providerKeys.gemini.trim()
-        : selectedProvider === "groq"
-          ? providerKeys.groq.trim()
-        : "";
+    const apiKey = getApiKeyForProvider(selectedProvider);
     const localUnavailable = selectedProvider === "ollama" && !statusInstalled;
     const currentMessages = chatMode === "runtime" ? runtimeChatMessages : testChatMessages;
     const recentContextMessages = currentMessages
@@ -504,7 +502,7 @@ export function useRuntimeChat({
       ? runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? null
       : null;
 
-    if (!prompt || localUnavailable || busyAction === "chat") {
+    if ((!prompt && !isDaisoSlashCommand) || localUnavailable || busyAction === "chat") {
       return;
     }
 
@@ -512,7 +510,7 @@ export function useRuntimeChat({
 
     const workspaceEnabled = assistantProfile.prompt.settings.toolConnections.googleWorkspace;
     const workspaceServices = assistantProfile.prompt.settings.toolConnections.googleWorkspaceServices;
-    if (chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
+    if (!isDaisoSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
       const workspaceStatus = await refreshGoogleWorkspaceStatus();
       if (!workspaceStatus?.connected) {
         await onWorkspaceAuthRequired();
@@ -573,6 +571,34 @@ export function useRuntimeChat({
     ]);
 
     try {
+      let toolContext: string | null = null;
+      if (isDaisoSlashCommand) {
+        const daisoResult = await runDaisoRequest(prompt);
+        if (!daisoResult.ok || daisoResult.needsUserInput) {
+          const message = daisoResult.needsUserInput
+            ? daisoResult.message
+            : `Daiso CLI failed: ${daisoResult.message}`;
+          updateChatMessages(chatMode, (current) => [
+            ...current,
+            {
+              role: "assistant",
+              content: message,
+              createdAt: new Date().toISOString(),
+              provider: selectedProvider,
+              model: providerModel,
+            },
+          ]);
+          onLog(message);
+          return;
+        }
+        toolContext = daisoResult.context || [
+          "Daiso CLI result was retrieved by MiVA.",
+          `CLI command: ${daisoResult.commandLine || "unknown"}`,
+          daisoResult.stdout || JSON.stringify(daisoResult.data ?? null, null, 2),
+        ].join("\n");
+        onLog(`Daiso CLI completed: ${daisoResult.commandLine || "unknown command"}`);
+      }
+
       const answer = await runChatOnce({
         provider: selectedProvider,
         model: providerModel,
@@ -583,6 +609,7 @@ export function useRuntimeChat({
         profile: assistantProfile,
         messages: recentContextMessages,
         memorySummary,
+        toolContext,
       });
       const latencyMs = Math.round(performance.now() - startedAt);
       setChatMetrics({
