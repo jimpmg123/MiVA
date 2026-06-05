@@ -4,10 +4,17 @@
   "version": "0.1.0",
   "description": "Local-first personal AI assistant workspace.",
   "scripts": {
-    "dev:helper": "node apps/local-helper/src/server.mjs",
-    "dev:voice": "python apps/voice-worker/server.py",
-    "dev:web": "node apps/web/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173",
-    "dev:api": "npm.cmd --prefix apps/api run dev",
+    "dev": "node scripts/dev-services.mjs start core",
+    "dev:core": "node scripts/dev-services.mjs start core",
+    "dev:all": "node scripts/dev-services.mjs start all",
+    "dev:app": "node scripts/dev-services.mjs start desktop",
+    "dev:desktop": "node scripts/dev-services.mjs start desktop",
+    "dev:helper": "node scripts/dev-services.mjs start helper",
+    "dev:voice": "node scripts/dev-services.mjs start voice",
+    "dev:web": "node scripts/dev-services.mjs start web",
+    "dev:api": "node scripts/dev-services.mjs start api",
+    "dev:stop": "node scripts/dev-services.mjs stop all",
+    "dev:status": "node scripts/dev-services.mjs status all",
     "check": "node scripts/check.mjs"
   },
   "engines": {
