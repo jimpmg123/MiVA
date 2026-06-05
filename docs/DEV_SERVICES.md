@@ -23,25 +23,23 @@ It intentionally:
 - clears fixed MiVA dev ports before restart;
 - writes logs to `.codex-run-logs/`;
 - never launches `apps/desktop/src-tauri/target/debug/miva-desktop.exe` directly.
-- does not run `tauri dev` automatically from the Codex background launcher.
+- runs `tauri dev` through the local Node CLI without opening separate command windows.
 
 Service groups:
 
-- `core`: local-helper, API, web, and desktop Vite UI.
+- `core`: local-helper, API, web, and the desktop Tauri app.
 - `all`: every managed service, including the optional Python voice worker.
 
 Do not start the desktop debug executable directly during development.
 
-This wrapper is not intended to replace the normal VS Code terminal workflow for the full Tauri shell.
+`npm run dev:app` starts the full desktop Tauri shell. Its configured
+`beforeDevCommand` starts the Vite UI at `http://127.0.0.1:1421`.
 
-`npm run dev:app` starts only the desktop Vite UI at `http://127.0.0.1:1421`.
-It intentionally does not open the Tauri shell from the Codex background launcher. Starting Tauri detached from Codex can create visible Windows `cmd.exe` children; running it in a normal terminal is the safer dev flow.
-
-For a full Tauri shell run, run Tauri manually from an existing VS Code or PowerShell terminal if a real desktop window is needed:
+The equivalent foreground command is:
 
 ```text
 cd apps/desktop
 npm run tauri:dev
 ```
 
-Do not run `npm run dev:app` first in that flow. The Tauri config keeps `beforeDevCommand`, so normal `npm run tauri:dev` starts the desktop Vite server itself from a visible terminal.
+Do not run both commands at once because they use the same Vite port and Tauri build directory.

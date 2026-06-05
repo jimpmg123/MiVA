@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,9 +32,9 @@ const services = {
   desktop: {
     cwd: path.join(rootDir, "apps/desktop"),
     command: process.execPath,
-    args: ["./node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "1421"],
+    args: ["./node_modules/@tauri-apps/cli/tauri.js", "dev", "--config", "src-tauri/tauri.dev.conf.json"],
     ports: [1421],
-    healthUrl: "http://127.0.0.1:1421",
+    healthUrl: "http://localhost:1421",
   },
   voice: {
     cwd: rootDir,
@@ -232,8 +232,38 @@ async function checkHealth(url, timeoutMs = 8000) {
 function startDetachedService(name) {
   const configured = services[name];
   mkdirSync(logDir, { recursive: true });
-  const out = openSync(path.join(logDir, `${name}.out.log`), "w");
-  const err = openSync(path.join(logDir, `${name}.err.log`), "w");
+  const outPath = path.join(logDir, `${name}.out.log`);
+  const errPath = path.join(logDir, `${name}.err.log`);
+
+  if (process.platform === "win32" && name === "desktop") {
+    const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+    const argumentList = configured.args.map(quote).join(", ");
+    const script = [
+      `$process = Start-Process -FilePath ${quote(configured.command)}`,
+      `-ArgumentList @(${argumentList})`,
+      `-WorkingDirectory ${quote(configured.cwd)}`,
+      "-WindowStyle Hidden",
+      "-PassThru;",
+      "[Console]::Out.Write($process.Id)",
+    ].join(" ");
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const pid = Number(result.stdout.trim());
+    if (result.status !== 0 || !Number.isFinite(pid) || pid <= 0) {
+      throw new Error(`Failed to start desktop Tauri process: ${result.stderr || result.stdout || "unknown error"}`);
+    }
+    return pid;
+  }
+
+  const out = openSync(outPath, "w");
+  const err = openSync(errPath, "w");
   const child = spawn(configured.command, configured.args, {
     cwd: configured.cwd,
     detached: true,
@@ -295,10 +325,10 @@ function printHelp() {
     "",
     "Notes:",
     "  - Starts services detached with shell:false and windowsHide:true on Windows.",
-    "  - `core` means helper, api, web, and desktop Vite. `all` includes voice too.",
+    "  - `core` means helper, api, web, and the desktop Tauri app. `all` includes voice too.",
     "  - Cleans recorded PIDs and fixed MiVA dev ports before starting.",
     "  - Does not launch apps/desktop/src-tauri/target/debug/miva-desktop.exe directly.",
-    "  - Does not run tauri dev automatically from this background launcher; desktop starts the Vite dev UI only.",
+    "  - Runs Tauri through its Node CLI with hidden background consoles while keeping the app window visible.",
   ].join("\n"));
 }
 
