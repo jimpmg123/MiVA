@@ -20,7 +20,7 @@ export type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 export type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
 export type MemorySyncMode = "profileOnly" | "summaryMemory";
 export type AppMode = "setup" | "studio" | "runtime" | "history" | "auth";
-export type SettingsSection = "general" | "aiModels" | "security" | "logs";
+export type SettingsSection = "general" | "aiModels" | "clawCode" | "security" | "logs";
 export type StudioSection =
   | "myAssistants"
   | "overview"
@@ -180,6 +180,26 @@ export type OllamaStatus = {
   installedModels: string[];
   baseUrl: string;
   error?: string | null;
+};
+
+export type ClawCodeRuntimeInfo = {
+  installed: boolean;
+  version: string | null;
+  installedAt: string | null;
+  workspaceRoot: string | null;
+  openAiConfigured: boolean;
+  openAiModel: string;
+  node: {
+    installed: boolean;
+    version: string | null;
+    command: string | null;
+  };
+  git: {
+    installed: boolean;
+    version: string | null;
+    command: string | null;
+  };
+  sessionsDir: string;
 };
 
 export type ModelDownloadProgress = {

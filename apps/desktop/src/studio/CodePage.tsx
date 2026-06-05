@@ -1,4 +1,5 @@
 ﻿import type {
+  ClawCodeRuntimeInfo,
   CodingAccessMode,
   CodingCapability,
   CodingProviderPolicy,
@@ -34,6 +35,7 @@ type CodingOption = {
 
 type StudioCodePanelProps = {
   activeModelLabel: string;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
   codingAccessModeCopy: Record<CodingAccessMode, string>;
   codingCapabilityCopy: Record<CodingCapability, string>;
   codingProviderPolicyCopy: Record<CodingProviderPolicy, string>;
@@ -41,6 +43,7 @@ type StudioCodePanelProps = {
   providerMeta: ProviderMeta;
   selectedProvider: ProviderId;
   onEnterAiModelSettings: () => void;
+  onEnterClawCodeSettings: () => void;
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
   onSaveLocal: () => void;
   onSelectGeminiFlash: () => void;
@@ -88,6 +91,7 @@ const codingOptions: CodingOption[] = [
 
 export function StudioCodePanel({
   activeModelLabel,
+  clawCodeStatus,
   codingAccessModeCopy,
   codingCapabilityCopy,
   codingProviderPolicyCopy,
@@ -95,6 +99,7 @@ export function StudioCodePanel({
   providerMeta,
   selectedProvider,
   onEnterAiModelSettings,
+  onEnterClawCodeSettings,
   onPromptSettingsChange,
   onSaveLocal,
   onSelectGeminiFlash,
@@ -103,7 +108,8 @@ export function StudioCodePanel({
   const coding = profile.prompt.settings.coding;
   const selectedOption = codingOptions.find((option) => option.id === coding.capability) ?? codingOptions[0];
   const cloudRequired = coding.providerPolicy === "cloudRequired" && !coding.localExperimental;
-  const cloudRequirementUnmet = cloudRequired && selectedProvider === "ollama";
+  const clawCodeSelected = coding.capability === "clawCode";
+  const cloudRequirementUnmet = cloudRequired && selectedProvider === "ollama" && !clawCodeSelected;
 
   const updateCodingPolicy = (option: CodingOption) => {
     onPromptSettingsChange((current) => ({
@@ -117,7 +123,7 @@ export function StudioCodePanel({
       },
     }));
 
-    if (option.providerPolicy === "cloudRequired" && selectedProvider === "ollama") {
+    if (option.id !== "clawCode" && option.providerPolicy === "cloudRequired" && selectedProvider === "ollama") {
       onSelectGeminiFlash();
     }
   };
@@ -138,7 +144,7 @@ export function StudioCodePanel({
         <SectionHeader
           eyebrow="Coding assistant policy"
           title="Choose what this assistant can do with code"
-          body="Code editing and Claw Code require a cloud API model by default. Local models can explain code, but full repository automation is kept behind an advanced experimental path."
+          body="Code editing requires a cloud API model by default. Claw Code keeps normal chat on your selected model, but routes code requests through OpenAI with local file tools."
           actions={
             <>
               <Badge tone={cloudRequired ? "action" : "neutral"}>{codingProviderPolicyCopy[coding.providerPolicy]}</Badge>
@@ -204,9 +210,21 @@ export function StudioCodePanel({
             </StatusAlert>
           )}
 
+          {clawCodeSelected && (
+            <StatusAlert className="mt-4" tone={clawCodeStatus?.installed && clawCodeStatus.workspaceRoot ? "success" : "warning"}>
+              {clawCodeStatus?.installed && clawCodeStatus.workspaceRoot
+                ? `Claw Code is ready. Code requests use OpenAI (${clawCodeStatus.openAiModel}) inside ${clawCodeStatus.workspaceRoot}.`
+                : "Install Claw Code and choose a workspace folder in Settings > Claw Code before asking for file edits."}
+            </StatusAlert>
+          )}
+
           <div className="mt-5 flex flex-wrap gap-3">
             <SecondaryButton onClick={onEnterAiModelSettings}>Manage API keys</SecondaryButton>
-            <PrimaryButton onClick={onSelectGeminiFlash}>Use Gemini 2.5 Flash</PrimaryButton>
+            {clawCodeSelected ? (
+              <PrimaryButton onClick={onEnterClawCodeSettings}>Open Claw Code settings</PrimaryButton>
+            ) : (
+              <PrimaryButton onClick={onSelectGeminiFlash}>Use Gemini 2.5 Flash</PrimaryButton>
+            )}
           </div>
         </Panel>
 
@@ -231,7 +249,7 @@ export function StudioCodePanel({
             <span>
               <span className="block text-sm font-bold text-[var(--miva-text)]">Allow advanced local coding fallback</span>
               <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">
-                This does not install or run Claw Code yet. It only records that the assistant is allowed to try local coding later.
+                This only affects local-model fallback. Claw Code itself is installed separately in Settings &gt; Claw Code.
               </span>
             </span>
           </label>

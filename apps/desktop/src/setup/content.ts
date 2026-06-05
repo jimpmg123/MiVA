@@ -31,7 +31,8 @@ export const providerUiCopy = {
     cloudRuntimeReady: "Cloud provider",
     hasOverride: "Override set",
     needsKey: "Key needed",
-    defaultKey: "Default .env",
+    defaultKey: "Demo keys",
+    cloudSyncedKey: "Synced from web",
   },
 } satisfies Record<Locale, Record<string, string>>;
 
@@ -49,6 +50,7 @@ export const steps: Array<{ id: StepId; label: string; detail: string }> = [
 export const settingsSections: Array<{ id: SettingsSection; label: string; detail: string; icon: string }> = [
   { id: "general", label: "General", detail: "Language, storage, assistant", icon: "settings" },
   { id: "aiModels", label: "AI models", detail: "Provider, model, API keys", icon: "memory" },
+  { id: "clawCode", label: "Claw Code", detail: "Install and workspace folder", icon: "terminal" },
   { id: "security", label: "Security", detail: "Privacy and key policy", icon: "shield" },
   { id: "logs", label: "Logs", detail: "Local app activity", icon: "article" },
 ];
@@ -270,7 +272,7 @@ export const copy = {
     characterPreviewBody: "Phase 1 shows status expression only. Live2D and voice reactions will be connected later.",
     characterIdle: "Idle",
     clawCodeReadyTitle: "Optional step complete",
-    clawCodeReadyBody: "Claw Code can be installed later from Studio if you need code editing.",
+    clawCodeReadyBody: "You can install Claw Code now or later from Settings > Claw Code.",
     characterListening: "Waiting for input",
     localRuntime: "Local Runtime",
     generatingResponse: "Generating response...",
@@ -291,12 +293,12 @@ export const copy = {
     serviceStatus: "Service status",
     installedModels: "Installed models",
     providerKeysTitle: "AI Provider Keys",
-    providerKeysBody: "Leave fields empty to use the default development keys from local-helper .env. Enter a key to save a local override for this app.",
+    providerKeysBody: "When signed in, API keys saved in the web console sync here automatically. Leave fields empty to use synced web keys or bundled demo keys. Enter a key to save a local override for this app.",
     openaiApiKey: "OpenAI API Key",
     geminiApiKey: "Gemini API Key",
     groqApiKey: "Groq API Key",
     userOverrideKey: "User override key",
-    defaultEnvKey: "Use default .env key",
+    defaultEnvKey: "Use demo keys",
     saveKeys: "Save keys",
     clearKeys: "Clear keys",
     keysSaved: "Saved locally",

@@ -1,5 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
+import { ClawCodeInstallPanel } from "../components/ClawCodeInstallPanel";
 import type {
+  AuthSession,
+  ClawCodeRuntimeInfo,
   CloudModelInfo,
   LocalAssistantProfile,
   OllamaStatus,
@@ -7,6 +10,7 @@ import type {
   ProviderKeyState,
   SettingsSection,
 } from "../types";
+import { getProviderKeySource } from "../features/auth/providerKeyMerge";
 import { Badge, Button, IconTile, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select } from "../components/ui";
 import { ThemeSelector } from "../components/ThemeSelector";
 import { ActivityLogPanel } from "../features/logs/ActivityLogPanel";
@@ -20,11 +24,18 @@ type SettingsPageProps = {
   assistantProfileError: string | null;
   assistantProfileLoaded: boolean;
   assistantProfileSaveState: "idle" | "saving" | "saved" | "error";
+  busyAction: string | null;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
+  clawCodeStatusError: string | null;
   cloudModelCatalog: CloudModelInfo[];
   locale: string;
   logs: string[];
+  authSession: AuthSession | null;
+  cloudProviderKeys: ProviderKeyState;
   providerKeys: ProviderKeyState;
   providerKeysSaved: boolean;
+  providerKeysSyncedAt: string | null;
+  providerKeysSyncError: string | null;
   providerText: Record<string, string>;
   selectedCloudModel: string;
   selectedProvider: ProviderId;
@@ -32,14 +43,19 @@ type SettingsPageProps = {
   settingsSections: Array<{ id: SettingsSection; label: string; detail: string; icon: string }>;
   status: OllamaStatus | null;
   t: Record<string, string>;
+  tauriRuntime: boolean;
+  onChooseClawCodeWorkspace: () => Promise<string | null> | string | null;
   onClearProviderKeys: () => void;
   onClearLogs: () => void;
   onExitSettings: () => void;
+  onInstallClawCode: (workspaceRoot: string | null) => Promise<void> | void;
   onOpenInitialSetup: () => void;
+  onRefreshClawCodeStatus: () => Promise<void> | void;
   onSaveProviderKeys: () => void;
   onSelectedCloudModelChange: (modelId: string) => void;
   onSelectedProviderChange: (providerId: ProviderId) => void;
   onProviderKeysChange: Dispatch<SetStateAction<ProviderKeyState>>;
+  onSetClawCodeWorkspace: (workspaceRoot: string) => Promise<void> | void;
   themeId: UiThemeId;
   onThemeChange: (themeId: UiThemeId) => void;
 };
@@ -51,11 +67,18 @@ export function SettingsPage({
   assistantProfileError,
   assistantProfileLoaded,
   assistantProfileSaveState,
+  busyAction,
+  clawCodeStatus,
+  clawCodeStatusError,
   cloudModelCatalog,
   locale,
   logs,
+  authSession,
+  cloudProviderKeys,
   providerKeys,
   providerKeysSaved,
+  providerKeysSyncedAt,
+  providerKeysSyncError,
   providerText,
   selectedCloudModel,
   selectedProvider,
@@ -63,14 +86,19 @@ export function SettingsPage({
   settingsSections,
   status,
   t,
+  tauriRuntime,
+  onChooseClawCodeWorkspace,
   onClearProviderKeys,
   onClearLogs,
   onExitSettings,
+  onInstallClawCode,
   onOpenInitialSetup,
+  onRefreshClawCodeStatus,
   onSaveProviderKeys,
   onSelectedCloudModelChange,
   onSelectedProviderChange,
   onProviderKeysChange,
+  onSetClawCodeWorkspace,
   themeId,
   onThemeChange,
 }: SettingsPageProps) {
@@ -141,6 +169,16 @@ export function SettingsPage({
         <div>
           <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">{t.providerKeysTitle}</h3>
           <p className="mt-2 max-w-[620px] text-sm leading-6 text-[var(--miva-text-muted)]">{t.providerKeysBody}</p>
+          {authSession && providerKeysSyncedAt && (
+            <p className="mt-2 text-xs font-semibold text-[var(--miva-success)]">
+              Cloud keys synced {new Date(providerKeysSyncedAt).toLocaleString()}.
+            </p>
+          )}
+          {authSession && providerKeysSyncError && (
+            <p className="mt-2 text-xs font-semibold text-[var(--miva-danger-hover)]">
+              Cloud key sync failed: {providerKeysSyncError}
+            </p>
+          )}
         </div>
         {providerKeysSaved && <Badge tone="success">{t.keysSaved}</Badge>}
       </div>
@@ -149,7 +187,9 @@ export function SettingsPage({
         {providerManifestList.map((providerManifest) => {
           const providerId = providerManifest.id;
           const isActive = selectedProvider === providerId;
-          const providerKey = providerId === "ollama" ? "" : providerKeys[providerId];
+          const keySource = providerId === "ollama"
+            ? "demo"
+            : getProviderKeySource(providerId, providerKeys, cloudProviderKeys);
           const statusLabel =
             providerId === "ollama"
               ? status?.running
@@ -157,9 +197,11 @@ export function SettingsPage({
                 : status?.installed
                   ? t.stopped
                   : t.missing
-              : providerKey
+              : keySource === "local"
                 ? providerText.hasOverride
-                : providerText.defaultKey;
+                : keySource === "cloud"
+                  ? providerText.cloudSyncedKey
+                  : providerText.defaultKey;
 
           return (
             <Button
@@ -194,6 +236,7 @@ export function SettingsPage({
         {cloudProviderManifests.map((providerManifest) => {
           const providerId = providerManifest.id;
           const providerKey = providerKeys[providerId];
+          const keySource = getProviderKeySource(providerId, providerKeys, cloudProviderKeys);
           return (
             <label className="grid gap-2" key={providerId}>
               <div className="flex items-center justify-between gap-4">
@@ -207,7 +250,9 @@ export function SettingsPage({
                   >
                     Get API key
                   </a>
-                  <Badge tone={providerKey ? "action" : "neutral"}>{providerKey ? t.userOverrideKey : t.defaultEnvKey}</Badge>
+                  <Badge tone={providerKey ? "action" : keySource === "cloud" ? "success" : "neutral"}>
+                    {providerKey ? t.userOverrideKey : keySource === "cloud" ? providerText.cloudSyncedKey : t.defaultEnvKey}
+                  </Badge>
                 </div>
               </div>
               <Input
@@ -246,6 +291,19 @@ export function SettingsPage({
     </Panel>
   );
 
+  const clawCodePanel = (
+    <ClawCodeInstallPanel
+      busyAction={busyAction}
+      onChooseWorkspace={onChooseClawCodeWorkspace}
+      onInstall={onInstallClawCode}
+      onRefresh={onRefreshClawCodeStatus}
+      onSetWorkspace={onSetClawCodeWorkspace}
+      status={clawCodeStatus}
+      statusError={clawCodeStatusError}
+      tauriRuntime={tauriRuntime}
+    />
+  );
+
   const logsPanel = (
     <ActivityLogPanel
       logs={logs}
@@ -268,6 +326,7 @@ export function SettingsPage({
 
       {settingsSection === "general" && generalPanel}
       {settingsSection === "aiModels" && aiModelsPanel}
+      {settingsSection === "clawCode" && clawCodePanel}
       {settingsSection === "security" && securityPanel}
       {settingsSection === "logs" && logsPanel}
     </div>

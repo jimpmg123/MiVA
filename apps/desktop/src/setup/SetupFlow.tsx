@@ -11,6 +11,7 @@ import { RecommendationStep } from "./RecommendationStep";
 import { SurveyStep } from "./SurveyStep";
 import { WelcomeStep } from "./WelcomeStep";
 import type {
+  ClawCodeRuntimeInfo,
   CloudModelInfo,
   HardwareInfo,
   LocalAssistantProfile,
@@ -31,7 +32,10 @@ type SetupFlowProps = {
   assistantProfileError: string | null;
   busyAction: string | null;
   chatStep: ReactNode;
+  chooseClawCodeWorkspace: () => Promise<string | null> | string | null;
   choosePythonInstallPath: () => Promise<void> | void;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
+  clawCodeStatusError: string | null;
   cloudRecommended: boolean;
   downloadModel: (modelName: string) => Promise<void> | void;
   downloadProgress: ModelDownloadProgress | null;
@@ -42,6 +46,7 @@ type SetupFlowProps = {
   goToPreviousStep: () => void;
   hardware: HardwareInfo | null;
   hardwareError: string | null;
+  installClawCode: (workspaceRoot: string | null) => Promise<void> | void;
   installOllama: () => Promise<void> | void;
   installPython: () => Promise<void> | void;
   installedModels: string[];
@@ -53,6 +58,7 @@ type SetupFlowProps = {
   recommendedModel: string;
   recommendedModelInfo: ModelInfo;
   recommendedModelInstalled: boolean;
+  refreshClawCodeStatus: () => Promise<void> | void;
   refreshHardware: () => Promise<void> | void;
   refreshRuntimeRequirements: () => Promise<void> | void;
   refreshStatus: () => Promise<void> | void;
@@ -69,6 +75,7 @@ type SetupFlowProps = {
   setActiveStep: (step: ComponentProps<typeof SetupPage>["activeStep"]) => void;
   setSelectedCloudModel: (modelId: string) => void;
   setSelectedModel: ComponentProps<typeof DownloadStep>["setSelectedModel"];
+  setClawCodeWorkspace: (workspaceRoot: string) => Promise<void> | void;
   setSelectedProvider: (provider: ProviderId) => void;
   setSurvey: ComponentProps<typeof SurveyStep>["setSurvey"];
   setSurveyQuestionIndex: ComponentProps<typeof SurveyStep>["setSurveyQuestionIndex"];
@@ -90,7 +97,10 @@ export function SetupFlow({
   assistantProfileError,
   busyAction,
   chatStep,
+  chooseClawCodeWorkspace,
   choosePythonInstallPath,
+  clawCodeStatus,
+  clawCodeStatusError,
   cloudRecommended,
   downloadModel,
   downloadProgress,
@@ -101,6 +111,7 @@ export function SetupFlow({
   goToPreviousStep,
   hardware,
   hardwareError,
+  installClawCode,
   installOllama,
   installPython,
   installedModels,
@@ -112,6 +123,7 @@ export function SetupFlow({
   recommendedModel,
   recommendedModelInfo,
   recommendedModelInstalled,
+  refreshClawCodeStatus,
   refreshHardware,
   refreshRuntimeRequirements,
   refreshStatus,
@@ -128,6 +140,7 @@ export function SetupFlow({
   setActiveStep,
   setSelectedCloudModel,
   setSelectedModel,
+  setClawCodeWorkspace,
   setSelectedProvider,
   setSurvey,
   setSurveyQuestionIndex,
@@ -146,13 +159,19 @@ export function SetupFlow({
       clawCodeStep={(
         <ClawCodeStep
           busyAction={busyAction}
+          chooseClawCodeWorkspace={chooseClawCodeWorkspace}
           choosePythonInstallPath={choosePythonInstallPath}
+          clawCodeStatus={clawCodeStatus}
+          clawCodeStatusError={clawCodeStatusError}
           goToNextStep={goToNextStep}
+          installClawCode={installClawCode}
           installPython={installPython}
           pythonInstallPath={pythonInstallPath}
+          refreshClawCodeStatus={refreshClawCodeStatus}
           refreshRuntimeRequirements={refreshRuntimeRequirements}
           runtimeRequirements={runtimeRequirements}
           runtimeRequirementsError={runtimeRequirementsError}
+          setClawCodeWorkspace={setClawCodeWorkspace}
           t={t}
           tauriRuntime={tauriRuntime}
         />

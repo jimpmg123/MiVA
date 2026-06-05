@@ -1,7 +1,7 @@
 import { PrimaryButton, SectionHeader } from "../components/ui";
 import { codingAccessModeCopy, codingCapabilityCopy, codingProviderPolicyCopy, defaultPromptSettings, normalizePromptSettings, scheduleModeCopy, workspacePolicyCopy } from "../features/assistants/profile";
 import { providerMeta } from "../features/models/catalog";
-import type { AppMode, AssistantProfileSyncState, GoogleWorkspaceStatus, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
+import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
 import { ModelsPanel } from "../studio/ModelsPage";
 import { MyAssistantsPanel } from "../studio/MyAssistantsPage";
 import { CharacterStudioPanel } from "../studio/CharacterPage";
@@ -86,6 +86,7 @@ type StudioPageProps = {
   assistantProfileSyncMessage: string | null;
   assistantProfileSyncState: AssistantProfileSyncState;
   busyAction: string | null;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
   googleWorkspaceStatus: GoogleWorkspaceStatus | null;
   cloudModelCatalog: any[];
   installedModels: string[];
@@ -112,6 +113,7 @@ type StudioPageProps = {
   buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
   downloadModel: (modelName: string) => Promise<void>;
   enterAiModelSettings: () => void;
+  enterClawCodeSettings: () => void;
   saveCurrentLocalAssistantProfile: () => Promise<unknown>;
   setActiveLocalProfileId: (id: string) => void;
   setAppMode: (mode: AppMode) => void;
@@ -142,6 +144,7 @@ export function StudioPage({
   assistantProfileSyncMessage,
   assistantProfileSyncState,
   busyAction,
+  clawCodeStatus,
   googleWorkspaceStatus,
   cloudModelCatalog,
   installedModels,
@@ -168,6 +171,7 @@ export function StudioPage({
   buildCurrentLocalAssistantProfile,
   downloadModel,
   enterAiModelSettings,
+  enterClawCodeSettings,
   saveCurrentLocalAssistantProfile,
   setActiveLocalProfileId,
   setAppMode,
@@ -315,6 +319,7 @@ export function StudioPage({
       return (
         <StudioCodePanel
           activeModelLabel={activeModelLabel}
+          clawCodeStatus={clawCodeStatus}
           codingAccessModeCopy={codingAccessModeCopy}
           codingCapabilityCopy={codingCapabilityCopy}
           codingProviderPolicyCopy={codingProviderPolicyCopy}
@@ -322,6 +327,7 @@ export function StudioPage({
           providerMeta={providerMeta}
           selectedProvider={selectedProvider}
           onEnterAiModelSettings={enterAiModelSettings}
+          onEnterClawCodeSettings={enterClawCodeSettings}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
           onSaveLocal={() => void (editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile())}
           onSelectGeminiFlash={() => {
