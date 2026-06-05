@@ -10,7 +10,7 @@ import {
   Search, 
   Bell, 
   HelpCircle, 
-  Languages, 
+  ArrowLeft,
   RefreshCw, 
   ChevronRight,
   BarChart3,
@@ -22,9 +22,13 @@ import {
   KeyRound,
   CreditCard,
   Activity,
-  CheckCircle2
+  CheckCircle2,
+  CircleStop
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { LandingPage } from './pages/LandingPage';
+import { LanguageToggle, useLocale } from './i18n/locale';
+import type { WebMessages } from './i18n/messages';
 import {
   checkCloudApi,
   completeDesktopDeviceLogin,
@@ -36,6 +40,7 @@ import {
   initialCloudState,
   login,
   loginWithGoogleCredential,
+  patchAssistantProfile,
   recordUsageEvent,
   saveApiKey,
   saveGoogleWorkspaceToken,
@@ -44,9 +49,11 @@ import {
 import type {
   ApiKeyDraft,
   ApiKeyProviderId,
+  ApiKeyRecord,
   AuthRole,
   AuthUser,
   CloudState,
+  ProviderId,
 } from './services/mivaApi';
 
 declare global {
@@ -96,6 +103,26 @@ type AuthState = {
 const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
 const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
 const DEFAULT_MODEL_ID = 'qwen3:4b';
+const CLOUD_FALLBACK_ROUTES: Array<{ provider: ProviderId; model: string }> = [
+  { provider: 'openai', model: 'gpt-4o-mini' },
+  { provider: 'gemini', model: 'gemini-2.5-flash' },
+  { provider: 'groq', model: 'llama-3.1-8b-instant' },
+];
+
+function pickRandomCloudRoute(apiKeys: ApiKeyRecord[]) {
+  const configuredProviders = new Set(
+    apiKeys
+      .filter((key) => key.status === 'verified' || key.status === 'configured')
+      .map((key) => key.provider)
+      .filter((provider): provider is 'openai' | 'gemini' | 'groq' =>
+        provider === 'openai' || provider === 'gemini' || provider === 'groq'
+      ),
+  );
+
+  const eligible = CLOUD_FALLBACK_ROUTES.filter((route) => configuredProviders.has(route.provider));
+  const pool = eligible.length > 0 ? eligible : CLOUD_FALLBACK_ROUTES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 const GOOGLE_WORKSPACE_SCOPE = [
   'https://www.googleapis.com/auth/drive.readonly',
@@ -106,6 +133,17 @@ const GOOGLE_WORKSPACE_SCOPE = [
   'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/spreadsheets.readonly',
 ].join(' ');
+const DESKTOP_APP_DOWNLOAD_URL = import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined;
+
+function openDesktopAppDownload() {
+  const downloadUrl = DESKTOP_APP_DOWNLOAD_URL?.trim();
+  if (downloadUrl) {
+    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  window.alert('MiVA desktop installer download will be connected after packaging.');
+}
 
 interface OllamaStatus {
   installed?: boolean;
@@ -164,6 +202,7 @@ interface WebConsoleActions {
   refreshConnection: () => Promise<void>;
   startOllama: () => Promise<void>;
   pullModel: (model: string) => Promise<void>;
+  deleteModel: (model: string) => Promise<void>;
 }
 
 interface ActionState {
@@ -217,10 +256,10 @@ const fallbackCatalog: LocalModel[] = [
   },
 ];
 
-function statusLabel(status: ServiceStatus) {
-  if (status === 'connected') return 'Connected';
-  if (status === 'checking') return 'Checking';
-  return 'Offline';
+function statusLabel(status: ServiceStatus, shell?: WebMessages['shell']) {
+  if (status === 'connected') return shell?.connected ?? 'Connected';
+  if (status === 'checking') return shell?.checking ?? 'Checking';
+  return shell?.offline ?? 'Offline';
 }
 
 function statusBadgeVariant(status: ServiceStatus): 'info' | 'success' | 'warning' | 'error' {
@@ -251,19 +290,21 @@ interface NavItem {
   icon: any;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'devices', label: 'Devices', icon: Cpu },
-  { id: 'models', label: 'Models', icon: Database },
-  { id: 'profiles', label: 'My Assistants', icon: UserCircle },
-  { id: 'apiKeys', label: 'API Keys', icon: KeyRound },
-  { id: 'usage', label: 'Usage', icon: Activity },
-  { id: 'billing', label: 'Billing', icon: CreditCard },
-  { id: 'integrations', label: 'Integrations', icon: Blocks },
-  { id: 'voice', label: 'Voice & Character', icon: AudioLines },
-  { id: 'admin', label: 'Admin Analytics', icon: BarChart3 },
-  { id: 'settings', label: 'Settings', icon: Settings },
-];
+function buildNavItems(nav: WebMessages['nav']): NavItem[] {
+  return [
+    { id: 'dashboard', label: nav.dashboard, icon: LayoutDashboard },
+    { id: 'devices', label: nav.devices, icon: Cpu },
+    { id: 'models', label: nav.models, icon: Database },
+    { id: 'profiles', label: nav.profiles, icon: UserCircle },
+    { id: 'apiKeys', label: nav.apiKeys, icon: KeyRound },
+    { id: 'usage', label: nav.usage, icon: Activity },
+    { id: 'billing', label: nav.billing, icon: CreditCard },
+    { id: 'integrations', label: nav.integrations, icon: Blocks },
+    { id: 'voice', label: nav.voice, icon: AudioLines },
+    { id: 'admin', label: nav.admin, icon: BarChart3 },
+    { id: 'settings', label: nav.settings, icon: Settings },
+  ];
+}
 
 const authStorageKey = 'miva.web.auth.v1';
 
@@ -320,6 +361,86 @@ const Card: React.FC<CardProps> = ({ children, className = "" }) => (
     {children}
   </div>
 );
+
+const ModelDownloadFloatingCard = ({
+  action,
+  showCancelConfirm,
+  onConfirmCancel,
+  onDismissCancelConfirm,
+  onRequestCancel,
+}: {
+  action: ActionState;
+  showCancelConfirm: boolean;
+  onConfirmCancel: () => void;
+  onDismissCancelConfirm: () => void;
+  onRequestCancel: () => void;
+}) => {
+  if (action.type !== 'pulling-model') {
+    return null;
+  }
+
+  const progress = typeof action.progress === 'number' ? action.progress : 0;
+
+  return (
+    <div className="pointer-events-auto fixed bottom-8 right-8 z-[100] w-[min(calc(100vw-2rem),380px)]">
+      {showCancelConfirm && (
+        <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+          <p className="text-sm font-bold text-slate-900">모델 다운로드를 중단할까요?</p>
+          <p className="mt-2 text-xs leading-6 text-slate-500">
+            확인을 누르면 다운로드가 취소되고, 이미 받은 중간 파일이 있으면 함께 삭제합니다.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+              onClick={onDismissCancelConfirm}
+              type="button"
+            >
+              계속 받기
+            </button>
+            <button
+              className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600 active:scale-[0.98]"
+              onClick={onConfirmCancel}
+              type="button"
+            >
+              중단 확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      <Card className="border-primary-container/15 p-5 shadow-2xl shadow-primary-container/10">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Pulling model</p>
+            <p className="mt-1 truncate font-bold text-slate-900">{action.message || action.model}</p>
+            {action.model && (
+              <p className="mt-1 truncate text-xs font-semibold text-slate-500">{action.model}</p>
+            )}
+          </div>
+          <span className="shrink-0 text-lg font-black text-primary-container">{progress}%</span>
+        </div>
+
+        <div className="mt-5 flex items-end gap-4">
+          <div className="relative h-24 w-20 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+            <div
+              className="absolute inset-x-0 bottom-0 bg-primary-container transition-[height] duration-500 ease-out"
+              style={{ height: `${progress}%` }}
+            />
+          </div>
+
+          <button
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-bold text-red-600 transition hover:border-red-200 hover:bg-red-100 active:scale-[0.98]"
+            onClick={onRequestCancel}
+            type="button"
+          >
+            <CircleStop className="h-4 w-4" />
+            중단
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+};
 
 // --- Pages ---
 
@@ -437,7 +558,7 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
         <div className="space-y-4 flex-1">
           {[
             { title: connection.desktop === 'connected' ? 'Desktop Bridge Verified' : 'Desktop Bridge Waiting', time: formatRelativeTime(connection.lastChecked), desc: 'MiVA Desktop Handshake', color: connection.desktop === 'connected' ? 'bg-green-500' : 'bg-amber-400' },
-            { title: connection.ollama?.running ? 'Ollama Running' : 'Ollama Not Running', time: formatRelativeTime(connection.lastChecked), desc: activeModel?.ollamaName || 'No active model', color: connection.ollama?.running ? 'bg-blue-500' : 'bg-slate-300' },
+            { title: connection.ollama?.running ? 'Ollama Running' : 'Ollama Not Running', time: formatRelativeTime(connection.lastChecked), desc: activeModel?.ollamaName || 'No active model', color: connection.ollama?.running ? 'bg-primary-container' : 'bg-slate-300' },
             { title: action.message || 'Web Console Ready', time: 'Now', desc: 'Local management UI', color: action.type === 'idle' ? 'bg-slate-300' : 'bg-primary-container' },
           ].map((event, i) => (
             <div key={i} className="flex gap-4">
@@ -593,7 +714,7 @@ const DevicesPage = ({ connection, actions }: { connection: ConnectionState; act
                   </td>
                   <td className="px-8 py-5 text-slate-600 text-sm">{row.temp}</td>
                   <td className="px-8 py-5">
-                    <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full uppercase tracking-wider">{row.status}</span>
+                    <span className="px-2.5 py-1 bg-secondary-container text-on-secondary-container text-[10px] font-bold rounded-full uppercase tracking-wider">{row.status}</span>
                   </td>
                 </tr>
               ))}
@@ -635,22 +756,14 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
       </button>
     </div>
 
-    {action.type !== 'idle' && action.message && (
+    {action.type !== 'idle' && action.type !== 'pulling-model' && action.message && (
       <Card className="p-5 border-primary-container/10">
         <div className="flex items-center justify-between gap-6">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400">{action.type.replace('-', ' ')}</p>
             <p className="font-bold text-slate-800 mt-1">{action.message}</p>
           </div>
-          {typeof action.progress === 'number' && (
-            <span className="text-sm font-black text-primary-container">{action.progress}%</span>
-          )}
         </div>
-        {typeof action.progress === 'number' && (
-          <div className="mt-4 h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-primary-container transition-all" style={{ width: `${action.progress}%` }}></div>
-          </div>
-        )}
       </Card>
     )}
 
@@ -764,7 +877,13 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
                  >
                    {installed ? 'Installed' : 'Download'}
                  </button>
-                 <button className="px-4 py-3 rounded-2xl border border-slate-100 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-transparent transition-all" title="Remove support will be added later">
+                 <button
+                   className="px-4 py-3 rounded-2xl border border-slate-100 text-slate-400 transition-all hover:border-transparent hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                   disabled={!installed || isBusy}
+                   onClick={() => actions.deleteModel(model.ollamaName)}
+                   title={installed ? 'Delete model' : 'Model is not installed'}
+                   type="button"
+                 >
                    <Trash2 className="w-5 h-5" />
                  </button>
                </div>
@@ -774,9 +893,11 @@ const ModelsPage = ({ connection, action, actions }: { connection: ConnectionSta
         </div>
       </div>
     </div>
-    <button className="fixed bottom-8 right-8 bg-primary-container text-white px-6 py-4 rounded-3xl shadow-2xl flex items-center gap-3 hover:scale-105 active:scale-95 transition-all z-50 font-bold opacity-70" title="Custom model support will be added later">
-      <Plus className="w-6 h-6" /> Add Custom Model
-    </button>
+    {action.type !== 'pulling-model' && (
+      <button className="fixed bottom-8 right-8 z-40 flex items-center gap-3 rounded-3xl bg-primary-container px-6 py-4 font-bold text-white opacity-70 shadow-2xl transition-all hover:scale-105 active:scale-95" title="Custom model support will be added later" type="button">
+        <Plus className="h-6 w-6" /> Add Custom Model
+      </button>
+    )}
   </motion.div>
   );
 };
@@ -1379,6 +1500,7 @@ const LoginPage = ({
   googleLoginPending,
   loginError,
   loginPending,
+  onBack,
   onGoogleCredential,
   onLogin,
 }: {
@@ -1387,9 +1509,13 @@ const LoginPage = ({
   googleLoginPending: boolean;
   loginError: string | null;
   loginPending: boolean;
+  onBack?: () => void;
   onGoogleCredential: (credential: string) => Promise<void>;
   onLogin: (email: string, password: string) => Promise<void>;
 }) => {
+  const { copy } = useLocale();
+  const login = copy.login;
+  const shell = copy.shell;
   const [email, setEmail] = useState('dev@miva.local');
   const [password, setPassword] = useState('miva1234');
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
@@ -1444,27 +1570,46 @@ const LoginPage = ({
     });
   }, [googleScriptReady, onGoogleCredential]);
 
+  const featureCards = [
+    [login.featureLocalTitle, login.featureLocalBody],
+    [login.featureAssistantsTitle, login.featureAssistantsBody],
+    [login.featureStudioTitle, login.featureStudioBody],
+  ] as const;
+
   return (
-    <main className="min-h-screen bg-surface-bg text-slate-900 grid place-items-center p-8">
+    <div className="min-h-screen bg-surface-bg text-slate-900">
+      <div className="sticky top-0 z-50 flex items-center justify-between border-b border-slate-100/80 bg-white/90 px-6 py-4 backdrop-blur-md">
+        {onBack ? (
+          <button
+            className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+            onClick={onBack}
+            type="button"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {copy.backToLanding}
+          </button>
+        ) : (
+          <div />
+        )}
+        <LanguageToggle />
+      </div>
+
+      <main className="grid place-items-center p-8">
       <section className="w-full max-w-[980px] grid gap-8 lg:grid-cols-[1fr_420px] items-center">
         <div>
           <div className="w-14 h-14 bg-primary-container rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary-container/30 mb-8">
             <span className="font-display text-3xl font-black leading-none">M</span>
           </div>
-          <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">MiVA</p>
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">{login.eyebrow}</p>
           <h1 className="mt-4 text-5xl font-black font-display tracking-tight text-slate-950 leading-tight">
-            Make your own AI Assistant.
+            {login.title}
           </h1>
           <p className="mt-5 text-lg leading-8 text-slate-500 max-w-xl">
-            MiVA helps non-technical users set up a private AI assistant on their own computer. Start with local models, add cloud providers when needed, and later connect voice, characters, tools, and Google Workspace.
+            {login.body}
           </p>
 
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            {[
-              ['Local-first setup', 'Install Ollama, choose a lightweight model, and test chat locally.'],
-              ['My Assistants', 'Save use case, answer style, provider, model, and future tool preferences.'],
-              ['Studio ready', 'Prepare prompts, TTS, 2D characters, integrations, and skills in one workspace.'],
-            ].map(([title, body]) => (
+            {featureCards.map(([title, body]) => (
               <div className="rounded-3xl border border-slate-100 bg-white/70 p-5 shadow-sm" key={title}>
                 <p className="text-sm font-black text-slate-900">{title}</p>
                 <p className="mt-2 text-xs leading-5 text-slate-500">{body}</p>
@@ -1475,21 +1620,21 @@ const LoginPage = ({
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
               className="rounded-2xl bg-primary-container px-7 py-4 text-sm font-black uppercase tracking-[0.12em] text-white shadow-xl shadow-primary-container/20 active:scale-[0.98]"
-              onClick={() => {
-                window.alert('MiVA desktop installer download will be connected after packaging.');
-              }}
+              onClick={openDesktopAppDownload}
               type="button"
             >
-              Download MiVA
+              {login.downloadMiVA}
             </button>
-            <Badge variant={cloud.status === 'connected' ? 'success' : 'warning'}>Cloud API {statusLabel(cloud.status)}</Badge>
+            <Badge variant={cloud.status === 'connected' ? 'success' : 'warning'}>
+              {login.cloudApi} {statusLabel(cloud.status, shell)}
+            </Badge>
           </div>
 
           {desktopLoginRequest && (
             <div className="mt-6 rounded-3xl border border-primary-container/20 bg-primary-container/5 p-5">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-container">Desktop Login</p>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-container">{login.desktopLogin}</p>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                After sign-in, this browser session will connect MiVA Desktop automatically.
+                {login.desktopLoginBody}
               </p>
               <p className="mt-3 font-mono text-xs font-bold text-slate-500">Code: {desktopLoginRequest.userCode || 'linked request'}</p>
             </div>
@@ -1497,17 +1642,17 @@ const LoginPage = ({
         </div>
 
         <Card className="p-8">
-          <h2 className="text-2xl font-bold font-display tracking-tight">Sign in to Console</h2>
+          <h2 className="text-2xl font-bold font-display tracking-tight">{login.signInTitle}</h2>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Continue with your Google account, or use a temporary development account while testing.
+            {login.signInBody}
           </p>
 
           <div className="mt-7 rounded-3xl border border-slate-100 bg-slate-50 p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-black text-slate-900">Continue with Google</p>
+                <p className="text-sm font-black text-slate-900">{login.continueGoogle}</p>
               </div>
-              {googleLoginPending && <Badge variant="warning">Signing in</Badge>}
+              {googleLoginPending && <Badge variant="warning">{login.signingIn}</Badge>}
             </div>
             <div className="mt-4 flex min-h-[44px] justify-center">
               {GOOGLE_CLIENT_ID ? (
@@ -1518,7 +1663,7 @@ const LoginPage = ({
                   disabled
                   type="button"
                 >
-                  Google OAuth not configured
+                  {login.googleNotConfigured}
                 </button>
               )}
             </div>
@@ -1532,7 +1677,7 @@ const LoginPage = ({
             }}
           >
             <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Email</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{login.email}</span>
               <input
                 className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-primary-container focus:ring-4 focus:ring-primary-container/10"
                 value={email}
@@ -1541,7 +1686,7 @@ const LoginPage = ({
             </label>
 
             <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Password</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{login.password}</span>
               <input
                 className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-primary-container focus:ring-4 focus:ring-primary-container/10"
                 type="password"
@@ -1559,7 +1704,7 @@ const LoginPage = ({
               disabled={loginPending}
               type="submit"
             >
-              {loginPending ? 'Signing in...' : 'Sign in'}
+              {loginPending ? login.signInPending : login.signIn}
             </button>
           </form>
 
@@ -1572,7 +1717,7 @@ const LoginPage = ({
               }}
               type="button"
             >
-              <span>User login</span>
+              <span>{login.userLogin}</span>
               <span className="font-mono font-bold">dev@miva.local / miva1234</span>
             </button>
             <button
@@ -1583,13 +1728,14 @@ const LoginPage = ({
               }}
               type="button"
             >
-              <span>Admin login</span>
+              <span>{login.adminLogin}</span>
               <span className="font-mono font-bold">admin@miva.local / admin1234</span>
             </button>
           </div>
         </Card>
       </section>
-    </main>
+      </main>
+    </div>
   );
 };
 
@@ -2036,9 +2182,13 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
 };
 
 export default function App() {
+  const { copy } = useLocale();
+  const shell = copy.shell;
+  const navItems = useMemo(() => buildNavItems(copy.nav), [copy.nav]);
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [auth, setAuth] = useState<AuthState>(() => loadAuthState());
   const [desktopLoginRequest] = useState(() => getDesktopLoginRequest());
+  const [showLogin, setShowLogin] = useState(() => Boolean(getDesktopLoginRequest()));
   const [workspaceConsentRequest] = useState(() => getWorkspaceConsentRequest());
   const [desktopLoginCompleted, setDesktopLoginCompleted] = useState(false);
   const [workspaceConsentCompleted, setWorkspaceConsentCompleted] = useState(false);
@@ -2049,13 +2199,15 @@ export default function App() {
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
+  const [showPullCancelConfirm, setShowPullCancelConfirm] = useState(false);
+  const pullAbortRef = useRef<AbortController | null>(null);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
   const visibleNavItems = useMemo(
     () => auth.role === 'admin'
-      ? NAV_ITEMS.filter((item) => item.id === 'admin')
-      : NAV_ITEMS.filter((item) => item.id !== 'admin'),
-    [auth.role]
+      ? navItems.filter((item) => item.id === 'admin')
+      : navItems.filter((item) => item.id !== 'admin'),
+    [auth.role, navItems]
   );
 
   useEffect(() => {
@@ -2337,14 +2489,74 @@ export default function App() {
     }
   };
 
+  const migrateAssistantsFromDeletedModel = async (deletedModel: string) => {
+    const affectedProfiles = cloud.profiles.filter(
+      (profile) => profile.provider === 'ollama' && profile.model === deletedModel,
+    );
+
+    if (affectedProfiles.length === 0) {
+      return { migrated: 0, route: null as { provider: ProviderId; model: string } | null };
+    }
+
+    const route = pickRandomCloudRoute(cloud.apiKeys);
+    let migrated = 0;
+
+    for (const profile of affectedProfiles) {
+      try {
+        await patchAssistantProfile(profile.id, {
+          provider: route.provider,
+          model: route.model,
+          localMode: 'hybrid',
+        });
+        migrated += 1;
+      } catch {
+        // Keep deleting the model even if one profile migration fails.
+      }
+    }
+
+    if (migrated > 0) {
+      await refreshCloud(auth.role);
+    }
+
+    return { migrated, route };
+  };
+
+  const cancelModelPull = async (model: string) => {
+    setShowPullCancelConfirm(false);
+    pullAbortRef.current?.abort();
+
+    try {
+      await fetch(`${LOCAL_HELPER_URL}/models/pull/cancel`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+    } catch {
+      // Client abort already stops the stream.
+    }
+
+    pullAbortRef.current = null;
+    setAction({
+      type: 'idle',
+      message: `${model} download cancelled.`,
+    });
+    await refreshConnection();
+  };
+
   const pullModel = async (model: string) => {
+    pullAbortRef.current?.abort();
+    const abortController = new AbortController();
+    pullAbortRef.current = abortController;
+    setShowPullCancelConfirm(false);
     setAction({ type: 'pulling-model', model, message: `Preparing ${model} download...`, progress: 0 });
+
     try {
       void recordUsageEvent('model_selected', model).catch(() => undefined);
       const response = await fetch(`${LOCAL_HELPER_URL}/models/pull`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -2386,10 +2598,58 @@ export default function App() {
       setAction({ type: 'pulling-model', model, message: `${model} download complete. Refreshing catalog...`, progress: 100 });
       await refreshConnection();
       await refreshCloud();
+      setAction({ type: 'idle' });
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setAction({
+          type: 'idle',
+          message: `${model} download cancelled.`,
+        });
+        return;
+      }
+
       setAction({
         type: 'idle',
         message: error instanceof Error ? error.message : `Failed to download ${model}.`,
+      });
+    } finally {
+      if (pullAbortRef.current === abortController) {
+        pullAbortRef.current = null;
+      }
+    }
+  };
+
+  const deleteModel = async (model: string) => {
+    if (action.type === 'pulling-model' && action.model === model) {
+      await cancelModelPull(model);
+    }
+
+    setAction({ type: 'refreshing', message: `Removing ${model}...` });
+
+    try {
+      const response = await fetch(`${LOCAL_HELPER_URL}/models/delete`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const migration = await migrateAssistantsFromDeletedModel(model);
+      await refreshConnection();
+
+      setAction({
+        type: 'idle',
+        message: migration.migrated > 0 && migration.route
+          ? `${model} removed. ${migration.migrated} assistant(s) switched to ${migration.route.provider}.`
+          : `${model} removed.`,
+      });
+    } catch (error) {
+      setAction({
+        type: 'idle',
+        message: error instanceof Error ? error.message : `Failed to remove ${model}.`,
       });
     }
   };
@@ -2449,12 +2709,13 @@ export default function App() {
     refreshConnection,
     startOllama,
     pullModel,
+    deleteModel,
   };
 
   const topStatus = useMemo(() => {
     if (connection.desktop === 'connected' || connection.helper === 'connected' || cloud.status === 'connected') {
       return {
-        label: 'Connected',
+        label: shell.connected,
         dot: 'bg-green-500 status-glow',
         text: 'text-green-700',
         bg: 'bg-green-50',
@@ -2463,7 +2724,7 @@ export default function App() {
 
     if (connection.desktop === 'checking' || connection.helper === 'checking' || cloud.status === 'checking') {
       return {
-        label: 'Checking',
+        label: shell.checking,
         dot: 'bg-amber-400',
         text: 'text-amber-700',
         bg: 'bg-amber-50',
@@ -2471,12 +2732,12 @@ export default function App() {
     }
 
     return {
-      label: 'Offline',
+      label: shell.offline,
       dot: 'bg-red-500',
       text: 'text-red-700',
       bg: 'bg-red-50',
     };
-  }, [connection.desktop, connection.helper, cloud.status]);
+  }, [connection.desktop, connection.helper, cloud.status, shell]);
 
   const renderPage = () => {
     if (auth.role === 'admin') {
@@ -2513,6 +2774,12 @@ export default function App() {
   };
 
   if (auth.role === 'guest') {
+    if (!showLogin) {
+      return (
+        <LandingPage onGetStarted={() => setShowLogin(true)} />
+      );
+    }
+
     return (
       <LoginPage
         cloud={cloud}
@@ -2520,6 +2787,7 @@ export default function App() {
         googleLoginPending={googleLoginPending}
         loginError={loginError}
         loginPending={loginPending}
+        onBack={desktopLoginRequest ? undefined : () => setShowLogin(false)}
         onGoogleCredential={handleGoogleCredential}
         onLogin={handleLogin}
       />
@@ -2536,8 +2804,8 @@ export default function App() {
               <span className="font-display text-xl font-black leading-none">M</span>
             </div>
             <div>
-              <h1 className="text-xl font-bold font-display tracking-tight text-slate-900">MiVA AI</h1>
-              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-tight">Local Management</p>
+              <h1 className="text-xl font-bold font-display tracking-tight text-slate-900">{shell.brandTitle}</h1>
+              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-tight">{shell.brandSubtitle}</p>
             </div>
           </div>
 
@@ -2578,7 +2846,7 @@ export default function App() {
               onClick={handleLogout}
               type="button"
             >
-              Logout
+              {shell.logout}
             </button>
           </div>
         </div>
@@ -2588,14 +2856,22 @@ export default function App() {
       <div className="flex-1 ml-[280px] flex flex-col">
         {/* Top Header */}
         <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-50 h-20 flex items-center justify-between px-10">
-          <div className="flex-1 max-w-md">
-            <div className="relative">
+          <div className="flex flex-1 items-center gap-3 max-w-2xl">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
-                placeholder="Search resources or models..." 
+                placeholder={shell.searchPlaceholder}
                 className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-primary-container focus:bg-white transition-all shadow-inner"
               />
             </div>
+            <button
+              className="inline-flex shrink-0 items-center gap-2 rounded-2xl bg-primary-container px-4 py-3 text-xs font-black uppercase tracking-[0.08em] text-white shadow-lg shadow-primary-container/20 transition-all hover:brightness-105 active:scale-[0.98]"
+              onClick={openDesktopAppDownload}
+              type="button"
+            >
+              <Download className="h-4 w-4" />
+              <span className="whitespace-nowrap">{shell.downloadDesktop}</span>
+            </button>
           </div>
 
           <div className="flex items-center gap-8">
@@ -2608,7 +2884,7 @@ export default function App() {
                 type="button"
                 title="Temporary development login as user."
               >
-                Dev User
+                {shell.devUser}
               </button>
               <button
                 className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] transition active:scale-[0.98] ${
@@ -2618,7 +2894,7 @@ export default function App() {
                 type="button"
                 title="Temporary development login as admin."
               >
-                Dev Admin
+                {shell.devAdmin}
               </button>
             </div>
             <div className={`flex items-center gap-2.5 px-4 py-2 rounded-full ${topStatus.bg}`}>
@@ -2626,7 +2902,7 @@ export default function App() {
               <span className={`text-xs font-bold tracking-tight ${topStatus.text}`}>{topStatus.label}</span>
             </div>
             <div className="flex items-center gap-4 text-slate-400 border-l border-slate-100 pl-8">
-              <button className="hover:text-slate-900 transition-colors"><Languages className="w-5 h-5" /></button>
+              <LanguageToggle />
               <button className="hover:text-slate-900 transition-colors relative">
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
@@ -2650,6 +2926,18 @@ export default function App() {
           </AnimatePresence>
         </main>
       </div>
+
+      <ModelDownloadFloatingCard
+        action={action}
+        showCancelConfirm={showPullCancelConfirm}
+        onConfirmCancel={() => {
+          if (action.model) {
+            void cancelModelPull(action.model);
+          }
+        }}
+        onDismissCancelConfirm={() => setShowPullCancelConfirm(false)}
+        onRequestCancel={() => setShowPullCancelConfirm(true)}
+      />
     </div>
   );
 }

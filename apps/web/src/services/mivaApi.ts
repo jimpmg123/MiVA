@@ -332,6 +332,16 @@ export async function deleteAssistantProfile(profileId: string) {
   });
 }
 
+export async function patchAssistantProfile(profileId: string, patch: Partial<AssistantProfile>) {
+  return fetchJson<{ profile: AssistantProfile }>(`${CLOUD_API_URL}/assistant-profiles/${encodeURIComponent(profileId)}`, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function getAdminStats() {
   return fetchJson<AdminStats>(`${CLOUD_API_URL}/admin/stats`);
 }
