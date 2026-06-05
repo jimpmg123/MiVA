@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node src/server.mjs",
-    "check": "node --check src/server.mjs && node --check src/routes/chat.mjs && node --check src/routes/daiso.mjs && node --check src/routes/voice.mjs && node --check src/services/daiso.mjs && node --check src/services/workspace.mjs && node --check src/services/voice-worker.mjs && node --check src/prompt.mjs"
+    "check": "node --check src/server.mjs && node --check src/routes/chat.mjs && node --check src/routes/daiso.mjs && node --check src/routes/documents.mjs && node --check src/routes/voice.mjs && node --check src/services/daiso.mjs && node --check src/services/workspace.mjs && node --check src/services/voice-worker.mjs && node --check src/prompt.mjs"
   },
   "dependencies": {
     "daiso": "^1.0.9"

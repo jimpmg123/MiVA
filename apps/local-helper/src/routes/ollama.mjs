@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { modelCatalog } from "../config.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import {
+  deleteModel,
   detectWinget,
   getAllowedModelNames,
   getFullModelState,
@@ -12,6 +13,8 @@ import {
   ollamaFetch,
   startOllama
 } from "../services/ollama.mjs";
+
+let activeModelPull = null;
 
 export function sendOllamaUnavailable(res, origin, status) {
   sendJson(res, 503, {
@@ -35,6 +38,74 @@ export async function handleModels(req, res, origin) {
     ollama: state.status,
     models: state.installedModels,
     catalog: state.catalog
+  }, origin);
+}
+
+async function cleanupCancelledModel(model) {
+  const deleteResult = await deleteModel(model);
+  return {
+    deleted: deleteResult.ok,
+    attempted: true,
+    error: deleteResult.error
+  };
+}
+
+function clearActiveModelPull(model) {
+  if (activeModelPull?.model === model) {
+    activeModelPull = null;
+  }
+}
+
+export async function handleModelDelete(req, res, origin) {
+  const { model } = await readJson(req);
+  if (!isAllowedModel(model)) {
+    sendJson(res, 400, {
+      error: "MODEL_NOT_ALLOWED",
+      allowedModels: getAllowedModelNames()
+    }, origin);
+    return;
+  }
+
+  if (activeModelPull?.model === model) {
+    activeModelPull.abortController.abort();
+    activeModelPull = null;
+  }
+
+  const status = await getOllamaStatus();
+  if (!status.running) {
+    sendOllamaUnavailable(res, origin, status);
+    return;
+  }
+
+  const deleteResult = await deleteModel(model);
+  sendJson(res, deleteResult.ok ? 200 : 502, {
+    ok: deleteResult.ok,
+    model,
+    error: deleteResult.error,
+    status: deleteResult.status
+  }, origin);
+}
+
+export async function handleModelPullCancel(req, res, origin) {
+  const { model } = await readJson(req);
+  if (!isAllowedModel(model)) {
+    sendJson(res, 400, {
+      error: "MODEL_NOT_ALLOWED",
+      allowedModels: getAllowedModelNames()
+    }, origin);
+    return;
+  }
+
+  if (activeModelPull?.model === model) {
+    activeModelPull.abortController.abort();
+    activeModelPull = null;
+  }
+
+  const cleanup = await cleanupCancelledModel(model);
+  sendJson(res, 200, {
+    cancelled: true,
+    model,
+    cleanup
   }, origin);
 }
 
@@ -68,33 +139,83 @@ export async function handleModelPull(req, res, origin) {
     return;
   }
 
-  const response = await ollamaFetch("/api/pull", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      name: model,
-      stream: true
-    }),
-    signal: AbortSignal.timeout(1000 * 60 * 60)
+  const abortController = new AbortController();
+  activeModelPull = {
+    model,
+    abortController
+  };
+
+  let clientClosed = false;
+  req.on("close", () => {
+    clientClosed = true;
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+    clearActiveModelPull(model);
+    void cleanupCancelledModel(model);
   });
 
   writeCorsHeaders(res, origin);
-  res.writeHead(response.ok ? 200 : 502, {
+  res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
     "cache-control": "no-cache"
   });
 
-  if (!response.body) {
-    res.end(JSON.stringify({ error: "NO_STREAM" }) + "\n");
-    return;
-  }
+  try {
+    const response = await ollamaFetch("/api/pull", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        name: model,
+        stream: true
+      }),
+      signal: abortController.signal
+    });
 
-  for await (const chunk of response.body) {
-    res.write(chunk);
+    if (!response.ok) {
+      res.write(JSON.stringify({
+        error: "OLLAMA_PULL_FAILED",
+        status: response.status
+      }) + "\n");
+      res.end();
+      return;
+    }
+
+    if (!response.body) {
+      res.write(JSON.stringify({ error: "NO_STREAM" }) + "\n");
+      res.end();
+      return;
+    }
+
+    for await (const chunk of response.body) {
+      if (clientClosed || abortController.signal.aborted) {
+        break;
+      }
+      res.write(chunk);
+    }
+
+    if (abortController.signal.aborted) {
+      await cleanupCancelledModel(model);
+    }
+  } catch (error) {
+    if (!clientClosed && !res.writableEnded) {
+      res.write(JSON.stringify({
+        status: "error",
+        message: error.message
+      }) + "\n");
+    }
+
+    if (abortController.signal.aborted) {
+      await cleanupCancelledModel(model);
+    }
+  } finally {
+    clearActiveModelPull(model);
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
-  res.end();
 }
 
 export async function handleOllamaStart(req, res, origin) {

@@ -25,3 +25,32 @@ export async function getOpenAiAnswer({ model, messages, apiKey }) {
 
   return answer.trim();
 }
+
+export async function streamOpenAiAnswer({ res, origin, model, messages, apiKey }) {
+  const { beginNdjsonStream, pipeOpenAiCompatibleSse, writeStreamDone, writeStreamError } = await import("../utils/chat-stream.mjs");
+  beginNdjsonStream(res, origin);
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.4,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(1000 * 60 * 10),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    writeStreamError(res, data?.error?.message || `OpenAI returned HTTP ${response.status}`);
+    writeStreamDone(res);
+    return;
+  }
+
+  await pipeOpenAiCompatibleSse(response, res);
+}

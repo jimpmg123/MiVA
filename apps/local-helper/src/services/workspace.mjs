@@ -91,6 +91,27 @@ function requestedServices(prompt, settings) {
 
 function promptRequestsWrite(prompt) {
   const lowerPrompt = String(prompt || "").toLowerCase();
+  const asksForActionStatus = [
+    "is it done",
+    "was it added",
+    "was it created",
+    "did you add",
+    "did you create",
+    "completed?",
+    "finished?",
+    "\uc644\ub8cc\ub410",
+    "\uc644\ub8cc\ud588",
+    "\ucd94\uac00\ub410",
+    "\uc0dd\uc131\ub410",
+    "\ub4f1\ub85d\ub410",
+    "\ud588\uc5b4?",
+    "\ub410\uc5b4?",
+    "\ub05d\ub0ac",
+  ].some((marker) => lowerPrompt.includes(marker));
+  if (asksForActionStatus) {
+    return false;
+  }
+
   return [
     "create",
     "add",
@@ -141,6 +162,49 @@ function buildWorkspaceWriteConfirmationMessage({ prompt, locale }) {
     affectedResources: [serviceLabel],
     locale,
   }));
+}
+
+function directWorkspaceAnswer(answer) {
+  return {
+    type: "direct-answer",
+    answer,
+  };
+}
+
+function buildWorkspaceActionCompletedMessage(result, locale) {
+  const action = String(result?.action || "");
+  const eventSummary = String(result?.event?.summary || "").trim();
+  const documentTitle = String(result?.document?.title || "").trim();
+
+  if (locale === "en") {
+    if (action === "calendar.create") {
+      return `Added${eventSummary ? ` "${eventSummary}"` : " the event"} to Google Calendar.`;
+    }
+    if (action === "calendar.update") {
+      return `Updated${eventSummary ? ` "${eventSummary}"` : " the event"} in Google Calendar.`;
+    }
+    if (action === "calendar.delete") {
+      return "Deleted the event from Google Calendar.";
+    }
+    if (action === "docs.append") {
+      return `Added the requested content to${documentTitle ? ` "${documentTitle}"` : " the Google Doc"}.`;
+    }
+    return "The Google Workspace action was completed.";
+  }
+
+  if (action === "calendar.create") {
+    return `Google Calendar\uc5d0 ${eventSummary ? `"${eventSummary}" ` : ""}\uc77c\uc815\uc744 \ucd94\uac00\ud588\uc2b5\ub2c8\ub2e4.`;
+  }
+  if (action === "calendar.update") {
+    return `Google Calendar\uc758 ${eventSummary ? `"${eventSummary}" ` : ""}\uc77c\uc815\uc744 \uc218\uc815\ud588\uc2b5\ub2c8\ub2e4.`;
+  }
+  if (action === "calendar.delete") {
+    return "Google Calendar\uc5d0\uc11c \uc77c\uc815\uc744 \uc0ad\uc81c\ud588\uc2b5\ub2c8\ub2e4.";
+  }
+  if (action === "docs.append") {
+    return `${documentTitle ? `"${documentTitle}"` : "Google Docs \ubb38\uc11c"}\uc5d0 \uc694\uccad\ud55c \ub0b4\uc6a9\uc744 \ucd94\uac00\ud588\uc2b5\ub2c8\ub2e4.`;
+  }
+  return "Google Workspace \uc791\uc5c5\uc744 \uc644\ub8cc\ud588\uc2b5\ub2c8\ub2e4.";
 }
 
 function buildWorkspacePlannerPrompt({ prompt, locale, workspaceContext = "" }) {
@@ -325,11 +389,11 @@ export async function buildWorkspaceActionContext({ prompt, profile, authToken, 
   }
 
   if (!hasExplicitActionConfirmation(prompt)) {
-    return buildWorkspaceWriteConfirmationMessage({ prompt, locale });
+    return directWorkspaceAnswer(buildWorkspaceWriteConfirmationMessage({ prompt, locale }));
   }
 
   if (!authToken) {
-    return "Google Workspace write action was requested, but this desktop session is not signed in. Ask the user to sign in and connect Google Workspace permissions.";
+    return directWorkspaceAnswer("Google Workspace write action was requested, but this desktop session is not signed in. Sign in and connect Google Workspace permissions, then retry.");
   }
 
   if (!apiKey) {
@@ -344,7 +408,7 @@ export async function buildWorkspaceActionContext({ prompt, profile, authToken, 
     }
 
     if (!["calendar.create", "calendar.update", "calendar.delete", "docs.append"].includes(action)) {
-      return `Google Workspace write action was requested, but the planned action is unsupported: ${action}.`;
+      return directWorkspaceAnswer(`Google Workspace write action was requested, but the planned action is unsupported: ${action}.`);
     }
 
     const result = await runCloudWorkspaceAction({
@@ -354,16 +418,12 @@ export async function buildWorkspaceActionContext({ prompt, profile, authToken, 
     });
 
     if (result?.ok === false || result?.status === "NEEDS_AUTH") {
-      return "Google Workspace write action needs Google consent. Ask the user to connect Google Workspace permissions in the browser, then retry.";
+      return directWorkspaceAnswer("Google Workspace write action needs Google consent. Connect Google Workspace permissions in the browser, then retry.");
     }
 
-    return [
-      "Google Workspace write action result:",
-      JSON.stringify(result, null, 2),
-      "This result is authoritative. If ok=true, tell the user that MiVA completed the action. Do not say you lack Calendar or Docs access when this action result is present.",
-    ].join("\n");
+    return directWorkspaceAnswer(buildWorkspaceActionCompletedMessage(result, locale));
   } catch (error) {
-    return `Google Workspace write action failed: ${String(error?.message || error)}\nDo not claim the action was completed.`;
+    return directWorkspaceAnswer(`Google Workspace write action failed: ${String(error?.message || error)}`);
   }
 }
 

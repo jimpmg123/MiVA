@@ -25,3 +25,32 @@ export async function getGroqAnswer({ model, messages, apiKey }) {
 
   return answer.trim();
 }
+
+export async function streamGroqAnswer({ res, origin, model, messages, apiKey }) {
+  const { beginNdjsonStream, pipeOpenAiCompatibleSse, writeStreamDone, writeStreamError } = await import("../utils/chat-stream.mjs");
+  beginNdjsonStream(res, origin);
+
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.4,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(1000 * 60 * 10),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    writeStreamError(res, data?.error?.message || `Groq returned HTTP ${response.status}`);
+    writeStreamDone(res);
+    return;
+  }
+
+  await pipeOpenAiCompatibleSse(response, res);
+}

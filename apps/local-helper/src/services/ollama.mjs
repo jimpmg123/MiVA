@@ -191,6 +191,31 @@ export function getAllowedModelNames() {
   return Array.from(allowedModels);
 }
 
+export async function deleteModel(modelName) {
+  try {
+    const response = await ollamaFetch("/api/delete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        name: modelName
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    return {
+      ok: response.ok,
+      status: response.status
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
 export async function getOllamaAnswer(model, messages) {
   const response = await ollamaFetch("/api/chat", {
     method: "POST",

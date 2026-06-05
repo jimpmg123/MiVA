@@ -48,8 +48,11 @@ export const allowedModels = new Set(modelCatalog.map((model) => model.ollamaNam
 export const allowedOrigins = new Set([
   "http://localhost:1420",
   "http://127.0.0.1:1420",
+  "http://localhost:1421",
+  "http://127.0.0.1:1421",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "tauri://localhost",
   `http://localhost:${HELPER_PORT}`,
   `http://127.0.0.1:${HELPER_PORT}`
 ]);

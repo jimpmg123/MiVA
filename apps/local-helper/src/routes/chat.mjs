@@ -1,7 +1,8 @@
+import { GEMINI_DEFAULT_MODEL } from "../config.mjs";
 import { allowedProviderIds, getProviderDefaultModel, isProviderAllowed } from "../extensions/providers.mjs";
 import { buildSystemPrompt, getLastUserMessage, normalizeChatMessages } from "../prompt.mjs";
-import { getGeminiAnswerWithFallback } from "../services/gemini.mjs";
-import { getGroqAnswer } from "../services/groq.mjs";
+import { getGeminiAnswerWithFallback, streamGeminiAnswerWithFallback } from "../services/gemini.mjs";
+import { getGroqAnswer, streamGroqAnswer } from "../services/groq.mjs";
 import {
   getAllowedModelNames,
   getInstalledModels,
@@ -11,8 +12,8 @@ import {
   isModelInstalled,
   ollamaFetch
 } from "../services/ollama.mjs";
-import { getOpenAiAnswer } from "../services/openai.mjs";
-import { isActionConfirmationMessage } from "../services/action-confirmation.mjs";
+import { getOpenAiAnswer, streamOpenAiAnswer } from "../services/openai.mjs";
+import { hasExplicitActionConfirmation } from "../services/action-confirmation.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
 import { buildWorkspaceActionContext, buildWorkspaceContext } from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
@@ -57,13 +58,33 @@ async function sendOllamaStream(res, origin, model, messages) {
   res.end();
 }
 
+function normalizeImageAttachments(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((attachment) => ({
+      name: typeof attachment?.name === "string" ? attachment.name : "image",
+      mimeType: typeof attachment?.mimeType === "string" ? attachment.mimeType : "",
+      data: typeof attachment?.data === "string" ? attachment.data.trim() : "",
+    }))
+    .filter((attachment) => attachment.mimeType.startsWith("image/") && attachment.data.length > 0);
+}
+
 export async function handleChat(req, res, origin) {
   const body = await readJson(req);
-  const provider = typeof body.provider === "string" ? body.provider : "ollama";
-  const model =
+  const imageAttachments = normalizeImageAttachments(body.imageAttachments);
+  let provider = typeof body.provider === "string" ? body.provider : "ollama";
+  let model =
     typeof body.model === "string" && body.model.trim()
       ? body.model.trim()
       : getProviderDefaultModel(provider);
+
+  if (imageAttachments.length > 0) {
+    provider = "gemini";
+    model = GEMINI_DEFAULT_MODEL;
+  }
   const locale = body.locale === "en" ? "en" : "ko";
 
   if (!isProviderAllowed(provider)) {
@@ -76,7 +97,8 @@ export async function handleChat(req, res, origin) {
 
   const systemPrompt = buildSystemPrompt({ locale, provider, model, profile: body.profile });
   const messages = normalizeChatMessages(body, systemPrompt);
-  if (!getLastUserMessage(messages)) {
+  const lastUserMessage = getLastUserMessage(messages);
+  if (!lastUserMessage) {
     sendJson(res, 400, {
       error: "MESSAGES_REQUIRED"
     }, origin);
@@ -89,6 +111,10 @@ export async function handleChat(req, res, origin) {
       .map((message) => message.content),
     typeof body.prompt === "string" ? body.prompt : "",
   ].join("\n\n");
+  const latestUserPrompt = String(lastUserMessage.content || "").trim();
+  const workspaceActionPrompt = hasExplicitActionConfirmation(latestUserPrompt)
+    ? workspacePrompt
+    : latestUserPrompt;
 
   const apiKey = provider === "ollama" ? "" : getProviderApiKey(provider, body.apiKey);
   if (provider !== "ollama" && !apiKey) {
@@ -102,7 +128,7 @@ export async function handleChat(req, res, origin) {
     authToken: typeof body.authToken === "string" ? body.authToken : "",
   });
   const workspaceActionContext = await buildWorkspaceActionContext({
-    prompt: workspacePrompt,
+    prompt: workspaceActionPrompt,
     profile: body.profile,
     authToken: typeof body.authToken === "string" ? body.authToken : "",
     provider,
@@ -111,22 +137,12 @@ export async function handleChat(req, res, origin) {
     locale,
     workspaceContext,
   });
-  if (
-    typeof workspaceActionContext === "string" &&
-    (
-      workspaceActionContext.includes("needs Google consent") ||
-      workspaceActionContext.includes("not signed in") ||
-      workspaceActionContext.includes("write action failed") ||
-      workspaceActionContext.includes("draft-only schedule mode") ||
-      workspaceActionContext.includes("needs user confirmation") ||
-      isActionConfirmationMessage(workspaceActionContext)
-    )
-  ) {
+  if (workspaceActionContext?.type === "direct-answer") {
     sendJson(res, 200, {
       ok: true,
       provider,
       model,
-      answer: workspaceActionContext
+      answer: workspaceActionContext.answer
     }, origin);
     return;
   }
@@ -150,19 +166,22 @@ export async function handleChat(req, res, origin) {
       ].join("\n")
     });
   }
+  if (imageAttachments.length > 0) {
+    messages.splice(1, 0, {
+      role: "system",
+      content: [
+        "The user attached one or more images to this request.",
+        "MiVA sends attached images to Gemini 2.5 for vision analysis.",
+        "Describe what you see accurately and answer the user's latest message.",
+      ].join("\n"),
+    });
+  }
   if (workspaceContext) {
     messages.splice(1, 0, {
       role: "system",
       content: workspaceContext,
     });
   }
-  if (workspaceActionContext) {
-    messages.splice(1, 0, {
-      role: "system",
-      content: workspaceActionContext,
-    });
-  }
-
   if (provider === "ollama") {
     if (!isAllowedModel(model)) {
       sendJson(res, 400, {
@@ -207,12 +226,41 @@ export async function handleChat(req, res, origin) {
   let responseModel = model;
   let fallback = null;
 
+  if (body.stream === true) {
+    if (provider === "openai") {
+      await streamOpenAiAnswer({ res, origin, model, messages, apiKey });
+      return;
+    }
+
+    if (provider === "groq") {
+      await streamGroqAnswer({ res, origin, model, messages, apiKey });
+      return;
+    }
+
+    await streamGeminiAnswerWithFallback({
+      res,
+      origin,
+      model,
+      messages,
+      systemPrompt,
+      apiKey,
+      imageAttachments,
+    });
+    return;
+  }
+
   if (provider === "openai") {
     answer = await getOpenAiAnswer({ model, messages, apiKey });
   } else if (provider === "groq") {
     answer = await getGroqAnswer({ model, messages, apiKey });
   } else {
-    const geminiResult = await getGeminiAnswerWithFallback({ model, messages, systemPrompt, apiKey });
+    const geminiResult = await getGeminiAnswerWithFallback({
+      model,
+      messages,
+      systemPrompt,
+      apiKey,
+      imageAttachments,
+    });
     answer = geminiResult.answer;
     responseModel = geminiResult.model;
 

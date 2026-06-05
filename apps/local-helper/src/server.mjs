@@ -3,9 +3,12 @@ import { HELPER_PORT, OLLAMA_BASE_URL } from "./config.mjs";
 import { getOllamaStatus } from "./services/ollama.mjs";
 import { handleChat } from "./routes/chat.mjs";
 import { handleDaisoRun, handleDaisoStatus } from "./routes/daiso.mjs";
+import { handleDocumentAnalyze } from "./routes/documents.mjs";
 import {
   handleCatalog,
+  handleModelDelete,
   handleModelPull,
+  handleModelPullCancel,
   handleModels,
   handleOllamaInstall,
   handleOllamaStart
@@ -86,6 +89,21 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/voice/tts") {
       await handleVoiceTts(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/documents/analyze") {
+      await handleDocumentAnalyze(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/models/delete") {
+      await handleModelDelete(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/models/pull/cancel") {
+      await handleModelPullCancel(req, res, origin);
       return;
     }
 
