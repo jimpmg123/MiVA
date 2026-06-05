@@ -243,6 +243,70 @@ export async function installKokoroDependencies() {
   );
 }
 
+export async function installDocumentDependencies() {
+  let status = null;
+  try {
+    const startResult = await startVoiceWorker();
+    status = startResult.status;
+  } catch {
+    status = await getVoiceWorkerStatus();
+  }
+
+  const packages = ["pandas", "openpyxl", "xlrd", "PyMuPDF"];
+  const candidates = status?.python?.executable
+    ? [{ command: status.python.executable, argsPrefix: [] }]
+    : pythonCandidates();
+
+  let lastResult = null;
+  for (const candidate of candidates) {
+    const args = [...candidate.argsPrefix, "-m", "pip", "install", ...packages];
+    try {
+      const result = await runProcess(candidate.command, args);
+      lastResult = result;
+      if (result.ok) {
+        return {
+          ok: true,
+          message: "Document parsing dependencies installed for the active Python runtime.",
+          packages,
+          command: candidate.command,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      }
+    } catch (error) {
+      lastResult = {
+        ok: false,
+        command: candidate.command,
+        args,
+        stderr: String(error?.message || error),
+      };
+    }
+  }
+
+  throw new Error(
+    `Unable to install document parsing dependencies. ${
+      lastResult?.stderr || lastResult?.stdout || "No Python command worked."
+    }`
+  );
+}
+
+export async function analyzeDocument(payload) {
+  await startVoiceWorker();
+  let response = await postJson(`${VOICE_WORKER_BASE_URL}/documents/analyze`, payload, 180000);
+
+  if (response.data?.error === "DOCUMENT_DEPENDENCIES_MISSING") {
+    await installDocumentDependencies();
+    response = await postJson(`${VOICE_WORKER_BASE_URL}/documents/analyze`, payload, 180000);
+  }
+
+  if (!response.ok || !response.data?.ok) {
+    const message = response.data?.message || response.data?.error || `Python worker returned HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return response.data;
+}
+
 export async function synthesizeVoice(payload) {
   await startVoiceWorker();
   const response = await postJson(`${VOICE_WORKER_BASE_URL}/voice/tts`, payload);

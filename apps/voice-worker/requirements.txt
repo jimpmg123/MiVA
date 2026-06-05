@@ -4,3 +4,7 @@ soundfile
 pyopenjtalk
 misaki[ja]
 fugashi[unidic-lite]
+pandas
+openpyxl
+xlrd
+PyMuPDF

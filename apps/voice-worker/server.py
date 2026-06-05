@@ -5,18 +5,26 @@ import base64
 import importlib.util
 import io
 import json
+import os
 import platform
 import shutil
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 43120
 MAX_TTS_TEXT_CHARS = 4000
+MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+MAX_DOCUMENT_CONTEXT_CHARS = 24000
+MAX_PDF_PAGES = 100
+MAX_EXCEL_SHEETS = 20
+MAX_EXCEL_ROWS_PER_SHEET = 250
+MAX_EXCEL_COLUMNS = 40
 KOKORO_SAMPLE_RATE = 24000
 DEFAULT_KOKORO_VOICE = "af_heart"
 KOKORO_VOICES = [
@@ -94,6 +102,14 @@ def kokoro_japanese_ready() -> bool:
     return package_available("pyopenjtalk") and package_available("misaki")
 
 
+def document_dependencies_ready() -> bool:
+    return (
+        package_available("pandas")
+        and package_available("openpyxl")
+        and package_available("fitz")
+    )
+
+
 def kokoro_setup_message() -> str:
     return (
         "Kokoro TTS is not installed for this Python runtime. "
@@ -113,6 +129,11 @@ def worker_status() -> dict[str, Any]:
     jaconv_installed = package_available("jaconv")
     espeak_available = shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
     tts_installed = kokoro_installed and soundfile_installed and numpy_installed
+    pandas_installed = package_available("pandas")
+    openpyxl_installed = package_available("openpyxl")
+    xlrd_installed = package_available("xlrd")
+    pymupdf_installed = package_available("fitz")
+    documents_installed = pandas_installed and openpyxl_installed and pymupdf_installed
 
     return {
         "ok": True,
@@ -153,14 +174,27 @@ def worker_status() -> dict[str, Any]:
                 "activeProvider": None,
                 "availableProviders": ["qwen2.5-omni"],
             },
+            "documents": {
+                "installed": documents_installed,
+                "activeProvider": "python" if documents_installed else None,
+                "availableFormats": ["pdf", "xlsx", "xls", "csv"],
+                "dependencies": {
+                    "pandas": pandas_installed,
+                    "openpyxl": openpyxl_installed,
+                    "xlrd": xlrd_installed,
+                    "pymupdf": pymupdf_installed,
+                },
+            },
         },
         "capabilities": {
             "transcribe": False,
             "synthesize": tts_installed,
             "lipSync": False,
+            "analyzeDocuments": documents_installed,
         },
         "setup": {
             "kokoro": "python -m pip install \"kokoro>=0.9.4\" soundfile numpy pyopenjtalk \"misaki[ja]\" \"fugashi[unidic-lite]\"",
+            "documents": "python -m pip install pandas openpyxl xlrd PyMuPDF",
             "note": "Kokoro models are optional and are only needed when local TTS is enabled.",
         },
     }
@@ -195,6 +229,162 @@ def normalize_kokoro_language(value: str | None) -> str:
     }
     normalized = aliases.get(normalized, normalized)
     return normalized if normalized in {"a", "b", "e", "f", "h", "i", "j", "p", "z"} else "a"
+
+
+def truncate_document_context(value: str) -> tuple[str, bool]:
+    normalized = value.replace("\x00", "").strip()
+    if len(normalized) <= MAX_DOCUMENT_CONTEXT_CHARS:
+        return normalized, False
+    return normalized[:MAX_DOCUMENT_CONTEXT_CHARS].rstrip() + "\n\n[Document context truncated by MiVA.]", True
+
+
+def analyze_pdf(path: Path) -> dict[str, Any]:
+    import fitz
+
+    document = fitz.open(path)
+    page_count = len(document)
+    page_sections: list[str] = []
+    extracted_pages = min(page_count, MAX_PDF_PAGES)
+
+    for page_index in range(extracted_pages):
+        text = document.load_page(page_index).get_text("text").strip()
+        if text:
+            page_sections.append(f"--- Page {page_index + 1} ---\n{text}")
+
+    context, truncated = truncate_document_context("\n\n".join(page_sections))
+    if not context:
+        return {
+            "ok": False,
+            "error": "PDF_TEXT_NOT_FOUND",
+            "message": "No selectable text was found. This PDF may be scanned and require OCR.",
+        }
+
+    return {
+        "ok": True,
+        "kind": "pdf",
+        "context": context,
+        "truncated": truncated or page_count > extracted_pages,
+        "metadata": {
+            "pageCount": page_count,
+            "extractedPages": extracted_pages,
+            "textChars": len(context),
+        },
+    }
+
+
+def dataframe_to_context(sheet_name: str, dataframe: Any) -> str:
+    limited = dataframe.iloc[:MAX_EXCEL_ROWS_PER_SHEET, :MAX_EXCEL_COLUMNS].copy()
+    limited = limited.where(limited.notna(), "")
+    columns = [str(column) for column in limited.columns]
+    lines = [
+        f"--- Sheet: {sheet_name} ---",
+        f"Columns: {', '.join(columns)}",
+        limited.to_csv(index=False).strip(),
+    ]
+    if len(dataframe.index) > len(limited.index):
+        lines.append(f"[Only the first {len(limited.index)} of {len(dataframe.index)} rows are included.]")
+    if len(dataframe.columns) > len(limited.columns):
+        lines.append(f"[Only the first {len(limited.columns)} of {len(dataframe.columns)} columns are included.]")
+    return "\n".join(line for line in lines if line)
+
+
+def analyze_spreadsheet(path: Path, extension: str) -> dict[str, Any]:
+    import pandas as pd
+
+    if extension == ".csv":
+        dataframe = pd.read_csv(path, nrows=MAX_EXCEL_ROWS_PER_SHEET)
+        sheet_names = ["CSV"]
+        sections = [dataframe_to_context("CSV", dataframe)]
+        sheet_metadata = [{
+            "name": "CSV",
+            "rows": len(dataframe.index),
+            "columns": len(dataframe.columns),
+        }]
+    else:
+        workbook = pd.ExcelFile(path)
+        sheet_names = workbook.sheet_names[:MAX_EXCEL_SHEETS]
+        sections = []
+        sheet_metadata = []
+        for sheet_name in sheet_names:
+            dataframe = pd.read_excel(
+                workbook,
+                sheet_name=sheet_name,
+                nrows=MAX_EXCEL_ROWS_PER_SHEET,
+            )
+            sections.append(dataframe_to_context(sheet_name, dataframe))
+            sheet_metadata.append({
+                "name": sheet_name,
+                "rows": len(dataframe.index),
+                "columns": len(dataframe.columns),
+            })
+
+    context, truncated = truncate_document_context("\n\n".join(sections))
+    return {
+        "ok": True,
+        "kind": "spreadsheet",
+        "context": context,
+        "truncated": truncated,
+        "metadata": {
+            "sheetNames": sheet_names,
+            "sheets": sheet_metadata,
+            "textChars": len(context),
+        },
+    }
+
+
+def analyze_document(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_path = str(payload.get("path") or "").strip()
+    if not raw_path:
+        return {
+            "ok": False,
+            "error": "DOCUMENT_PATH_REQUIRED",
+            "message": "A document path is required.",
+        }
+
+    path = Path(os.path.abspath(os.path.expanduser(raw_path)))
+    if not path.is_file():
+        return {
+            "ok": False,
+            "error": "DOCUMENT_NOT_FOUND",
+            "message": "The selected document no longer exists.",
+        }
+
+    extension = path.suffix.lower()
+    if extension not in {".pdf", ".xlsx", ".xls", ".csv"}:
+        return {
+            "ok": False,
+            "error": "DOCUMENT_FORMAT_NOT_SUPPORTED",
+            "message": f"Unsupported document format: {extension or 'unknown'}",
+        }
+
+    size_bytes = path.stat().st_size
+    if size_bytes > MAX_DOCUMENT_BYTES:
+        return {
+            "ok": False,
+            "error": "DOCUMENT_TOO_LARGE",
+            "message": "Documents larger than 50 MB are not supported.",
+        }
+
+    if not document_dependencies_ready():
+        return {
+            "ok": False,
+            "error": "DOCUMENT_DEPENDENCIES_MISSING",
+            "message": "Document parsing requires pandas, openpyxl, xlrd, and PyMuPDF.",
+            "status": worker_status(),
+        }
+
+    started_at = time.perf_counter()
+    result = analyze_pdf(path) if extension == ".pdf" else analyze_spreadsheet(path, extension)
+    if not result.get("ok"):
+        return result
+
+    result.update({
+        "name": path.name,
+        "extension": extension.lstrip("."),
+        "sizeBytes": size_bytes,
+        "durationMs": int((time.perf_counter() - started_at) * 1000),
+    })
+    return result
 
 
 def infer_kokoro_language_from_voice(voice_id: str) -> str | None:
@@ -373,6 +563,18 @@ class VoiceWorkerHandler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "NOT_FOUND", "path": self.path})
 
     def do_POST(self) -> None:
+        if self.path == "/documents/analyze":
+            try:
+                result = analyze_document(read_json_body(self))
+                json_response(self, 200 if result.get("ok") else 422, result)
+            except Exception as error:
+                json_response(self, 500, {
+                    "ok": False,
+                    "error": "DOCUMENT_ANALYSIS_FAILED",
+                    "message": str(error),
+                })
+            return
+
         if self.path == "/voice/stt":
             json_response(self, 501, {
                 "error": "STT_NOT_IMPLEMENTED",
