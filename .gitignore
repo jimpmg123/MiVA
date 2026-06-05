@@ -1,5 +1,6 @@
 # Logs
 logs
+.codex-run-logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -58,6 +59,8 @@ src-tauri/target/
 stitch-samples/
 stitch_*.zip
 *.zip
+apps/desktop/public/live2d/
+apps/desktop/public/live2d-models/
 
 # Local reference repositories
 VtuberLLM/

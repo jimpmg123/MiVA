@@ -1,7 +1,6 @@
 import type { CharacterReactionMode, CharacterRendererId, PromptSettings } from "../types";
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invokeCommand } from "../app/tauri";
 import {
   Badge,
   Button,
@@ -18,6 +17,7 @@ import {
 } from "../components/ui";
 import { characterAssetCatalog, type CharacterAsset } from "../features/characters/catalog";
 import { defaultPromptSettings } from "../features/assistants/profile";
+import { getLive2DRuntimeStatus, installLive2DRuntime } from "../features/characters/live2dRuntime";
 
 type CharacterStudioPanelProps = {
   settings: PromptSettings;
@@ -38,7 +38,11 @@ type Live2DInstallProgress = {
 
 type Live2DInstallResult = {
   installDir: string;
+  modelBaseDir: string;
+  coreScriptPath: string | null;
   installedModels: string[];
+  totalSizeMb: number;
+  ready: boolean;
 };
 
 const reactionModeCopy: Record<CharacterReactionMode, string> = {
@@ -52,9 +56,16 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
   const [live2dSetupNotice, setLive2dSetupNotice] = useState<string | null>(null);
   const [isInstallingLive2d, setIsInstallingLive2d] = useState(false);
   const [live2dInstallProgress, setLive2dInstallProgress] = useState<Live2DInstallProgress | null>(null);
+  const [live2dRuntimeStatus, setLive2dRuntimeStatus] = useState<Live2DInstallResult | null>(null);
   const character = settings.character;
   const live2dModelCount = characterAssetCatalog.filter((preset) => preset.renderer === "live2d").length;
   const selectedLive2dReady = character.renderer === "live2d" && Boolean(character.live2dModelPath);
+  const live2dRuntimeReady = live2dRuntimeStatus?.ready === true;
+  const live2dRendererBadge = live2dRuntimeReady
+    ? "Installed"
+    : live2dSetupStatus === "checked"
+      ? "Checked"
+      : "Not installed";
 
   const updateCharacter = (updater: (current: PromptSettings["character"]) => PromptSettings["character"]) => {
     onPromptSettingsChange((current) => ({
@@ -107,7 +118,10 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
 
   const checkBundledLive2dAssets = () => {
     setLive2dSetupStatus("checked");
-    setLive2dSetupNotice(`${live2dModelCount} bundled Live2D character profiles are registered. Select one below to prepare it for Runtime.`);
+    const sizeCopy = live2dRuntimeStatus?.totalSizeMb
+      ? ` Current installed runtime size is ${live2dRuntimeStatus.totalSizeMb} MB.`
+      : " Bundled model assets are about 19 MB before install.";
+    setLive2dSetupNotice(`${live2dModelCount} bundled Live2D character profiles are registered. Select one below to prepare it for Runtime.${sizeCopy}`);
   };
 
   const prepareLive2dRuntimeInstall = async () => {
@@ -125,12 +139,13 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
       done: false,
       error: null,
     });
-    setLive2dSetupNotice("Installing Live2D runtime assets...");
+    setLive2dSetupNotice("Installing Live2D renderer, Cubism Core, and bundled model assets...");
 
     try {
-      const result = await invokeCommand<Live2DInstallResult>("install_live2d_runtime");
+      const result = await installLive2DRuntime();
+      setLive2dRuntimeStatus(result);
       setLive2dSetupStatus("checked");
-      setLive2dSetupNotice(`Live2D runtime installed at ${result.installDir}. ${result.installedModels.length} models are ready.`);
+      setLive2dSetupNotice(`Live2D runtime installed at ${result.installDir}. ${result.installedModels.length} models are ready. Total size: ${result.totalSizeMb} MB.`);
     } catch (error) {
       const message = String(error);
       setLive2dSetupNotice(`Live2D runtime install failed: ${message}`);
@@ -151,6 +166,16 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
     if (!tauriRuntime) {
       return;
     }
+
+    void getLive2DRuntimeStatus()
+      .then((status) => {
+        setLive2dRuntimeStatus(status);
+        if (status.ready) {
+          setLive2dSetupStatus("checked");
+          setLive2dSetupNotice(`Live2D runtime is already installed. ${status.installedModels.length} models are ready. Total size: ${status.totalSizeMb} MB.`);
+        }
+      })
+      .catch(() => undefined);
 
     let unlisten: (() => void) | undefined;
     void listen<Live2DInstallProgress>("live2d-install-progress", (event) => {
@@ -187,10 +212,10 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
               <IconTile>
                 <span className="material-symbols-outlined text-[22px]">deployed_code</span>
               </IconTile>
-              <Badge tone={live2dSetupStatus === "pending" ? "action" : "neutral"}>{live2dSetupStatus === "pending" ? "Install hook ready" : "Not installed"}</Badge>
+              <Badge tone={live2dRuntimeReady ? "success" : live2dSetupStatus === "checked" ? "action" : "neutral"}>{live2dRendererBadge}</Badge>
             </div>
             <h4 className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">Live2D renderer</h4>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Installs or verifies the packaged renderer files needed to load model3.json in Runtime.</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Installs Pixi Live2D support, Cubism Core, and model files needed to load model3.json in Runtime.</p>
           </div>
 
           <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
@@ -198,7 +223,9 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
               <IconTile tone="success">
                 <span className="material-symbols-outlined text-[22px]">inventory_2</span>
               </IconTile>
-              <Badge tone={live2dModelCount > 0 ? "success" : "neutral"}>{live2dModelCount > 0 ? "Bundled" : "Missing"}</Badge>
+              <Badge tone={live2dRuntimeStatus?.installedModels.length ? "success" : live2dModelCount > 0 ? "action" : "neutral"}>
+                {live2dRuntimeStatus?.installedModels.length ? `${live2dRuntimeStatus.installedModels.length} installed` : live2dModelCount > 0 ? "Bundled" : "Missing"}
+              </Badge>
             </div>
             <h4 className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">Character models</h4>
             <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Checks the built-in Live2D catalog so users can choose Mao, Shizuku, Knight, or Takodachi.</p>
@@ -219,7 +246,7 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
         <div className="mt-6 flex flex-wrap gap-3">
           <PrimaryButton disabled={isInstallingLive2d} onClick={() => void prepareLive2dRuntimeInstall()}>
             <span className="material-symbols-outlined text-[20px]">download</span>
-            {isInstallingLive2d ? "Installing Live2D runtime" : "Install Live2D runtime"}
+            {isInstallingLive2d ? "Installing Live2D runtime" : live2dRuntimeReady ? "Reinstall Live2D runtime" : "Install Live2D runtime"}
           </PrimaryButton>
           <SecondaryButton onClick={checkBundledLive2dAssets}>
             <span className="material-symbols-outlined text-[20px]">fact_check</span>

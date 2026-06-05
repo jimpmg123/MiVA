@@ -14,9 +14,14 @@ use std::time::Duration;
 use sysinfo::{Disks, System};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const OLLAMA_BASE_URL: &str = "http://localhost:11434";
 const LOCAL_HELPER_URL: &str = "http://127.0.0.1:43110";
 const DESKTOP_BRIDGE_ADDR: &str = "127.0.0.1:43111";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 const ALLOWED_MODELS: [&str; 6] = [
     "qwen3:4b",
     "exaone3.5:2.4b",
@@ -143,7 +148,11 @@ struct Live2DInstallProgress {
 #[serde(rename_all = "camelCase")]
 struct Live2DInstallResult {
     install_dir: String,
+    model_base_dir: String,
+    core_script_path: Option<String>,
     installed_models: Vec<String>,
+    total_size_mb: f64,
+    ready: bool,
 }
 
 fn empty_assistant_profile_store() -> Value {
@@ -552,10 +561,48 @@ fn live2d_resource_models_dir(app: &AppHandle) -> Option<PathBuf> {
         .filter(|path| path.exists())
 }
 
+fn live2d_dev_core_script_path() -> Option<PathBuf> {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|desktop_dir| desktop_dir.parent())
+        .and_then(|apps_dir| apps_dir.parent())
+        .map(|repo_dir| {
+            repo_dir
+                .join("VtuberLLM")
+                .join("Open-LLM-VTuber-main")
+                .join("frontend-source")
+                .join("libs")
+                .join("live2dcubismcore.min.js")
+        })
+        .filter(|path| path.exists())
+}
+
+fn live2d_resource_core_script_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("live2dcubismcore.min.js"))
+        .filter(|path| path.exists())
+}
+
+fn live2d_source_core_script_path(app: &AppHandle) -> Option<PathBuf> {
+    live2d_resource_core_script_path(app).or_else(live2d_dev_core_script_path)
+}
+
 fn live2d_source_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
     live2d_resource_models_dir(app)
         .or_else(live2d_dev_models_dir)
         .ok_or_else(|| "Bundled Live2D model resources were not found.".to_string())
+}
+
+fn live2d_runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("live2d-runtime");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir)
 }
 
 fn live2d_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -567,6 +614,12 @@ fn live2d_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .join("live2d-models");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     Ok(dir)
+}
+
+fn live2d_core_install_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = live2d_runtime_dir(app)?.join("libs");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join("live2dcubismcore.min.js"))
 }
 
 fn count_files(path: &Path) -> Result<u64, String> {
@@ -646,6 +699,48 @@ fn verify_live2d_model(model_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn dir_size_bytes(path: &Path) -> Result<u64, String> {
+    if path.is_file() {
+        return fs::metadata(path)
+            .map(|metadata| metadata.len())
+            .map_err(|error| error.to_string());
+    }
+
+    let mut total = 0;
+    if !path.exists() {
+        return Ok(0);
+    }
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let entry_path = entry.path();
+        total += dir_size_bytes(&entry_path)?;
+    }
+    Ok(total)
+}
+
+fn live2d_runtime_status_inner(app: AppHandle) -> Result<Live2DInstallResult, String> {
+    let install_root = live2d_install_dir(&app)?;
+    let core_script_path = live2d_core_install_path(&app)?;
+    let installed_models = LIVE2D_MODEL_DIRS
+        .into_iter()
+        .filter(|model| verify_live2d_model(&install_root.join(model)))
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let core_ready = core_script_path.exists();
+    let total_size_mb = ((dir_size_bytes(&live2d_runtime_dir(&app)?)? as f64 / 1024.0 / 1024.0) * 100.0).round() / 100.0;
+
+    Ok(Live2DInstallResult {
+        install_dir: live2d_runtime_dir(&app)?.to_string_lossy().to_string(),
+        model_base_dir: install_root.to_string_lossy().to_string(),
+        core_script_path: core_ready.then(|| core_script_path.to_string_lossy().to_string()),
+        installed_models,
+        total_size_mb,
+        ready: core_ready && LIVE2D_MODEL_DIRS
+            .into_iter()
+            .any(|model| verify_live2d_model(&install_root.join(model))),
+    })
+}
+
 fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, String> {
     emit_live2d_install_progress(&app, "Locating bundled Live2D assets", 0, 100, false, None);
 
@@ -657,6 +752,11 @@ fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, S
         emit_live2d_install_progress(&app, "Install failed", 0, 100, true, Some(error.clone()));
         error
     })?;
+    let core_source = live2d_source_core_script_path(&app);
+    let core_target = live2d_core_install_path(&app).map_err(|error| {
+        emit_live2d_install_progress(&app, "Install failed", 0, 100, true, Some(error.clone()));
+        error
+    })?;
 
     let mut total_files = 0;
     for model in LIVE2D_MODEL_DIRS {
@@ -664,6 +764,9 @@ fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, S
         if model_source.exists() {
             total_files += count_files(&model_source)?;
         }
+    }
+    if core_source.is_some() {
+        total_files += 1;
     }
 
     if total_files == 0 {
@@ -682,6 +785,19 @@ fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, S
     );
 
     let mut copied = 0;
+    if let Some(core_source) = core_source {
+        fs::copy(&core_source, &core_target).map_err(|error| error.to_string())?;
+        copied += 1;
+        emit_live2d_install_progress(
+            &app,
+            "Copying Cubism Core runtime",
+            copied,
+            total_files,
+            false,
+            None,
+        );
+    }
+
     for model in LIVE2D_MODEL_DIRS {
         let model_source = source_root.join(model);
         if model_source.exists() {
@@ -729,7 +845,9 @@ fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, S
     let manifest = json!({
         "schemaVersion": 1,
         "installedAt": timestamp_millis(),
-        "installDir": install_root.to_string_lossy(),
+        "installDir": live2d_runtime_dir(&app)?.to_string_lossy(),
+        "modelBaseDir": install_root.to_string_lossy(),
+        "coreScriptPath": core_target.exists().then(|| core_target.to_string_lossy().to_string()),
         "models": installed_models
     });
     let manifest_content =
@@ -745,10 +863,7 @@ fn install_live2d_runtime_inner(app: AppHandle) -> Result<Live2DInstallResult, S
         None,
     );
 
-    Ok(Live2DInstallResult {
-        install_dir: install_root.to_string_lossy().to_string(),
-        installed_models,
-    })
+    live2d_runtime_status_inner(app)
 }
 
 fn default_python_install_dir_inner() -> String {
@@ -822,15 +937,17 @@ fn start_local_helper_process() -> Option<Child> {
         return None;
     }
 
-    let npm_command = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    match Command::new(npm_command)
-        .args(["run", "dev"])
+    let mut command = Command::new("node");
+    command
+        .args(["src/server.mjs"])
         .current_dir(helper_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    match command.spawn() {
         Ok(child) => Some(child),
         Err(error) => {
             eprintln!("Failed to start local helper: {error}");
@@ -1228,6 +1345,7 @@ fn chat_via_local_helper(
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
+    tool_context: Option<String>,
 ) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
@@ -1260,6 +1378,10 @@ fn chat_via_local_helper(
 
     if let Some(memory_summary) = memory_summary.filter(|value| !value.trim().is_empty()) {
         body["memorySummary"] = json!(memory_summary);
+    }
+
+    if let Some(tool_context) = tool_context.filter(|value| !value.trim().is_empty()) {
+        body["toolContext"] = json!(tool_context);
     }
 
     let response = client
@@ -1297,6 +1419,7 @@ fn chat_once_inner(
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
+    tool_context: Option<String>,
 ) -> Result<String, String> {
     let normalized_provider = if provider.trim().is_empty() {
         "ollama".to_string()
@@ -1314,6 +1437,7 @@ fn chat_once_inner(
         profile,
         messages,
         memory_summary,
+        tool_context,
     ) {
         Ok(answer) => Ok(answer),
         Err(error) if normalized_provider == "ollama" => {
@@ -1459,6 +1583,7 @@ async fn chat_once(
     profile: Option<Value>,
     messages: Option<Value>,
     memory_summary: Option<String>,
+    tool_context: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         chat_once_inner(
@@ -1471,6 +1596,7 @@ async fn chat_once(
             profile,
             messages,
             memory_summary,
+            tool_context,
         )
     })
     .await
@@ -1506,6 +1632,13 @@ async fn install_python(target_dir: Option<String>) -> Result<String, String> {
 #[tauri::command]
 async fn install_live2d_runtime(app: AppHandle) -> Result<Live2DInstallResult, String> {
     tauri::async_runtime::spawn_blocking(move || install_live2d_runtime_inner(app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_live2d_runtime_status(app: AppHandle) -> Result<Live2DInstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || live2d_runtime_status_inner(app))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -1583,6 +1716,7 @@ pub fn run() {
             get_default_python_install_dir,
             install_python,
             install_live2d_runtime,
+            get_live2d_runtime_status,
             load_assistant_profile_store,
             save_assistant_profile_store,
             load_chat_history_store,

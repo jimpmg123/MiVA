@@ -13,6 +13,12 @@
     "check": "node scripts/build.mjs"
   },
   "dependencies": {
+    "@pixi/core": "^6.5.10",
+    "@pixi/display": "^6.5.10",
+    "@pixi/loaders": "^6.5.10",
+    "@pixi/math": "^6.5.10",
+    "@pixi/sprite": "^6.5.10",
+    "@pixi/utils": "^6.5.10",
     "@radix-ui/react-slot": "^1.2.4",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
@@ -20,6 +26,8 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.6.0"
@@ -33,5 +41,8 @@
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "overrides": {
+    "gh-pages": "6.3.0"
   }
 }

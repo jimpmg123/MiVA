@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.miva.desktop",
   "build": {
-    "beforeDevCommand": "npm.cmd run dev -- --port 1421",
+    "beforeDevCommand": "node ./node_modules/vite/bin/vite.js --port 1421",
     "devUrl": "http://localhost:1421",
-    "beforeBuildCommand": "npm.cmd run build",
+    "beforeBuildCommand": "node scripts/build.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -16,7 +16,9 @@
         "width": 1120,
         "height": 780,
         "minWidth": 1000,
-        "minHeight": 720
+        "minHeight": 720,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": {
@@ -27,7 +29,8 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "../../../VtuberLLM/Open-LLM-VTuber-main/live2d-models"
+      "../../../VtuberLLM/Open-LLM-VTuber-main/live2d-models",
+      "../../../VtuberLLM/Open-LLM-VTuber-main/frontend-source/libs/live2dcubismcore.min.js"
     ],
     "icon": [
       "icons/32x32.png",

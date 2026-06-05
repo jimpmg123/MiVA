@@ -1,9 +1,10 @@
-﻿import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useEffect, useRef } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppMode, ChatMessage, ChatMetrics, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
-import { Badge, PrimaryButton } from "../components/ui";
+import { PrimaryButton } from "../components/ui";
 import { ChatSlashMenu } from "../components/ChatSlashMenu";
 import { getCharacterAsset } from "../features/characters/catalog";
+import { Live2DStage } from "../features/characters/Live2DStage";
 import { useChatSlashMenu } from "../features/chat/useChatSlashMenu";
 import { formatChatLatency } from "../utils";
 
@@ -89,6 +90,8 @@ export function RuntimePage({
   stopRuntimeTts,
 }: RuntimePageProps) {
 const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+const previousMessageCountRef = useRef(activeChatMessages.length);
+const [assistantReplyPulse, setAssistantReplyPulse] = useState(false);
 const slashMenu = useChatSlashMenu({
   chatInput,
   setChatInput,
@@ -100,7 +103,7 @@ const showRuntimeTtsControl = runtimeChat;
 const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
     const characterAsset = getCharacterAsset(characterSettings.characterId);
     const characterRuntimeEnabled = runtimeChat && characterSettings.enabled && characterSettings.showInRuntime;
-    const characterActivity = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting"
+    const characterActivity = ttsPlaybackState === "speaking" || ttsPlaybackState === "starting" || assistantReplyPulse
       ? "Speaking"
       : busyAction === "chat"
         ? "Thinking"
@@ -150,21 +153,34 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       element.style.height = `${Math.min(element.scrollHeight, 144)}px`;
     }, [chatInput]);
 
+    useEffect(() => {
+      const previousCount = previousMessageCountRef.current;
+      previousMessageCountRef.current = activeChatMessages.length;
+      const latestMessage = activeChatMessages[activeChatMessages.length - 1];
+      if (activeChatMessages.length <= previousCount || latestMessage?.role !== "assistant") {
+        return;
+      }
+
+      setAssistantReplyPulse(true);
+      const timeout = window.setTimeout(() => setAssistantReplyPulse(false), 2400);
+      return () => window.clearTimeout(timeout);
+    }, [activeChatMessages]);
+
     const showAssistantRuntimePanel = characterRuntimeEnabled;
     const chatShellClass = !showAssistantRuntimePanel
       ? "relative mx-auto h-full max-w-[880px] overflow-visible"
       : assistantPanelMinimized
       ? runtimeChat
-        ? "relative mx-auto h-full max-w-[1180px] overflow-visible"
-        : "relative mx-auto h-full max-w-[1180px] overflow-visible"
+        ? "relative mx-auto h-full min-h-0 max-w-[1180px] overflow-visible"
+        : "relative mx-auto h-full min-h-0 max-w-[1180px] overflow-visible"
       : runtimeChat
-        ? "relative mx-auto grid h-full max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible"
-        : "relative mx-auto grid h-full max-w-[1180px] grid-cols-[minmax(0,1fr)_300px] gap-6 overflow-visible";
+        ? "relative mx-auto h-full min-h-0 max-w-[1320px] overflow-visible pr-[448px]"
+        : "relative mx-auto h-full min-h-0 max-w-[1320px] overflow-visible pr-[448px]";
     const chatSectionClass = "flex h-full min-h-0 flex-col overflow-hidden";
     const chatMessagesClass = "miva-scrollbar-hidden flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overscroll-contain pb-6 pt-2";
     const assistantCardClass = runtimeChat
-      ? "flex h-full self-start flex-col overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]"
-      : "sticky top-2 flex max-h-[calc(100vh-156px)] self-start flex-col overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]";
+      ? "absolute bottom-0 right-0 top-0 flex w-[420px] flex-col overflow-visible rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]"
+      : "absolute bottom-0 right-0 top-0 flex w-[420px] flex-col overflow-visible rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-md)]";
 
     return (
       <div className={chatShellClass}>
@@ -220,7 +236,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               </button>
 
               <div className="flex items-start gap-4 pr-8">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-white">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-[var(--miva-on-primary)]">
                   <span className="material-symbols-outlined">smart_toy</span>
                 </div>
                 <div>
@@ -266,7 +282,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               <div
                 className={`whitespace-pre-wrap break-words rounded-lg border p-4 text-sm leading-6 shadow-[var(--miva-shadow-sm)] ${
                   message.role === "user"
-                    ? "rounded-br-none border-[var(--miva-primary)] bg-[var(--miva-primary)] text-white"
+                    ? "rounded-br-none border-[var(--miva-primary)] bg-[var(--miva-primary)] text-[var(--miva-on-primary)]"
                     : "rounded-bl-none border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text)]"
                 }`}
               >
@@ -313,7 +329,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
           <div ref={chatEndRef} className="h-1 shrink-0" />
         </div>
 
-        <div className="relative z-10 shrink-0 border-t border-[var(--miva-border)] bg-[rgba(248,250,252,0.95)] pb-2 pt-4 backdrop-blur">
+        <div className="relative z-10 shrink-0 border-t border-[var(--miva-border)] bg-[var(--miva-input-bar-bg)] pb-2 pt-4 backdrop-blur">
           {showJumpToLatest && (
             <button
               aria-label={t.jumpToLatest}
@@ -377,7 +393,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             {showRuntimeTtsControl && (
               <div className="group relative flex items-center">
                 <div className="pointer-events-none absolute bottom-full right-0 z-30 w-56 translate-y-1 pb-3 opacity-0 transition duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100">
-                  <div className="rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.95)] p-3 shadow-[var(--miva-shadow-md)] backdrop-blur">
+                  <div className="rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] p-3 shadow-[var(--miva-shadow-md)] backdrop-blur">
                     {runtimeTtsAvailable ? (
                       <>
                         <div className="flex items-center gap-2">
@@ -455,7 +471,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               <span className="material-symbols-outlined">mic</span>
             </button>
             <button
-              className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-white shadow-md transition hover:bg-[var(--miva-primary-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-md transition hover:bg-[var(--miva-primary-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={chatSubmitDisabled}
               type="submit"
             >
@@ -495,19 +511,15 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
 
         {showAssistantRuntimePanel && (assistantPanelMinimized ? (
           <button
-            className="absolute right-0 top-0 z-20 flex max-w-[240px] items-center gap-3 rounded-lg border border-[var(--miva-border)] bg-[rgba(255,255,255,0.95)] p-3 text-left shadow-[var(--miva-shadow-md)] transition hover:border-[var(--miva-primary)]"
+            className="absolute right-0 top-0 z-20 flex max-w-[220px] items-center gap-3 rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] p-3 text-left shadow-[var(--miva-shadow-md)] transition hover:border-[var(--miva-primary)]"
             type="button"
             title="Show assistant panel"
             onClick={() => setAssistantPanelMinimized(false)}
           >
-            <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-white">
-              {characterAsset.previewImage ? (
-                <img alt={`${characterSettings.displayName} preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
-              ) : (
-                <span className="material-symbols-outlined text-[24px]">{characterAsset.icon}</span>
-              )}
+            <span className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--miva-primary)] text-[var(--miva-on-primary)]">
+              <span className="material-symbols-outlined text-[24px]">{characterAsset.icon}</span>
               <span
-                className={`absolute -right-0.5 top-1 h-3.5 w-3.5 rounded-full border-2 border-white ${
+                className={`absolute -right-0.5 top-1 h-3.5 w-3.5 rounded-full border-2 border-[var(--miva-floating-surface)] ${
                   characterActivity !== "Idle" ? "bg-[var(--miva-primary)] animate-pulse" : "bg-[var(--miva-success)]"
                 }`}
               />
@@ -519,67 +531,54 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             <span className="material-symbols-outlined text-[18px] text-[var(--miva-text-muted)]">open_in_full</span>
           </button>
         ) : (
-          <aside className={assistantCardClass}>
-          <div className="border-b border-[var(--miva-border)] p-5">
-            <div className="flex items-start justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">{t.assistantStageTitle}</p>
-              <button
-                aria-label="Minimize assistant panel"
-                className="grid h-8 w-8 place-items-center rounded-full text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
-                type="button"
-                title="Minimize"
-                onClick={() => setAssistantPanelMinimized(true)}
-              >
-                <span className="material-symbols-outlined text-[20px]">remove</span>
-              </button>
-            </div>
-            <h2 className="mt-2 font-heading text-[22px] font-bold leading-7 text-[var(--miva-text)]">{characterSettings.displayName}</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{characterSettings.personality}</p>
-          </div>
-
-          <div className="flex flex-1 flex-col items-center justify-center bg-[radial-gradient(circle_at_top,var(--miva-primary-soft)_0%,var(--miva-bg-soft)_48%,var(--miva-surface)_100%)] p-6 text-center">
-            <div className="relative grid h-40 w-40 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-white shadow-[0_24px_60px_rgba(36,73,102,0.28)]">
-              <span className="absolute inset-3 rounded-full border border-white/25" />
-              {characterAsset.previewImage ? (
-                <img alt={`${characterSettings.displayName} character preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
-              ) : (
-                <span className="material-symbols-outlined text-[64px]">{characterAsset.icon}</span>
-              )}
+          <aside className={assistantCardClass} aria-label={t.assistantStageTitle}>
+          <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top,var(--miva-primary-soft)_0%,var(--miva-bg-soft)_48%,var(--miva-surface)_100%)] text-center">
+            <div className="absolute left-4 top-4 z-30 inline-flex items-center gap-2 rounded-full border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-3 py-2 text-[11px] font-bold text-[var(--miva-text-muted)] shadow-[var(--miva-shadow-sm)] backdrop-blur">
+              <span className="material-symbols-outlined text-[16px]">{characterActivityIcon}</span>
+              <span>Character state</span>
               <span
-                className={`absolute -right-1 top-8 h-5 w-5 rounded-full border-4 border-white ${
-                  characterActivity !== "Idle" ? "bg-[var(--miva-primary)] animate-pulse" : "bg-[var(--miva-success)]"
+                className={`rounded-full px-2 py-0.5 text-[10px] ${
+                  characterActivity !== "Idle"
+                    ? "bg-[var(--miva-primary-soft)] text-[var(--miva-primary)]"
+                    : "bg-[var(--miva-surface-muted)] text-[var(--miva-text-muted)]"
                 }`}
-              />
+              >
+                {characterActivity}
+              </span>
             </div>
-
-            <h3 className="mt-8 font-heading text-xl font-bold text-[var(--miva-text)]">{t.characterPreview}</h3>
-            <p className="mt-3 text-sm leading-6 text-[var(--miva-text-muted)]">{characterSettings.speakingStyle}</p>
-
-            <div className="mt-6 grid w-full gap-3">
-              <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
-                <span className="font-semibold text-[var(--miva-text-muted)]">Character asset</span>
-                <Badge tone={characterSettings.renderer === "live2d" ? "action" : "neutral"}>
-                  {characterAsset.name}
-                </Badge>
+            <button
+              aria-label="Minimize assistant panel"
+              className="absolute right-4 top-4 z-30 grid h-10 w-10 place-items-center rounded-full border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] text-[var(--miva-text-muted)] shadow-[var(--miva-shadow-sm)] backdrop-blur transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+              type="button"
+              title="Minimize"
+              onClick={() => setAssistantPanelMinimized(true)}
+            >
+              <span className="material-symbols-outlined text-[20px]">remove</span>
+            </button>
+            {characterSettings.renderer === "live2d" ? (
+              <div className="relative z-20 h-full min-h-0 flex-1 overflow-visible px-2 pt-10">
+                <Live2DStage
+                  activity={characterActivity}
+                  bottomReservePx={240}
+                  character={characterSettings}
+                  topReservePx={56}
+                />
               </div>
-              <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
-                <span className="font-semibold text-[var(--miva-text-muted)]">
-                  {selectedProvider === "ollama" ? providerText.localRuntimeReady : providerText.cloudRuntimeReady}
-                </span>
-                <Badge tone={selectedProvider === "ollama" ? (status?.running ? "success" : "neutral") : "action"}>
-                  {selectedProvider === "ollama" ? (status?.running ? t.running : t.stopped) : activeProviderLabel}
-                </Badge>
+            ) : (
+              <div className="absolute left-1/2 top-1/2 z-20 grid h-64 w-64 -translate-x-1/2 -translate-y-1/2 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-[var(--miva-character-shadow)]">
+                <span className="absolute inset-3 rounded-full border border-white/25" />
+                {characterAsset.previewImage ? (
+                  <img alt={`${characterSettings.displayName} character preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
+                ) : (
+                  <span className="material-symbols-outlined text-[64px]">{characterAsset.icon}</span>
+                )}
+                <span
+                  className={`absolute -right-1 top-8 h-5 w-5 rounded-full border-4 border-[var(--miva-surface)] ${
+                    characterActivity !== "Idle" ? "bg-[var(--miva-primary)] animate-pulse" : "bg-[var(--miva-success)]"
+                  }`}
+                />
               </div>
-              <div className="flex items-center justify-between rounded-2xl bg-white/85 px-4 py-3 text-sm shadow-sm">
-                <span className="flex items-center gap-2 font-semibold text-[var(--miva-text-muted)]">
-                  <span className="material-symbols-outlined text-[18px]">{characterActivityIcon}</span>
-                  Character state
-                </span>
-                <Badge tone={characterActivity !== "Idle" ? "action" : "neutral"}>
-                  {characterActivity}
-                </Badge>
-              </div>
-            </div>
+            )}
           </div>
           </aside>
         ))}
