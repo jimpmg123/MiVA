@@ -11,7 +11,7 @@ import { SetupFlow } from "./setup/SetupFlow";
 import { useSetupWizard } from "./setup/useSetupWizard";
 import { formatLogTime } from "./utils";
 import { cloudModelCatalog, getCloudModelById, getModelByName, modelCatalog, providerMeta } from "./features/models/catalog";
-import { DownloadProgressModal } from "./features/models/DownloadProgressModal";
+import { ModelDownloadOverlay } from "./features/models/ModelDownloadOverlay";
 import { useOllamaRuntime } from "./features/models/useOllamaRuntime";
 import { useModelRecommendation } from "./features/models/useModelRecommendation";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./features/assistants/profile";
@@ -113,6 +113,11 @@ function App() {
     pythonInstallPath,
     status,
     downloadProgress,
+    downloadDockMode,
+    setDownloadDockMode,
+    pauseModelDownload,
+    resumeModelDownload,
+    cancelModelDownload,
     refreshStatus,
     refreshHardware,
     refreshRuntimeRequirements,
@@ -163,6 +168,7 @@ function App() {
     [providerKeys, cloudProviderKeys],
   );
   const {
+    applyClawCodeWorkspace,
     clawCodeStatus,
     clawCodeStatusError,
     chooseClawCodeWorkspace,
@@ -231,6 +237,8 @@ function App() {
     assistantProfileError,
     assistantProfileSyncState,
     assistantProfileSyncMessage,
+    importedSkillsDraft,
+    setImportedSkillsDraft,
     setActiveLocalProfileId,
     buildCurrentLocalAssistantProfile,
     editLocalAssistantProfile,
@@ -240,6 +248,7 @@ function App() {
     renameLocalAssistantProfile,
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
+    syncAllAssistantProfilesFromCloud,
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,
@@ -345,12 +354,16 @@ function App() {
     chatScrollRef,
     chooseAndAttachDocuments,
     chooseAndAttachImages,
+    completeClawCodeWorkspaceFromChat,
     documentAttachments,
     imageAttachments,
     handleChatScroll,
     scrollChatToLatest,
     sendMessage,
+    selectedSlashCommand,
+    slashCommands,
     setChatInput,
+    setSelectedSlashCommand,
     showJumpToLatest,
     stopRuntimeTts,
     stopChat,
@@ -376,6 +389,7 @@ function App() {
     statusInstalled: Boolean(status?.installed),
     busyAction,
     visibleAssistantProfiles: visibleAssistantProfileStore.profiles,
+    assistantProfileLoaded,
     chatIntroKey: runtimeChatIntroKey,
     chatTitle: t.chatTitle,
     justNowLabel: t.justNow,
@@ -396,6 +410,9 @@ function App() {
       await openWorkspaceConsent();
       log("Google Workspace permission is required. Complete consent in the browser, then try again.");
     },
+    applyClawCodeWorkspace,
+    chooseClawCodeWorkspace,
+    clawCodeStatus,
     onLog: log,
   });
   const {
@@ -564,6 +581,7 @@ function App() {
       centerHidden={appMode === "studio" || appMode === "history" || appMode === "setup"}
       onEnterSettings={enterGeneralSettingsFromTopBar}
       onModeChange={changeAppMode}
+      onOpenWebConsole={() => void openWebConsole()}
       onStudioSave={saveStudioDraft}
       providerText={providerText}
       settingsOpen={appMode === "setup" && activeStep === "settings"}
@@ -582,6 +600,7 @@ function App() {
 
   const renderChat = () => (
     <RuntimeHost
+      activeLocale={ACTIVE_LOCALE}
       activeChatMessages={activeChatMessages}
       activeModelLabel={activeModelLabel}
       activeProviderLabel={activeProviderLabel}
@@ -592,6 +611,8 @@ function App() {
       chatBusyLabel={chatBusyLabel}
       chatEndRef={chatEndRef}
       chatInput={chatInput}
+      selectedSlashCommand={selectedSlashCommand}
+      slashCommands={slashCommands}
       chatIntroKey={chatIntroKey}
       chatMetrics={chatMetrics}
       characterSettings={(activeLocalProfile ? normalizePromptSettings(activeLocalProfile.prompt?.settings) : promptSettingsDraft).character}
@@ -611,6 +632,8 @@ function App() {
       ttsPlaybackState={ttsPlaybackState}
       chooseAndAttachDocuments={chooseAndAttachDocuments}
       chooseAndAttachImages={chooseAndAttachImages}
+      chooseClawCodeWorkspace={chooseClawCodeWorkspace}
+      completeClawCodeWorkspaceFromChat={completeClawCodeWorkspaceFromChat}
       documentAttachments={documentAttachments}
       imageAttachments={imageAttachments}
       handleChatScroll={handleChatScroll}
@@ -622,6 +645,7 @@ function App() {
       setAppMode={setAppMode}
       setAssistantPanelMinimized={setAssistantPanelMinimized}
       setChatInput={setChatInput}
+      setSelectedSlashCommand={setSelectedSlashCommand}
       setDismissedChatIntroKeys={setDismissedChatIntroKeys}
       setRuntimeTtsEnabled={setRuntimeTtsEnabled}
       setRuntimeTtsSpeakingRate={(speakingRate) => {
@@ -669,6 +693,8 @@ function App() {
       buildCurrentLocalAssistantProfile={buildCurrentLocalAssistantProfile}
       busyAction={busyAction}
       googleWorkspaceStatus={googleWorkspaceStatus}
+      importedSkillsDraft={importedSkillsDraft}
+      setImportedSkillsDraft={setImportedSkillsDraft}
       cloudModelCatalog={cloudModelCatalog}
       deleteLocalAssistantProfile={deleteLocalAssistantProfile}
       downloadModel={downloadModel}
@@ -706,6 +732,7 @@ function App() {
       studioSection={studioSection}
       studioSections={studioSections}
       syncAllAssistantProfilesToCloud={syncAllAssistantProfilesToCloud}
+      syncAllAssistantProfilesFromCloud={syncAllAssistantProfilesFromCloud}
       syncAssistantProfileToCloud={syncAssistantProfileToCloud}
       t={t}
       tauriRuntime={tauriRuntime}
@@ -757,10 +784,18 @@ function App() {
     />
   );
   const renderDownloadProgressModal = () => (
-    <DownloadProgressModal
+    <ModelDownloadOverlay
+      dockMode={downloadDockMode}
       downloadProgress={downloadProgress}
       getModelByName={getModelByName}
-      onClose={() => setDownloadProgress(null)}
+      onCancel={(model) => void cancelModelDownload(model)}
+      onClose={() => {
+        setDownloadProgress(null);
+        setDownloadDockMode("modal");
+      }}
+      onDockModeChange={setDownloadDockMode}
+      onPause={(model) => void pauseModelDownload(model)}
+      onResume={(model) => void resumeModelDownload(model)}
       t={t}
     />
   );

@@ -6,6 +6,7 @@ export type CharacterAsset = {
   role: string;
   icon: string;
   previewImage: string | null;
+  previewImagePosition?: string;
   renderer: CharacterRendererId;
   live2dModelPath: string;
   personality: string;

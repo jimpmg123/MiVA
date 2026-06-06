@@ -18,28 +18,27 @@ import {
   Download,
   Trash2,
   Lock,
+  Moon,
+  Sun,
   Plus,
   KeyRound,
   CreditCard,
   Activity,
   CheckCircle2,
   CircleStop,
-  MessageSquare,
-  Heart,
   Share2,
-  Upload,
-  Users,
-  Bookmark,
-  ThumbsUp,
-  Send,
-  Sparkles,
-  Grid3x3,
-  List,
-  Play
+  Minimize2,
+  Maximize2,
+  Pause,
+  Play,
+  Minus,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LandingPage } from './pages/LandingPage';
+import { PersonaHubPage } from './pages/PersonaHubPage';
 import { LanguageToggle, useLocale } from './i18n/locale';
+import { useTheme } from './i18n/theme';
 import type { WebMessages } from './i18n/messages';
 import {
   checkCloudApi,
@@ -104,7 +103,7 @@ declare global {
 }
 
 // --- Types ---
-type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'apiKeys' | 'usage' | 'billing' | 'integrations' | 'voice' | 'admin' | 'settings';
+type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'apiKeys' | 'usage' | 'billing' | 'integrations' | 'voice' | 'personaHub' | 'admin' | 'settings';
 type ServiceStatus = 'checking' | 'connected' | 'offline';
 type AuthState = {
   role: AuthRole;
@@ -112,8 +111,8 @@ type AuthState = {
   token: string | null;
 };
 
-const DESKTOP_BRIDGE_URL = 'http://127.0.0.1:43111';
-const LOCAL_HELPER_URL = 'http://127.0.0.1:43110';
+const DESKTOP_BRIDGE_URL = (import.meta.env.VITE_DESKTOP_BRIDGE_URL as string | undefined)?.trim() || 'http://127.0.0.1:43111';
+const LOCAL_HELPER_URL = (import.meta.env.VITE_LOCAL_HELPER_URL as string | undefined)?.trim() || 'http://127.0.0.1:43110';
 const DEFAULT_MODEL_ID = 'qwen3:4b';
 
 function clientDebugLog(
@@ -168,16 +167,56 @@ const GOOGLE_WORKSPACE_SCOPE = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
 ].join(' ');
 const DESKTOP_APP_DOWNLOAD_URL = import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined;
+const DEFAULT_DESKTOP_APP_DOWNLOAD_URL = '/downloads/MiVA-Desktop-setup.exe';
 
-function openDesktopAppDownload() {
-  const downloadUrl = DESKTOP_APP_DOWNLOAD_URL?.trim();
-  if (downloadUrl) {
-    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
-    return;
+function resolveDesktopAppDownloadUrl() {
+  return DESKTOP_APP_DOWNLOAD_URL?.trim() || DEFAULT_DESKTOP_APP_DOWNLOAD_URL;
+}
+
+function triggerDesktopAppDownload() {
+  const downloadUrl = resolveDesktopAppDownloadUrl();
+  const fileName = downloadUrl.split('/').filter(Boolean).pop() || 'MiVA-Desktop-setup.exe';
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  link.download = fileName;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+const DesktopDownloadNotice = ({
+  copy,
+  visible,
+  onDismiss,
+}: {
+  copy: WebMessages['desktopDownload'];
+  visible: boolean;
+  onDismiss: () => void;
+}) => {
+  if (!visible) {
+    return null;
   }
 
-  window.alert('MiVA desktop installer download will be connected after packaging.');
-}
+  return (
+    <div className="fixed inset-x-0 top-0 z-[120] border-b border-amber-200 bg-amber-50 px-4 py-4 shadow-md sm:px-6">
+      <div className="mx-auto flex max-w-5xl items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black text-amber-950">{copy.noticeTitle}</p>
+          <p className="mt-1 text-sm leading-6 text-amber-900/90">{copy.noticeBody}</p>
+        </div>
+        <button
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-900 transition hover:bg-amber-100"
+          onClick={onDismiss}
+          type="button"
+        >
+          <X className="h-4 w-4" />
+          {copy.dismiss}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 interface OllamaStatus {
   installed?: boolean;
@@ -240,11 +279,16 @@ interface WebConsoleActions {
   confirmDeleteModel: (model: string) => Promise<void>;
 }
 
+type ModelDownloadDockMode = 'modal' | 'compact' | 'minimal';
+
 interface ActionState {
   type: 'idle' | 'refreshing' | 'starting-ollama' | 'pulling-model' | 'deleting-model';
   message?: string;
   progress?: number;
   model?: string;
+  paused?: boolean;
+  completedBytes?: number;
+  totalBytes?: number;
 }
 
 const initialConnection: ConnectionState = {
@@ -381,6 +425,7 @@ function buildNavItems(nav: WebMessages['nav']): NavItem[] {
     { id: 'billing', label: nav.billing, icon: CreditCard },
     { id: 'integrations', label: nav.integrations, icon: Blocks },
     { id: 'voice', label: nav.voice, icon: AudioLines },
+    { id: 'personaHub', label: nav.personaHub, icon: Share2 },
     { id: 'admin', label: nav.admin, icon: BarChart3 },
     { id: 'settings', label: nav.settings, icon: Settings },
   ];
@@ -437,84 +482,144 @@ const Badge = ({ children, variant = 'info' }: { children: React.ReactNode, vari
 };
 
 const Card: React.FC<CardProps> = ({ children, className = "" }) => (
-  <div className={`bg-white rounded-2xl p-6 shadow-[0px_4px_20px_rgba(0,0,0,0.04)] border border-slate-50 ${className}`}>
+  <div className={`rounded-2xl border border-slate-50 bg-white p-6 shadow-[0px_4px_20px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-[0px_4px_20px_rgba(0,0,0,0.35)] ${className}`}>
     {children}
   </div>
 );
 
+function formatDownloadBytes(value?: number) {
+  if (!value || value <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(1) : size.toFixed(2)} ${units[unitIndex]}`;
+}
+
 const ModelDownloadFloatingCard = ({
   action,
+  dockMode,
   showCancelConfirm,
   onConfirmCancel,
   onDismissCancelConfirm,
   onRequestCancel,
+  onMinimize,
+  onExpand,
+  onCollapse,
+  onPause,
+  onResume,
 }: {
   action: ActionState;
+  dockMode: ModelDownloadDockMode;
   showCancelConfirm: boolean;
   onConfirmCancel: () => void;
   onDismissCancelConfirm: () => void;
   onRequestCancel: () => void;
+  onMinimize: () => void;
+  onExpand: () => void;
+  onCollapse: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) => {
   if (action.type !== 'pulling-model') {
     return null;
   }
 
   const progress = typeof action.progress === 'number' ? action.progress : 0;
+  const isPaused = Boolean(action.paused);
+  const isActive = !isPaused;
+
+  if (dockMode === 'minimal') {
+    return (
+      <button
+        className="pointer-events-auto fixed bottom-8 right-8 z-[100] rounded-full bg-primary-container px-3 py-2 text-xs font-black text-white shadow-2xl transition hover:opacity-90"
+        onClick={onExpand}
+        type="button"
+      >
+        {progress}%
+      </button>
+    );
+  }
 
   return (
-    <div className="pointer-events-auto fixed bottom-8 right-8 z-[100] w-[min(calc(100vw-2rem),380px)]">
+    <div className={`pointer-events-auto fixed z-[100] ${dockMode === 'compact' ? 'bottom-8 right-8 w-[min(calc(100vw-2rem),320px)]' : 'inset-0 flex items-center justify-center bg-slate-900/35 p-4'}`}>
       {showCancelConfirm && (
-        <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-          <p className="text-sm font-bold text-slate-900">모델 다운로드를 중단할까요?</p>
+        <div className={`${dockMode === 'compact' ? 'mb-3' : 'absolute bottom-6 right-6 w-[min(calc(100vw-2rem),320px)]'} rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl`}>
+          <p className="text-sm font-bold text-slate-900">Stop this download?</p>
           <p className="mt-2 text-xs leading-6 text-slate-500">
-            확인을 누르면 다운로드가 취소되고, 이미 받은 중간 파일이 있으면 함께 삭제합니다.
+            This cancels the download and removes any partial files that were already received.
           </p>
           <div className="mt-4 flex justify-end gap-2">
-            <button
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
-              onClick={onDismissCancelConfirm}
-              type="button"
-            >
-              계속 받기
+            <button className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100" onClick={onDismissCancelConfirm} type="button">
+              Keep downloading
             </button>
-            <button
-              className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600 active:scale-[0.98]"
-              onClick={onConfirmCancel}
-              type="button"
-            >
-              중단 확인
+            <button className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600 active:scale-[0.98]" onClick={onConfirmCancel} type="button">
+              Stop download
             </button>
           </div>
         </div>
       )}
 
-      <Card className="border-primary-container/15 p-5 shadow-2xl shadow-primary-container/10">
+      <Card className={`border-primary-container/15 shadow-2xl shadow-primary-container/10 ${dockMode === 'compact' ? 'p-4' : 'w-[min(calc(100vw-2rem),520px)] p-6'}`}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Pulling model</p>
-            <p className="mt-1 truncate font-bold text-slate-900">{action.message || action.model}</p>
-            {action.model && (
-              <p className="mt-1 truncate text-xs font-semibold text-slate-500">{action.model}</p>
-            )}
+            <p className="truncate text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{action.model}</p>
+            <p className="mt-1 truncate text-lg font-bold text-slate-900">{isPaused ? 'Download paused' : 'Downloading model'}</p>
+            <p className="mt-1 truncate text-xs font-semibold text-slate-500">{action.message || action.model}</p>
           </div>
-          <span className="shrink-0 text-lg font-black text-primary-container">{progress}%</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              onClick={dockMode === 'compact' ? onExpand : onMinimize}
+              type="button"
+            >
+              {dockMode === 'compact' ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+            </button>
+            {dockMode === 'compact' && (
+              <button className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" onClick={onCollapse} type="button">
+                <Minus className="h-4 w-4" />
+              </button>
+            )}
+            <span className="text-lg font-black text-primary-container">{progress}%</span>
+          </div>
         </div>
 
-        <div className="mt-5 flex items-end gap-4">
-          <div className="relative h-24 w-20 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-            <div
-              className="absolute inset-x-0 bottom-0 bg-primary-container transition-[height] duration-500 ease-out"
-              style={{ height: `${progress}%` }}
-            />
-          </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-primary-container transition-all duration-500" style={{ width: `${progress}%` }} />
+        </div>
 
+        {dockMode === 'modal' && (
+          <div className="mt-5 grid min-w-0 grid-cols-2 gap-3">
+            <div className="min-w-0 overflow-hidden rounded-2xl bg-slate-50 px-4 py-3">
+              <p className="truncate text-[10px] font-black uppercase tracking-widest text-slate-400">Downloaded</p>
+              <p className="mt-1 truncate text-sm font-bold text-slate-800">{formatDownloadBytes(action.completedBytes)}</p>
+            </div>
+            <div className="min-w-0 overflow-hidden rounded-2xl bg-slate-50 px-4 py-3">
+              <p className="truncate text-[10px] font-black uppercase tracking-widest text-slate-400">Download size</p>
+              <p className="mt-1 truncate text-sm font-bold text-slate-800">{formatDownloadBytes(action.totalBytes)}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
-            className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-bold text-red-600 transition hover:border-red-200 hover:bg-red-100 active:scale-[0.98]"
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={isPaused ? onResume : onPause}
+            type="button"
+          >
+            {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+            {isPaused ? 'Resume' : 'Pause'}
+          </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-bold text-red-600 transition hover:border-red-200 hover:bg-red-100 active:scale-[0.98]"
             onClick={onRequestCancel}
             type="button"
           >
             <CircleStop className="h-4 w-4" />
-            중단
+            Stop
           </button>
         </div>
       </Card>
@@ -1657,6 +1762,7 @@ const LoginPage = ({
   loginError,
   loginPending,
   onBack,
+  onDownloadDesktop,
   onGoogleCredential,
   onLogin,
 }: {
@@ -1666,6 +1772,7 @@ const LoginPage = ({
   loginError: string | null;
   loginPending: boolean;
   onBack?: () => void;
+  onDownloadDesktop: () => void;
   onGoogleCredential: (credential: string) => Promise<void>;
   onLogin: (email: string, password: string) => Promise<void>;
 }) => {
@@ -1777,7 +1884,7 @@ const LoginPage = ({
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
               className="rounded-2xl bg-primary-container px-7 py-4 text-sm font-black uppercase tracking-[0.12em] text-white shadow-xl shadow-primary-container/20 active:scale-[0.98]"
-              onClick={openDesktopAppDownload}
+              onClick={onDownloadDesktop}
               type="button"
             >
               {login.downloadMiVA}
@@ -2057,161 +2164,7 @@ const IntegrationsPage = () => (
     </motion.div>
 );
 
-type PersonaHubFilter = 'trending' | 'new' | 'voice' | 'character';
-type PersonaHubView = 'grid' | 'table';
-
-type PersonaHubComment = {
-  id: string;
-  author: string;
-  body: string;
-  createdAt: string;
-  likes: number;
-};
-
-type PersonaHubPreset = {
-  id: string;
-  title: string;
-  author: string;
-  avatar: string;
-  voice: string;
-  character: string;
-  useCase: string;
-  tags: string[];
-  downloads: number;
-  likes: number;
-  commentCount: number;
-  description: string;
-  updatedAt: string;
-  featured?: boolean;
-  comments: PersonaHubComment[];
-};
-
-const personaHubPresets: PersonaHubPreset[] = [
-  {
-    id: 'preset-nova',
-    title: 'Nova Crystal — Calm Desk Companion',
-    author: 'mina.k',
-    avatar: 'https://images.unsplash.com/photo-1635336064449-d133f6311684?q=80&w=200&auto=format&fit=crop',
-    voice: 'Solomon (Deep)',
-    character: 'Nova Crystal',
-    useCase: 'daily',
-    tags: ['2D Avatar', 'Korean', 'Low VRAM'],
-    downloads: 1284,
-    likes: 312,
-    commentCount: 24,
-    description: 'A quiet office assistant with soft TTS and a reactive 2D avatar. Best for note-taking, calendar reminders, and short Q&A.',
-    updatedAt: '2026-06-04T09:12:00.000Z',
-    featured: true,
-    comments: [
-      { id: 'c1', author: 'jay.p', body: 'Imported this on a 8GB laptop — voice latency is great. Would love a night-mode variant.', createdAt: '2026-06-04T11:20:00.000Z', likes: 14 },
-      { id: 'c2', author: 'studio.team', body: 'We forked the voice profile and added a brighter greeting line. Sharing back next week.', createdAt: '2026-06-03T18:02:00.000Z', likes: 8 },
-    ],
-  },
-  {
-    id: 'preset-lyra',
-    title: 'Lyra Spark — Friendly Tutor',
-    author: 'edu.lab',
-    avatar: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?q=80&w=200&auto=format&fit=crop',
-    voice: 'Lyra (Bright)',
-    character: 'Pixel Mentor',
-    useCase: 'study',
-    tags: ['TTS', 'Explain Mode', 'EN/KR'],
-    downloads: 892,
-    likes: 201,
-    commentCount: 17,
-    description: 'Cheerful tutor preset with slower speech rate and step-by-step answer style. Includes character idle animations.',
-    updatedAt: '2026-06-03T14:40:00.000Z',
-    comments: [
-      { id: 'c3', author: 'hana.lee', body: 'Perfect for homework help. The explain-mode prompt is the best part.', createdAt: '2026-06-03T16:10:00.000Z', likes: 11 },
-    ],
-  },
-  {
-    id: 'preset-sol',
-    title: 'Solomon Night — Focus Mode',
-    author: 'dev.local',
-    avatar: 'https://images.unsplash.com/photo-1614726365723-49d988a6ef0e?q=80&w=200&auto=format&fit=crop',
-    voice: 'Solomon (Deep)',
-    character: 'Minimal Orb',
-    useCase: 'work',
-    tags: ['No Avatar', 'Whisper Small', 'Focus'],
-    downloads: 654,
-    likes: 148,
-    commentCount: 9,
-    description: 'Voice-only focus preset. Low distraction, short answers, optimized for coding sessions and late-night work.',
-    updatedAt: '2026-06-02T22:15:00.000Z',
-    comments: [
-      { id: 'c4', author: 'codex.user', body: 'No character overlay keeps CPU usage low. Imported in one click from Desktop.', createdAt: '2026-06-02T23:01:00.000Z', likes: 6 },
-    ],
-  },
-  {
-    id: 'preset-hana',
-    title: 'Hana Bloom — Character-first',
-    author: 'art.miva',
-    avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=200&auto=format&fit=crop',
-    voice: 'Custom (Warm)',
-    character: 'Hana Bloom',
-    useCase: 'character',
-    tags: ['Live2D-ready', 'Reactive', 'Emotive'],
-    downloads: 421,
-    likes: 97,
-    commentCount: 31,
-    description: 'Character-heavy preset with expressive reactions and longer greeting scripts. Upload includes overlay position defaults.',
-    updatedAt: '2026-06-01T08:30:00.000Z',
-    comments: [
-      { id: 'c5', author: 'overlay.fan', body: 'The hover-close behavior pairs nicely with this character pack.', createdAt: '2026-06-01T12:44:00.000Z', likes: 19 },
-      { id: 'c6', author: 'miva.team', body: 'Pinned for Phase 2 community import. Preview only in web console for now.', createdAt: '2026-05-30T09:00:00.000Z', likes: 22 },
-    ],
-  },
-];
-
-const personaHubFilters: Array<{ id: PersonaHubFilter; label: string }> = [
-  { id: 'trending', label: 'Trending' },
-  { id: 'new', label: 'New' },
-  { id: 'voice', label: 'Voice' },
-  { id: 'character', label: 'Character' },
-];
-
-const VoiceCharacterPage = () => {
-  const [personaFilter, setPersonaFilter] = useState<PersonaHubFilter>('trending');
-  const [personaView, setPersonaView] = useState<PersonaHubView>('table');
-  const [selectedPresetId, setSelectedPresetId] = useState(personaHubPresets[0]?.id ?? '');
-  const [draftComment, setDraftComment] = useState('');
-  const [likedPresetIds, setLikedPresetIds] = useState<string[]>([]);
-  const [bookmarkedPresetIds, setBookmarkedPresetIds] = useState<string[]>(['preset-nova']);
-
-  const filteredPresets = useMemo(() => {
-    const sorted = [...personaHubPresets];
-    if (personaFilter === 'new') {
-      return sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    }
-    if (personaFilter === 'voice') {
-      return sorted.filter((preset) => preset.tags.some((tag) => tag.toLowerCase().includes('tts') || tag.toLowerCase().includes('voice') || preset.voice));
-    }
-    if (personaFilter === 'character') {
-      return sorted.filter((preset) => preset.useCase === 'character' || preset.tags.some((tag) => tag.toLowerCase().includes('avatar') || tag.toLowerCase().includes('live2d')));
-    }
-    return sorted.sort((a, b) => b.downloads - a.downloads);
-  }, [personaFilter]);
-
-  const selectedPreset = filteredPresets.find((preset) => preset.id === selectedPresetId) ?? filteredPresets[0] ?? null;
-
-  const togglePresetLike = (presetId: string) => {
-    setLikedPresetIds((current) => (
-      current.includes(presetId)
-        ? current.filter((id) => id !== presetId)
-        : [...current, presetId]
-    ));
-  };
-
-  const togglePresetBookmark = (presetId: string) => {
-    setBookmarkedPresetIds((current) => (
-      current.includes(presetId)
-        ? current.filter((id) => id !== presetId)
-        : [...current, presetId]
-    ));
-  };
-
-  return (
+const VoiceCharacterPage = () => (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-10">
         <div className="flex justify-between items-end">
             <div>
@@ -2302,8 +2255,10 @@ const VoiceCharacterPage = () => {
                 <h3 className="text-2xl font-bold font-display mb-2">UI Persona</h3>
                 <p className="text-slate-500 mb-10 text-sm">Active 2D Avatar Character</p>
                 
-                <div className="w-full aspect-square rounded-[40px] overflow-hidden mb-10 shadow-2xl relative group">
-                    <img src="https://images.unsplash.com/photo-1635336064449-d133f6311684?q=80&w=400&auto=format&fit=crop" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                <div className="w-full aspect-square rounded-[40px] overflow-hidden mb-10 shadow-2xl relative group bg-gradient-to-br from-primary-container/10 via-blue-50 to-violet-100 flex items-center justify-center">
+                    <div className="flex h-32 w-32 items-center justify-center rounded-[32px] bg-white/80 text-primary-container shadow-inner">
+                        <UserCircle className="h-20 w-20" />
+                    </div>
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                         <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white"><Settings className="w-5 h-5" /></button>
                         <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white"><Download className="w-5 h-5" /></button>
@@ -2379,314 +2334,6 @@ const VoiceCharacterPage = () => {
                 </div>
             </Card>
         </div>
-
-        <section className="space-y-8 pt-8 border-t border-slate-200">
-            <div className="rounded-[28px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-6 md:p-8">
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-3">
-                            <Badge variant="warning">Preview Mockup</Badge>
-                            <Badge variant="info">Not connected to API</Badge>
-                        </div>
-                        <h3 className="text-2xl font-bold font-display tracking-tight">Persona Hub</h3>
-                        <p className="max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
-                            AI 비서의 <span className="font-semibold text-slate-800">음성·캐릭터·프롬프트 설정</span>을 업로드하고, 다른 사람 프리셋을 둘러본 뒤 댓글로 피드백하는 커뮤니티 보드입니다.
-                            실시간 대화방이 아니라 <span className="font-semibold text-slate-800">게시글 + 댓글 + 가져오기</span> 흐름을 가정한 UI 목업입니다.
-                        </p>
-                    </div>
-                    <div className="flex flex-wrap gap-3">
-                        <button type="button" className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50">
-                            <Share2 className="h-4 w-4" />
-                            Share my preset
-                        </button>
-                        <button type="button" className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20 transition-all hover:opacity-90">
-                            <Upload className="h-4 w-4" />
-                            Upload bundle
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-12 gap-8">
-                <Card className="col-span-12 xl:col-span-7 p-0 overflow-hidden">
-                    <div className="border-b border-slate-100 p-6 md:p-8">
-                        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                            <div>
-                                <h4 className="text-xl font-bold font-display">Browse presets</h4>
-                                <p className="mt-1 text-sm text-slate-500">Shared assistant bundles ranked by downloads, freshness, and community feedback.</p>
-                            </div>
-                            <div className="flex items-center gap-2 rounded-2xl bg-slate-100 p-1">
-                                <button
-                                    type="button"
-                                    onClick={() => setPersonaView('table')}
-                                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'table' ? 'bg-white text-primary-container shadow-sm' : 'text-slate-400'}`}
-                                >
-                                    <List className="h-3.5 w-3.5" />
-                                    Table
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setPersonaView('grid')}
-                                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'grid' ? 'bg-white text-primary-container shadow-sm' : 'text-slate-400'}`}
-                                >
-                                    <Grid3x3 className="h-3.5 w-3.5" />
-                                    Cards
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className="mt-6 flex flex-wrap gap-2">
-                            {personaHubFilters.map((filter) => (
-                                <button
-                                    key={filter.id}
-                                    type="button"
-                                    onClick={() => setPersonaFilter(filter.id)}
-                                    className={`rounded-full px-4 py-2 text-xs font-bold transition-all ${personaFilter === filter.id ? 'bg-primary-container text-white shadow-md shadow-primary-container/20' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                                >
-                                    {filter.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {personaView === 'table' ? (
-                        <div className="overflow-x-auto">
-                            <table className="w-full min-w-[760px] text-left">
-                                <thead className="bg-slate-50 border-b border-slate-100">
-                                    <tr>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Preset</th>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Author</th>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Voice</th>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Character</th>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Downloads</th>
-                                        <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Comments</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-50">
-                                    {filteredPresets.map((preset) => {
-                                        const isSelected = selectedPreset?.id === preset.id;
-                                        return (
-                                            <tr
-                                                key={preset.id}
-                                                onClick={() => setSelectedPresetId(preset.id)}
-                                                className={`cursor-pointer transition-colors ${isSelected ? 'bg-primary-container/5' : 'hover:bg-slate-50/80'}`}
-                                            >
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <img src={preset.avatar} alt="" className="h-10 w-10 rounded-2xl object-cover" />
-                                                        <div>
-                                                            <p className="text-sm font-bold text-slate-800">{preset.title}</p>
-                                                            <div className="mt-1 flex flex-wrap gap-1">
-                                                                {preset.featured && <Badge variant="warning">Featured</Badge>}
-                                                                <Badge>{preset.useCase}</Badge>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-sm font-semibold text-slate-600">@{preset.author}</td>
-                                                <td className="px-6 py-4 text-sm text-slate-500">{preset.voice}</td>
-                                                <td className="px-6 py-4 text-sm text-slate-500">{preset.character}</td>
-                                                <td className="px-6 py-4 text-sm font-bold text-slate-700">{preset.downloads.toLocaleString()}</td>
-                                                <td className="px-6 py-4 text-sm font-bold text-slate-700">{preset.commentCount}</td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
-                            {filteredPresets.map((preset) => {
-                                const isSelected = selectedPreset?.id === preset.id;
-                                return (
-                                    <button
-                                        key={preset.id}
-                                        type="button"
-                                        onClick={() => setSelectedPresetId(preset.id)}
-                                        className={`rounded-[28px] border p-5 text-left transition-all ${isSelected ? 'border-primary-container bg-primary-container/5 shadow-lg shadow-primary-container/10' : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white'}`}
-                                    >
-                                        <div className="flex items-start gap-4">
-                                            <img src={preset.avatar} alt="" className="h-16 w-16 rounded-[24px] object-cover" />
-                                            <div className="min-w-0 flex-1">
-                                                <p className="font-bold text-slate-900">{preset.title}</p>
-                                                <p className="mt-1 text-xs font-semibold text-slate-400">@{preset.author}</p>
-                                                <div className="mt-3 flex flex-wrap gap-2">
-                                                    {preset.tags.slice(0, 3).map((tag) => (
-                                                        <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 ring-1 ring-slate-200">
-                                                            {tag}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-                                            <div className="rounded-2xl bg-white px-3 py-2">
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Downloads</p>
-                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.downloads.toLocaleString()}</p>
-                                            </div>
-                                            <div className="rounded-2xl bg-white px-3 py-2">
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Likes</p>
-                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.likes}</p>
-                                            </div>
-                                            <div className="rounded-2xl bg-white px-3 py-2">
-                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Comments</p>
-                                                <p className="mt-1 text-sm font-bold text-slate-800">{preset.commentCount}</p>
-                                            </div>
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    )}
-                </Card>
-
-                <Card className="col-span-12 xl:col-span-5 p-0 overflow-hidden">
-                    {selectedPreset ? (
-                        <>
-                            <div className="border-b border-slate-100 p-6 md:p-8">
-                                <div className="flex items-start gap-4">
-                                    <img src={selectedPreset.avatar} alt="" className="h-20 w-20 rounded-[28px] object-cover shadow-lg" />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            {selectedPreset.featured && <Badge variant="warning">Featured</Badge>}
-                                            <Badge variant="active">{selectedPreset.useCase}</Badge>
-                                        </div>
-                                        <h4 className="mt-2 text-xl font-bold font-display text-slate-900">{selectedPreset.title}</h4>
-                                        <p className="mt-1 text-sm font-semibold text-slate-500">Shared by @{selectedPreset.author} · {formatRelativeTime(new Date(selectedPreset.updatedAt))}</p>
-                                        <p className="mt-4 text-sm leading-relaxed text-slate-600">{selectedPreset.description}</p>
-                                    </div>
-                                </div>
-
-                                <div className="mt-6 grid grid-cols-2 gap-3">
-                                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Voice</p>
-                                        <p className="mt-1 text-sm font-bold text-slate-800">{selectedPreset.voice}</p>
-                                    </div>
-                                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Character</p>
-                                        <p className="mt-1 text-sm font-bold text-slate-800">{selectedPreset.character}</p>
-                                    </div>
-                                </div>
-
-                                <div className="mt-6 flex flex-wrap gap-3">
-                                    <button type="button" className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20">
-                                        <Download className="h-4 w-4" />
-                                        Import to Desktop
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => togglePresetLike(selectedPreset.id)}
-                                        className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${likedPresetIds.includes(selectedPreset.id) ? 'bg-rose-50 text-rose-600 ring-1 ring-rose-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                                    >
-                                        <Heart className={`h-4 w-4 ${likedPresetIds.includes(selectedPreset.id) ? 'fill-current' : ''}`} />
-                                        {selectedPreset.likes + (likedPresetIds.includes(selectedPreset.id) ? 1 : 0)}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => togglePresetBookmark(selectedPreset.id)}
-                                        className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                                    >
-                                        <Bookmark className={`h-4 w-4 ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'fill-current' : ''}`} />
-                                        Save
-                                    </button>
-                                    <button type="button" className="flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-200">
-                                        <Play className="h-4 w-4" />
-                                        Preview voice
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="border-b border-slate-100 px-6 py-4 md:px-8">
-                                <div className="flex items-center justify-between">
-                                    <h5 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                        <MessageSquare className="h-4 w-4 text-primary-container" />
-                                        Comments ({selectedPreset.comments.length})
-                                    </h5>
-                                    <span className="text-xs font-semibold text-slate-400">Async thread · not live chat</span>
-                                </div>
-                            </div>
-
-                            <div className="max-h-[360px] space-y-4 overflow-y-auto p-6 md:p-8">
-                                {selectedPreset.comments.map((comment) => (
-                                    <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 p-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <p className="text-sm font-bold text-slate-800">@{comment.author}</p>
-                                            <p className="text-xs font-semibold text-slate-400">{formatRelativeTime(new Date(comment.createdAt))}</p>
-                                        </div>
-                                        <p className="mt-2 text-sm leading-relaxed text-slate-600">{comment.body}</p>
-                                        <button type="button" className="mt-3 flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-primary-container">
-                                            <ThumbsUp className="h-3.5 w-3.5" />
-                                            {comment.likes} helpful
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="border-t border-slate-100 bg-slate-50 p-6 md:p-8">
-                                <label className="text-xs font-black uppercase tracking-widest text-slate-400">Leave a comment</label>
-                                <div className="mt-3 flex gap-3">
-                                    <input
-                                        value={draftComment}
-                                        onChange={(event) => setDraftComment(event.target.value)}
-                                        placeholder="This preset worked well on my laptop..."
-                                        className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none ring-primary-container/20 transition-all focus:ring-4"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setDraftComment('')}
-                                        className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white"
-                                    >
-                                        <Send className="h-4 w-4" />
-                                        Post
-                                    </button>
-                                </div>
-                                <p className="mt-3 text-xs font-semibold text-slate-400">Mock only — comments are not saved yet.</p>
-                            </div>
-                        </>
-                    ) : (
-                        <div className="flex h-full min-h-[420px] items-center justify-center p-10 text-center text-slate-400">
-                            Select a preset to open its detail thread.
-                        </div>
-                    )}
-                </Card>
-            </div>
-
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-                <Card className="p-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
-                            <Upload className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-800">1. Upload bundle</p>
-                            <p className="text-xs text-slate-500">Export voice, character, prompt settings from Desktop.</p>
-                        </div>
-                    </div>
-                </Card>
-                <Card className="p-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
-                            <Users className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-800">2. Community feedback</p>
-                            <p className="text-xs text-slate-500">Others comment, like, and fork your preset asynchronously.</p>
-                        </div>
-                    </div>
-                </Card>
-                <Card className="p-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container">
-                            <Sparkles className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-800">3. Import locally</p>
-                            <p className="text-xs text-slate-500">One-click import into MiVA Desktop without sharing chat logs.</p>
-                        </div>
-                    </div>
-                </Card>
-            </div>
-        </section>
         
         <footer className="text-center py-10 opacity-40 border-t border-slate-100 mt-20">
             <p className="text-sm font-bold flex items-center justify-center gap-3">
@@ -2694,8 +2341,7 @@ const VoiceCharacterPage = () => {
             </p>
         </footer>
     </motion.div>
-  );
-};
+);
 
 const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refreshCloud: () => Promise<void> }) => {
   const stats = cloud.adminStats;
@@ -2824,10 +2470,19 @@ export default function App() {
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [showPullCancelConfirm, setShowPullCancelConfirm] = useState(false);
+  const [downloadDockMode, setDownloadDockMode] = useState<ModelDownloadDockMode>('modal');
   const [pendingDeleteModel, setPendingDeleteModel] = useState<string | null>(null);
   const pullAbortRef = useRef<AbortController | null>(null);
+  const pullPauseRequestedRef = useRef(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [testingApiKeyId, setTestingApiKeyId] = useState<string | null>(null);
+  const [showDesktopDownloadNotice, setShowDesktopDownloadNotice] = useState(false);
+  const desktopDownload = copy.desktopDownload;
+
+  const handleDesktopAppDownload = () => {
+    triggerDesktopAppDownload();
+    setShowDesktopDownloadNotice(true);
+  };
   const visibleNavItems = useMemo(
     () => auth.role === 'admin'
       ? navItems.filter((item) => item.id === 'admin')
@@ -3196,6 +2851,7 @@ export default function App() {
     }
 
     pullAbortRef.current = null;
+    setDownloadDockMode('modal');
     setAction({
       type: 'idle',
       message: `${model} download cancelled. Partial files were cleared — the next download will start from 0%.`,
@@ -3203,12 +2859,33 @@ export default function App() {
     await refreshConnection();
   };
 
+  const pauseModelPull = (model: string) => {
+    pullPauseRequestedRef.current = true;
+    pullAbortRef.current?.abort();
+    pullAbortRef.current = null;
+    setAction((current) => (
+      current.type === 'pulling-model' && current.model === model
+        ? { ...current, paused: true, message: 'Download paused' }
+        : current
+    ));
+  };
+
   const pullModel = async (model: string) => {
     pullAbortRef.current?.abort();
+    pullPauseRequestedRef.current = false;
     const abortController = new AbortController();
     pullAbortRef.current = abortController;
     setShowPullCancelConfirm(false);
-    setAction({ type: 'pulling-model', model, message: `Preparing ${model} download...`, progress: 0 });
+    setDownloadDockMode((current) => (current === 'minimal' || current === 'compact' ? current : 'modal'));
+    setAction((current) => ({
+      type: 'pulling-model',
+      model,
+      message: `Preparing ${model} download...`,
+      progress: current.type === 'pulling-model' && current.model === model ? current.progress ?? 0 : 0,
+      paused: false,
+      completedBytes: current.type === 'pulling-model' && current.model === model ? current.completedBytes : undefined,
+      totalBytes: current.type === 'pulling-model' && current.model === model ? current.totalBytes : undefined,
+    }));
 
     try {
       void recordUsageEvent('model_selected', model).catch(() => undefined);
@@ -3251,6 +2928,9 @@ export default function App() {
             model,
             message: event.status || `Downloading ${model}...`,
             progress,
+            paused: false,
+            completedBytes: typeof event.completed === 'number' ? event.completed : undefined,
+            totalBytes: typeof event.total === 'number' ? event.total : undefined,
           });
         }
       }
@@ -3258,9 +2938,19 @@ export default function App() {
       setAction({ type: 'pulling-model', model, message: `${model} download complete. Refreshing catalog...`, progress: 100 });
       await refreshConnection();
       await refreshCloud();
+      setDownloadDockMode('modal');
       setAction({ type: 'idle' });
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
+        if (pullPauseRequestedRef.current) {
+          pullPauseRequestedRef.current = false;
+          setAction((current) => (
+            current.type === 'pulling-model' && current.model === model
+              ? { ...current, paused: true, message: 'Download paused' }
+              : current
+          ));
+          return;
+        }
         setAction({
           type: 'idle',
           message: `${model} download cancelled.`,
@@ -3520,6 +3210,7 @@ export default function App() {
       case 'billing': return <BillingPage />;
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
+      case 'personaHub': return <PersonaHubPage />;
       case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'settings': return <SettingsPage />;
       default: return null;
@@ -3534,31 +3225,44 @@ export default function App() {
     }
 
     return (
-      <LoginPage
-        cloud={cloud}
-        desktopLoginRequest={desktopLoginRequest}
-        googleLoginPending={googleLoginPending}
-        loginError={loginError}
-        loginPending={loginPending}
-        onBack={desktopLoginRequest ? undefined : () => setShowLogin(false)}
-        onGoogleCredential={handleGoogleCredential}
-        onLogin={handleLogin}
-      />
+      <>
+        <DesktopDownloadNotice
+          copy={desktopDownload}
+          onDismiss={() => setShowDesktopDownloadNotice(false)}
+          visible={showDesktopDownloadNotice}
+        />
+        <LoginPage
+          cloud={cloud}
+          desktopLoginRequest={desktopLoginRequest}
+          googleLoginPending={googleLoginPending}
+          loginError={loginError}
+          loginPending={loginPending}
+          onBack={desktopLoginRequest ? undefined : () => setShowLogin(false)}
+          onDownloadDesktop={handleDesktopAppDownload}
+          onGoogleCredential={handleGoogleCredential}
+          onLogin={handleLogin}
+        />
+      </>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-surface-bg text-slate-900">
+    <div className="flex min-h-screen bg-surface-bg text-slate-900 dark:text-slate-100">
+      <DesktopDownloadNotice
+        copy={desktopDownload}
+        onDismiss={() => setShowDesktopDownloadNotice(false)}
+        visible={showDesktopDownloadNotice}
+      />
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-full w-[280px] border-r border-slate-100 bg-white shadow-xl shadow-slate-200/20 flex flex-col z-50">
+      <aside className="fixed left-0 top-0 z-50 flex h-full w-[280px] flex-col border-r border-slate-100 bg-white shadow-xl shadow-slate-200/20 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/30">
         <div className="p-8">
           <div className="flex items-center gap-3 mb-12">
             <div className="w-10 h-10 bg-primary-container rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-container/30">
               <span className="font-display text-xl font-black leading-none">M</span>
             </div>
             <div>
-              <h1 className="text-xl font-bold font-display tracking-tight text-slate-900">{shell.brandTitle}</h1>
-              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-tight">{shell.brandSubtitle}</p>
+              <h1 className="font-display text-xl font-bold tracking-tight text-slate-900 dark:text-white">{shell.brandTitle}</h1>
+              <p className="text-[10px] font-black uppercase leading-tight tracking-widest text-slate-400">{shell.brandSubtitle}</p>
             </div>
           </div>
 
@@ -3570,18 +3274,18 @@ export default function App() {
                 className={`w-full group py-3 px-4 flex items-center gap-3 font-semibold text-sm rounded-xl transition-all active:scale-[0.98] ${
                   activePage === item.id 
                     ? 'bg-primary-container text-white shadow-lg shadow-primary-container/20' 
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
                 }`}
               >
-                <item.icon className={`w-5 h-5 transition-colors ${activePage === item.id ? 'text-white' : 'text-slate-400 group-hover:text-slate-900'}`} />
+                <item.icon className={`h-5 w-5 transition-colors ${activePage === item.id ? 'text-white' : 'text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white'}`} />
                 <span className="font-display tracking-tight">{item.label}</span>
               </button>
             ))}
           </nav>
         </div>
 
-        <div className="mt-auto p-6 border-t border-slate-50">
-          <div className="bg-slate-50 rounded-2xl p-4 flex items-center gap-3 group cursor-pointer hover:bg-slate-100 transition-colors">
+        <div className="mt-auto border-t border-slate-50 p-6 dark:border-slate-800">
+          <div className="group flex cursor-pointer items-center gap-3 rounded-2xl bg-slate-50 p-4 transition-colors hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700">
             <div className="relative">
               <img 
                 src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=100&auto=format&fit=crop" 
@@ -3591,7 +3295,7 @@ export default function App() {
               <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-50 rounded-full"></div>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-bold text-slate-800">{auth.user?.displayName || 'MiVA User'}</p>
+              <p className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{auth.user?.displayName || 'MiVA User'}</p>
               <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{auth.role} account</p>
             </div>
             <button
@@ -3608,18 +3312,18 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 ml-[280px] flex flex-col">
         {/* Top Header */}
-        <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-50 h-20 flex items-center justify-between px-10">
+        <header className="sticky top-0 z-40 flex h-20 items-center justify-between border-b border-slate-50 bg-white/80 px-10 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
           <div className="flex flex-1 items-center gap-3 max-w-2xl">
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 placeholder={shell.searchPlaceholder}
-                className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-12 pr-4 text-sm font-medium focus:ring-2 focus:ring-primary-container focus:bg-white transition-all shadow-inner"
+                className="w-full rounded-2xl border-none bg-slate-100 py-3 pl-12 pr-4 text-sm font-medium shadow-inner transition-all focus:bg-white focus:ring-2 focus:ring-primary-container dark:bg-slate-800 dark:text-slate-100 dark:focus:bg-slate-900"
               />
             </div>
             <button
               className="inline-flex shrink-0 items-center gap-2 rounded-2xl bg-primary-container px-4 py-3 text-xs font-black uppercase tracking-[0.08em] text-white shadow-lg shadow-primary-container/20 transition-all hover:brightness-105 active:scale-[0.98]"
-              onClick={openDesktopAppDownload}
+              onClick={handleDesktopAppDownload}
               type="button"
             >
               <Download className="h-4 w-4" />
@@ -3654,7 +3358,7 @@ export default function App() {
               <span className={`w-2.5 h-2.5 rounded-full ${topStatus.dot}`}></span>
               <span className={`text-xs font-bold tracking-tight ${topStatus.text}`}>{topStatus.label}</span>
             </div>
-            <div className="flex items-center gap-4 text-slate-400 border-l border-slate-100 pl-8">
+            <div className="flex items-center gap-4 border-l border-slate-100 pl-8 text-slate-400 dark:border-slate-800">
               <LanguageToggle />
               <button className="hover:text-slate-900 transition-colors relative">
                 <Bell className="w-5 h-5" />
@@ -3682,99 +3386,157 @@ export default function App() {
 
       <ModelDownloadFloatingCard
         action={action}
+        dockMode={downloadDockMode}
         showCancelConfirm={showPullCancelConfirm}
+        onCollapse={() => setDownloadDockMode('minimal')}
         onConfirmCancel={() => {
           if (action.model) {
             void cancelModelPull(action.model);
           }
         }}
         onDismissCancelConfirm={() => setShowPullCancelConfirm(false)}
+        onExpand={() => setDownloadDockMode('modal')}
+        onMinimize={() => setDownloadDockMode('compact')}
+        onPause={() => {
+          if (action.model) {
+            pauseModelPull(action.model);
+          }
+        }}
         onRequestCancel={() => setShowPullCancelConfirm(true)}
+        onResume={() => {
+          if (action.model) {
+            void pullModel(action.model);
+          }
+        }}
       />
     </div>
   );
 }
 
-const SettingsPage = () => (
+const SettingsPage = () => {
+  const { locale, setLocale, copy } = useLocale();
+  const { theme, setTheme } = useTheme();
+  const settings = copy.settingsPage;
+
+  const themeButtonClass = (active: boolean) => (
+    active
+      ? 'flex items-center gap-3 rounded-2xl border-2 border-primary-container bg-primary-container/5 px-6 py-3 font-bold text-primary-container'
+      : 'flex items-center gap-3 rounded-2xl border-2 border-slate-100 px-6 py-3 font-bold text-slate-400 transition hover:border-slate-200 hover:text-slate-600 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:text-slate-200'
+  );
+
+  return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
-        <div>
-            <h2 className="text-3xl font-bold font-display tracking-tight flex items-end gap-3">
-                Settings
-            </h2>
-            <p className="text-slate-500 mt-1">Configure your local web console and bridge preferences.</p>
-        </div>
+      <div>
+        <h2 className="flex items-end gap-3 font-display text-3xl font-bold tracking-tight">
+          {settings.title}
+        </h2>
+        <p className="mt-1 text-slate-500 dark:text-slate-400">{settings.subtitle}</p>
+      </div>
 
-        <div className="grid grid-cols-12 gap-10">
-            <div className="col-span-12 lg:col-span-8 space-y-8">
-                <Card className="p-10">
-                    <h3 className="text-xl font-bold font-display mb-8 flex items-center gap-3">
-                         <Settings className="w-5 h-5 text-primary-container" /> Console Preferences
-                    </h3>
-                    <div className="space-y-10">
-                        <section className="flex items-center justify-between">
-                            <div>
-                                <h4 className="font-bold text-slate-900">Language Selection</h4>
-                                <p className="text-sm text-slate-500">Interface language for the management console.</p>
-                            </div>
-                            <div className="flex bg-slate-100 p-1 rounded-2xl">
-                                <button className="px-6 py-2 rounded-xl bg-white shadow-sm text-primary-container font-bold text-sm">English</button>
-                                <button className="px-6 py-2 rounded-xl text-slate-400 font-bold text-sm">Korean</button>
-                            </div>
-                        </section>
-                        <section className="flex items-center justify-between">
-                            <div>
-                                <h4 className="font-bold text-slate-900">Theme</h4>
-                                <p className="text-sm text-slate-500">Visual style of the dashboard.</p>
-                            </div>
-                            <div className="flex gap-4">
-                                <button className="flex items-center gap-3 px-6 py-3 rounded-2xl border-2 border-primary-container text-primary-container font-bold">
-                                    <Lock className="w-4 h-4" /> Dark
-                                </button>
-                                <button className="flex items-center gap-3 px-6 py-3 rounded-2xl border-2 border-slate-100 text-slate-400 font-bold">
-                                    <Lock className="w-4 h-4" /> Light
-                                </button>
-                            </div>
-                        </section>
-                    </div>
-                </Card>
-                
-                <Card className="p-8 border-red-50 border-[3px] bg-red-50/10">
-                    <h3 className="text-xl font-bold font-display mb-2 text-red-600">System Maintenance</h3>
-                    <div className="flex justify-between items-center bg-white p-6 rounded-[24px] border border-red-100">
-                        <div>
-                            <p className="font-bold text-slate-900">Reset web console state</p>
-                            <p className="text-sm text-slate-500">Clear all local storage preferences and cache.</p>
-                        </div>
-                        <button className="bg-red-500 text-white px-8 py-3 rounded-2xl font-bold shadow-xl shadow-red-500/20 active:scale-95 transition-all">Reset Now</button>
-                    </div>
-                </Card>
-            </div>
-
-            <div className="col-span-12 lg:col-span-4 space-y-8">
-                <div className="bg-slate-900 text-white p-10 rounded-[32px] relative overflow-hidden group">
-                     <ShieldCheck className="w-12 h-12 mb-6" />
-                     <h4 className="text-2xl font-bold font-display mb-4">Local-First Privacy</h4>
-                     <p className="text-slate-400 text-sm leading-relaxed mb-10">MiVA is built on the Local-First Manifesto. Your data never leaves your machine unless you explicitly configure a bridge.</p>
-                     <button className="flex items-center gap-2 font-black text-xs uppercase tracking-widest border-b-2 border-white/20 pb-2 hover:border-white transition-all">Read the Manifesto <ChevronRight className="w-4 h-4" /></button>
-                     <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-primary-container/20 rounded-full blur-[100px] pointer-events-none group-hover:bg-primary-container/30 transition-all"></div>
+      <div className="grid grid-cols-12 gap-10">
+        <div className="col-span-12 space-y-8 lg:col-span-8">
+          <Card className="p-10">
+            <h3 className="mb-8 flex items-center gap-3 font-display text-xl font-bold">
+              <Settings className="h-5 w-5 text-primary-container" /> {settings.preferencesTitle}
+            </h3>
+            <div className="space-y-10">
+              <section className="flex items-center justify-between gap-6">
+                <div>
+                  <h4 className="font-bold text-slate-900 dark:text-slate-100">{settings.languageTitle}</h4>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{settings.languageBody}</p>
                 </div>
-                
-                <Card className="border-l-4 border-green-500 p-8 space-y-6">
-                    <span className="text-[10px] font-black tracking-widest text-slate-300 uppercase">Node Health</span>
-                    <div className="space-y-4">
-                        {[
-                            { l: 'Local Bridge', v: 'Active', c: 'text-green-500' },
-                            { l: 'Sync Status', v: 'Synchronized', c: 'text-slate-900' },
-                            { l: 'Version', v: 'v2.4.1-stable', c: 'text-slate-400 font-mono' },
-                        ].map((s, i) => (
-                            <div key={i} className="flex justify-between items-center">
-                                <span className="text-sm text-slate-500">{s.l}</span>
-                                <span className={`text-sm font-bold ${s.c}`}>{s.v}</span>
-                            </div>
-                        ))}
-                    </div>
-                </Card>
+                <div className="flex rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
+                  <button
+                    className={`rounded-xl px-6 py-2 text-sm font-bold ${
+                      locale === 'en'
+                        ? 'bg-white text-primary-container shadow-sm dark:bg-slate-900'
+                        : 'text-slate-400'
+                    }`}
+                    onClick={() => setLocale('en')}
+                    type="button"
+                  >
+                    English
+                  </button>
+                  <button
+                    className={`rounded-xl px-6 py-2 text-sm font-bold ${
+                      locale === 'ko'
+                        ? 'bg-white text-primary-container shadow-sm dark:bg-slate-900'
+                        : 'text-slate-400'
+                    }`}
+                    onClick={() => setLocale('ko')}
+                    type="button"
+                  >
+                    Korean
+                  </button>
+                </div>
+              </section>
+              <section className="flex items-center justify-between gap-6">
+                <div>
+                  <h4 className="font-bold text-slate-900 dark:text-slate-100">{settings.themeTitle}</h4>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{settings.themeBody}</p>
+                </div>
+                <div className="flex gap-4">
+                  <button
+                    className={themeButtonClass(theme === 'dark')}
+                    onClick={() => setTheme('dark')}
+                    type="button"
+                  >
+                    <Moon className="h-4 w-4" /> {settings.themeDark}
+                  </button>
+                  <button
+                    className={themeButtonClass(theme === 'light')}
+                    onClick={() => setTheme('light')}
+                    type="button"
+                  >
+                    <Sun className="h-4 w-4" /> {settings.themeLight}
+                  </button>
+                </div>
+              </section>
             </div>
+          </Card>
+
+          <Card className="border-[3px] border-red-50 bg-red-50/10 p-8 dark:border-red-900/40 dark:bg-red-950/20">
+            <h3 className="mb-2 font-display text-xl font-bold text-red-600">{settings.maintenanceTitle}</h3>
+            <div className="flex items-center justify-between rounded-[24px] border border-red-100 bg-white p-6 dark:border-red-900/50 dark:bg-slate-900">
+              <div>
+                <p className="font-bold text-slate-900 dark:text-slate-100">{settings.resetTitle}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{settings.resetBody}</p>
+              </div>
+              <button className="rounded-2xl bg-red-500 px-8 py-3 font-bold text-white shadow-xl shadow-red-500/20 transition-all active:scale-95" type="button">
+                {settings.resetAction}
+              </button>
+            </div>
+          </Card>
         </div>
+
+        <div className="col-span-12 space-y-8 lg:col-span-4">
+          <div className="group relative overflow-hidden rounded-[32px] bg-slate-900 p-10 text-white">
+            <ShieldCheck className="mb-6 h-12 w-12" />
+            <h4 className="mb-4 font-display text-2xl font-bold">{settings.privacyTitle}</h4>
+            <p className="mb-10 text-sm leading-relaxed text-slate-400">{settings.privacyBody}</p>
+            <button className="flex items-center gap-2 border-b-2 border-white/20 pb-2 text-xs font-black uppercase tracking-widest transition-all hover:border-white" type="button">
+              {settings.privacyAction} <ChevronRight className="h-4 w-4" />
+            </button>
+            <div className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full bg-primary-container/20 blur-[100px] transition-all group-hover:bg-primary-container/30"></div>
+          </div>
+
+          <Card className="space-y-6 border-l-4 border-green-500 p-8">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">{settings.nodeHealth}</span>
+            <div className="space-y-4">
+              {[
+                { l: settings.localBridge, v: settings.active, c: 'text-green-500' },
+                { l: settings.syncStatus, v: settings.synchronized, c: 'text-slate-900 dark:text-slate-100' },
+                { l: settings.version, v: 'v2.4.1-stable', c: 'text-slate-400 font-mono' },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500 dark:text-slate-400">{s.l}</span>
+                  <span className={`text-sm font-bold ${s.c}`}>{s.v}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
     </motion.div>
-);
+  );
+};

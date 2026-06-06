@@ -1,8 +1,13 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppMode, ChatMessage, ChatMetrics, DocumentAttachment, ImageAttachment, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
+import type { Locale } from "../i18n";
+import { ClawCodeWorkspaceChatAction } from "../components/ClawCodeWorkspaceChatAction";
 import { PrimaryButton } from "../components/ui";
+import { ChatSlashChip } from "../components/ChatSlashChip";
 import { ChatSlashMenu } from "../components/ChatSlashMenu";
+import { ChatUserMessageContent } from "../components/ChatUserMessageContent";
+import type { ChatSlashCommand } from "../features/chat/slashCommands";
 import { getCharacterAsset } from "../features/characters/catalog";
 import { Live2DStage } from "../features/characters/Live2DStage";
 import { useCharacterOverlaySync } from "../features/characters/useCharacterOverlay";
@@ -11,6 +16,7 @@ import { useChatSlashMenu } from "../features/chat/useChatSlashMenu";
 import { formatChatLatency } from "../utils";
 
 type RuntimePageProps = {
+  activeLocale: Locale;
   activeChatMessages: ChatMessage[];
   activeModelLabel: string;
   activeProviderLabel: string;
@@ -21,10 +27,14 @@ type RuntimePageProps = {
   chatBusyLabel: string | null;
   chooseAndAttachDocuments: () => Promise<void> | void;
   chooseAndAttachImages: () => Promise<void> | void;
+  chooseClawCodeWorkspace: () => Promise<string | null> | string | null;
+  completeClawCodeWorkspaceFromChat: (messageCreatedAt: string, workspaceRoot: string) => Promise<void> | void;
   documentAttachments: DocumentAttachment[];
   imageAttachments: ImageAttachment[];
   chatEndRef: RefObject<HTMLDivElement | null>;
   chatInput: string;
+  selectedSlashCommand: ChatSlashCommand | null;
+  slashCommands: ChatSlashCommand[];
   chatIntroKey: string;
   chatMetrics: ChatMetrics | null;
   characterSettings: PromptSettings["character"];
@@ -52,6 +62,7 @@ type RuntimePageProps = {
   setAppMode: (mode: AppMode) => void;
   setAssistantPanelMinimized: Dispatch<SetStateAction<boolean>>;
   setChatInput: Dispatch<SetStateAction<string>>;
+  setSelectedSlashCommand: (command: ChatSlashCommand | null) => void;
   setDismissedChatIntroKeys: Dispatch<SetStateAction<string[]>>;
   setRuntimeTtsEnabled: Dispatch<SetStateAction<boolean>>;
   setRuntimeTtsSpeakingRate: (speakingRate: number) => void;
@@ -60,6 +71,7 @@ type RuntimePageProps = {
 };
 
 export function RuntimePage({
+  activeLocale,
   activeChatMessages,
   activeModelLabel,
   activeProviderLabel,
@@ -69,11 +81,15 @@ export function RuntimePage({
   busyAction,
   chatBusyLabel,
   chooseAndAttachDocuments,
-  chooseAndAttachImages,
+  chooseAndAttachImages: _chooseAndAttachImages,
+  chooseClawCodeWorkspace,
+  completeClawCodeWorkspaceFromChat,
   documentAttachments,
   imageAttachments,
   chatEndRef,
   chatInput,
+  selectedSlashCommand,
+  slashCommands,
   chatIntroKey,
   chatMetrics,
   characterSettings,
@@ -101,6 +117,7 @@ export function RuntimePage({
   setAppMode,
   setAssistantPanelMinimized,
   setChatInput,
+  setSelectedSlashCommand,
   setDismissedChatIntroKeys,
   setRuntimeTtsEnabled,
   setRuntimeTtsSpeakingRate,
@@ -128,6 +145,9 @@ const [assistantReplyPulse, setAssistantReplyPulse] = useState(false);
 const slashMenu = useChatSlashMenu({
   chatInput,
   setChatInput,
+  selectedSlashCommand,
+  setSelectedSlashCommand,
+  slashCommands,
   inputRef: chatInputRef,
   disabled: busyAction === "chat",
 });
@@ -172,6 +192,11 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
     const hasPendingAttachments = documentAttachments.some((attachment) => attachment.status === "analyzing");
     const hasImageAttachments = imageAttachments.length > 0;
     const chatSubmitDisabled = (chatUnavailable && !hasImageAttachments) || busyAction === "chat" || hasPendingAttachments;
+    const chatPlaceholder = chatGenerating
+      ? t.generatingResponse
+      : selectedSlashCommand
+        ? `Add instructions for ${selectedSlashCommand.label}...`
+        : t.messagePlaceholder;
     const chatLatencyMetric = formatChatLatency(chatMetrics?.latencyMs);
     const chatMessageMetric = `Messages: ${activeChatMessages.length}`;
     const chatProviderMetric = `${activeProviderMode === "local" ? "Local" : "Cloud"}: ${activeModelLabel}`;
@@ -359,7 +384,29 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                     </div>
                   ) : (
                     <>
-                      {message.content}
+                      {message.role === "user" ? (
+                        <ChatUserMessageContent content={message.content} images={message.images} slashCommands={slashCommands} />
+                      ) : (
+                        <>
+                          {message.content}
+                          {message.images?.map((image, imageIndex) => (
+                            <img
+                              alt={image.alt || "Generated image"}
+                              className="mt-3 max-h-[360px] w-full rounded-lg border border-[var(--miva-border)] object-contain"
+                              key={`${message.createdAt || index}-image-${imageIndex}`}
+                              src={image.dataUrl}
+                            />
+                          ))}
+                        </>
+                      )}
+                      {message.uiAction === "claw-pick-workspace" && message.createdAt && isTauriRuntime() ? (
+                        <ClawCodeWorkspaceChatAction
+                          activeLocale={activeLocale}
+                          busy={busyAction !== null}
+                          onChooseFolder={chooseClawCodeWorkspace}
+                          onConfirm={(workspaceRoot) => completeClawCodeWorkspaceFromChat(message.createdAt!, workspaceRoot)}
+                        />
+                      ) : null}
                       {isStreamingTokens ? (
                         <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-[var(--miva-primary)] align-[-2px]" aria-hidden="true" />
                       ) : null}
@@ -454,55 +501,57 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               <ChatSlashMenu
                 activeIndex={slashMenu.activeIndex}
                 commands={slashMenu.filteredCommands}
+                locale={activeLocale}
                 onHighlight={slashMenu.setActiveIndex}
                 onSelect={(command) => slashMenu.selectCommand(command)}
               />
             )}
             <button
               className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]"
-              onClick={() => void chooseAndAttachImages()}
-              title={t.attachImage}
-              type="button"
-            >
-              <span className="material-symbols-outlined">image</span>
-            </button>
-            <button
-              className="p-3 text-[var(--miva-text-muted)] transition hover:text-[var(--miva-primary)]"
               onClick={() => void chooseAndAttachDocuments()}
-              title="Attach document"
+              title="Attach file"
               type="button"
             >
               <span className="material-symbols-outlined">attach_file</span>
             </button>
-            <textarea
-              aria-busy={chatGenerating}
-              className="miva-scrollbar-hidden max-h-[9rem] min-h-11 flex-1 resize-none overflow-y-auto border-none bg-transparent py-3 text-sm leading-6 text-[var(--miva-text)] outline-none placeholder:text-[var(--miva-text-soft)]"
-              placeholder={chatGenerating ? t.generatingResponse : t.messagePlaceholder}
-              readOnly={chatGenerating}
-              ref={chatInputRef}
-              rows={1}
-              value={chatInput}
-              onChange={(event) => {
-                event.currentTarget.style.height = "auto";
-                event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
-                slashMenu.handleInputChange(event.target.value, event.currentTarget);
-              }}
-              onClick={(event) => slashMenu.syncCaret(event.currentTarget)}
-              onKeyDown={(event) => {
-                if (slashMenu.handleKeyDown(event)) {
-                  return;
-                }
-
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  if (!chatSubmitDisabled) {
-                    void sendMessage();
-                    focusChatInput();
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              {selectedSlashCommand ? (
+                <ChatSlashChip
+                  command={selectedSlashCommand}
+                  compact
+                  onRemove={() => setSelectedSlashCommand(null)}
+                />
+              ) : null}
+              <textarea
+                aria-busy={chatGenerating}
+                className="miva-scrollbar-hidden max-h-[9rem] min-h-9 min-w-[8rem] flex-1 resize-none overflow-y-auto border-none bg-transparent py-2 text-sm leading-6 text-[var(--miva-text)] outline-none placeholder:text-[var(--miva-text-soft)]"
+                placeholder={chatPlaceholder}
+                readOnly={chatGenerating}
+                ref={chatInputRef}
+                rows={1}
+                value={chatInput}
+                onChange={(event) => {
+                  event.currentTarget.style.height = "auto";
+                  event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
+                  slashMenu.handleInputChange(event.target.value, event.currentTarget);
+                }}
+                onClick={(event) => slashMenu.syncCaret(event.currentTarget)}
+                onKeyDown={(event) => {
+                  if (slashMenu.handleKeyDown(event)) {
+                    return;
                   }
-                }
-              }}
-              onSelect={(event) => slashMenu.syncCaret(event.currentTarget)}
-            />
+
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    if (!chatSubmitDisabled) {
+                      void sendMessage();
+                      focusChatInput();
+                    }
+                  }
+                }}
+                onSelect={(event) => slashMenu.syncCaret(event.currentTarget)}
+              />
+            </div>
             {showRuntimeTtsControl && (
               <div className="group relative flex items-center">
                 <div className="pointer-events-none absolute bottom-full right-0 z-30 w-56 translate-y-1 pb-3 opacity-0 transition duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100">
@@ -708,7 +757,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
               <div className="absolute left-1/2 top-1/2 z-20 grid h-64 w-64 -translate-x-1/2 -translate-y-1/2 place-items-center overflow-hidden rounded-full bg-[var(--miva-primary)] text-[var(--miva-on-primary)] shadow-[var(--miva-character-shadow)]">
                 <span className="absolute inset-3 rounded-full border border-white/25" />
                 {characterAsset.previewImage ? (
-                  <img alt={`${characterSettings.displayName} character preview`} className="h-full w-full object-cover" src={characterAsset.previewImage} />
+                  <img alt={`${characterSettings.displayName} character preview`} className="h-full w-full object-contain p-3" src={characterAsset.previewImage} />
                 ) : (
                   <span className="material-symbols-outlined text-[64px]">{characterAsset.icon}</span>
                 )}

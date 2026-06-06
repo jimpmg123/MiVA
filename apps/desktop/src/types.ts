@@ -30,8 +30,7 @@ export type StudioSection =
   | "tts"
   | "googleWorkspace"
   | "code"
-  | "skills"
-  | "mcp";
+  | "skills";
 export type ProviderId = "ollama" | "openai" | "gemini" | "groq";
 export type CloudProviderId = Exclude<ProviderId, "ollama">;
 export type ProviderMode = "local" | "cloud";
@@ -209,8 +208,11 @@ export type ModelDownloadProgress = {
   total?: number | null;
   percent?: number | null;
   done: boolean;
+  paused?: boolean;
   error?: string | null;
 };
+
+export type ModelDownloadDockMode = "modal" | "compact" | "minimal";
 
 export type VoiceWorkerStatus = {
   running: boolean;
@@ -302,6 +304,32 @@ export type SurveyState = {
   memorySyncMode: MemorySyncMode;
 };
 
+export type ChatUiAction = "claw-pick-workspace";
+
+export type ChatGeneratedImage = {
+  dataUrl: string;
+  alt?: string;
+  model?: string;
+};
+
+export type ImportedSkill = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  content: string;
+  sourceFileName: string;
+  enabled: boolean;
+  importedAt: string;
+};
+
+export type AssistantSkillsCapability = {
+  enabled: boolean;
+  skillIds: string[];
+  imported: ImportedSkill[];
+};
+
 export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -309,6 +337,8 @@ export type ChatMessage = {
   provider?: ProviderId;
   model?: string;
   latencyMs?: number;
+  uiAction?: ChatUiAction | null;
+  images?: ChatGeneratedImage[];
 };
 
 export type DocumentAttachmentStatus = "analyzing" | "ready" | "error";
@@ -395,6 +425,7 @@ export type ProviderKeyState = {
   openai: string;
   gemini: string;
   groq: string;
+  huggingface: string;
 };
 
 export type RuntimeRequirement = {
@@ -473,7 +504,7 @@ export type LocalAssistantProfile = {
       workspaceAllowlistRequired: boolean;
     };
     mcp: { enabled: boolean; serverIds: string[] };
-    skills: { enabled: boolean; skillIds: string[] };
+    skills: AssistantSkillsCapability;
     externalApis: { enabled: boolean; providerIds: string[] };
     memory: {
       syncMode: MemorySyncMode;

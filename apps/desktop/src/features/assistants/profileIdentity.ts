@@ -1,5 +1,5 @@
 import type { LocalAssistantProfile, ProfileDetailsDraft, PromptSettings, ProviderId } from "../../types";
-import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
+import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings, normalizeSkillsCapability } from "./profile";
 
 export function createLocalProfileId() {
   return `local_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`;
@@ -26,14 +26,15 @@ export function getAssistantProfileFingerprint(profile: LocalAssistantProfile) {
     description: profile.description.trim(),
     provider: profile.provider,
     model: profile.model,
-    useCase: profile.useCase,
-    answerStyle: profile.answerStyle,
-    priority: profile.priority,
-    localMode: profile.localMode,
-    languageUse: profile.languageUse,
-    futureFeatures: profile.futureFeatures,
-    memorySyncMode: profile.survey.memorySyncMode,
+    useCase: profile.useCase ?? profile.survey?.useCase ?? null,
+    answerStyle: profile.answerStyle ?? profile.survey?.answerStyle ?? null,
+    priority: profile.priority ?? profile.survey?.priority ?? null,
+    localMode: profile.localMode ?? profile.survey?.localMode ?? null,
+    languageUse: profile.languageUse ?? profile.survey?.languageUse ?? null,
+    futureFeatures: profile.futureFeatures ?? profile.survey?.futureFeatures ?? [],
+    memorySyncMode: profile.survey?.memorySyncMode ?? profile.capabilities?.memory?.syncMode ?? "profileOnly",
     promptSettings: normalizePromptSettings(profile.prompt?.settings),
+    importedSkills: normalizeSkillsCapability(profile.capabilities?.skills).imported,
   });
 }
 

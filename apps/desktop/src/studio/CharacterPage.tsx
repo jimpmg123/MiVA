@@ -308,7 +308,7 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">Character selection</p>
             <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Choose a character base</h3>
             <p className="mt-2 max-w-[720px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              These previews come from the free models bundled in the VtuberLLM reference folder. Runtime still uses a preview image until the Live2D renderer is connected.
+              Previews show each Live2D model in its assembled look. Install the Live2D runtime below to use them in Runtime.
             </p>
           </div>
           <Badge>{character.characterId}</Badge>
@@ -328,8 +328,13 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
               >
                 <div className="flex items-start justify-between gap-4">
                   {preset.previewImage ? (
-                    <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-[var(--miva-primary-soft)]">
-                      <img alt={`${preset.name} preview`} className="h-full w-full object-cover" src={preset.previewImage} />
+                    <span className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-lg bg-[var(--miva-primary-soft)]">
+                      <img
+                        alt={`${preset.name} preview`}
+                        className="h-full w-full object-contain p-1"
+                        src={preset.previewImage}
+                        style={preset.previewImagePosition ? { objectPosition: preset.previewImagePosition } : undefined}
+                      />
                     </span>
                   ) : (
                     <IconTile>

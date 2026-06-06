@@ -1,7 +1,7 @@
 import { PrimaryButton, SectionHeader } from "../components/ui";
 import { codingAccessModeCopy, codingCapabilityCopy, codingProviderPolicyCopy, defaultPromptSettings, normalizePromptSettings, scheduleModeCopy, workspacePolicyCopy } from "../features/assistants/profile";
 import { providerMeta } from "../features/models/catalog";
-import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
+import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, ImportedSkill, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
 import { ModelsPanel } from "../studio/ModelsPage";
 import { MyAssistantsPanel } from "../studio/MyAssistantsPage";
 import { CharacterStudioPanel } from "../studio/CharacterPage";
@@ -9,7 +9,6 @@ import { GoogleWorkspacePanel } from "../studio/GoogleWorkspacePage";
 import { PromptStudioPanel } from "../studio/PromptsPage";
 import { StudioOverviewPanel } from "../studio/OverviewPage";
 import { StudioCodePanel } from "../studio/CodePage";
-import { McpStudioPanel } from "../studio/McpPage";
 import { SkillsStudioPanel } from "../studio/SkillsPage";
 import { VoiceStudioPanel } from "../studio/VoicePage";
 
@@ -59,11 +58,6 @@ const placeholderCards: Record<StudioSection, Array<[string, string, string]>> =
     ["Agent skills", "Load specialized instructions only when they are relevant.", "menu_book"],
     ["Local model fit", "Prefer short, bounded skills for lightweight models.", "memory"],
   ],
-  mcp: [
-    ["Local servers", "Run focused MCP servers through stdio.", "dns"],
-    ["Remote servers", "Connect authenticated Streamable HTTP endpoints.", "cloud"],
-    ["Tool routing", "Expose only a small relevant tool set to the active model.", "filter_alt"],
-  ],
 };
 
 const studioSectionDescription: Partial<Record<StudioSection, string>> = {
@@ -72,7 +66,6 @@ const studioSectionDescription: Partial<Record<StudioSection, string>> = {
   googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products and set permission levels for direct Google API context.",
   code: "Set code explanation, repository editing, and shell-access boundaries for this assistant.",
   skills: "Preview assistant rules and progressively loaded Agent Skills without adding every instruction to each prompt.",
-  mcp: "Preview local stdio and remote HTTP MCP connections, tool budgets, and action safety.",
 };
 
 type StudioPageProps = {
@@ -88,6 +81,8 @@ type StudioPageProps = {
   busyAction: string | null;
   clawCodeStatus: ClawCodeRuntimeInfo | null;
   googleWorkspaceStatus: GoogleWorkspaceStatus | null;
+  importedSkillsDraft: ImportedSkill[];
+  setImportedSkillsDraft: (skills: ImportedSkill[]) => void;
   cloudModelCatalog: any[];
   installedModels: string[];
   isNewAssistantDraft: boolean;
@@ -104,6 +99,7 @@ type StudioPageProps = {
   studioSection: StudioSection;
   studioSections: Array<{ id: StudioSection; label: string; detail: string; icon: string }>;
   syncAllAssistantProfilesToCloud: () => Promise<void>;
+  syncAllAssistantProfilesFromCloud: () => Promise<void>;
   syncAssistantProfileToCloud: (profile: LocalAssistantProfile) => Promise<void>;
   deleteLocalAssistantProfile: (profileId: string) => Promise<void>;
   renameLocalAssistantProfile: (profileId: string, name: string) => Promise<void>;
@@ -146,6 +142,8 @@ export function StudioPage({
   busyAction,
   clawCodeStatus,
   googleWorkspaceStatus,
+  importedSkillsDraft,
+  setImportedSkillsDraft,
   cloudModelCatalog,
   installedModels,
   isNewAssistantDraft,
@@ -162,6 +160,7 @@ export function StudioPage({
   studioSection,
   studioSections,
   syncAllAssistantProfilesToCloud,
+  syncAllAssistantProfilesFromCloud,
   syncAssistantProfileToCloud,
   deleteLocalAssistantProfile,
   renameLocalAssistantProfile,
@@ -191,8 +190,7 @@ export function StudioPage({
   toolsForAiOpen,
 }: StudioPageProps) {
     const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
-    const isMockupSection = studioSection === "skills" || studioSection === "mcp";
-    const isAssistantEditorSection = studioSection !== "myAssistants" && !isMockupSection;
+    const isAssistantEditorSection = studioSection !== "myAssistants";
     const currentEditorProfile = buildCurrentLocalAssistantProfile();
     const editingExistingAssistant = !isNewAssistantDraft
       && assistantProfileStore.profiles.some((profile) => profile.id === activeLocalProfileId);
@@ -231,6 +229,7 @@ export function StudioPage({
           })}
           onSync={(profile) => void syncAssistantProfileToCloud(profile)}
           onSyncAll={() => void syncAllAssistantProfilesToCloud()}
+          onSyncAllFromWeb={() => void syncAllAssistantProfilesFromCloud()}
           onAddAssistant={onAddAssistantStart}
           profiles={profiles}
           syncState={assistantProfileSyncState}
@@ -434,15 +433,17 @@ export function StudioPage({
         ) : studioSection === "code" ? (
           renderStudioCode()
         ) : studioSection === "skills" ? (
-          <SkillsStudioPanel />
-        ) : studioSection === "mcp" ? (
-          <McpStudioPanel />
+          <SkillsStudioPanel
+            locale={activeLocale}
+            onSkillsChange={setImportedSkillsDraft}
+            skills={importedSkillsDraft}
+          />
         ) : (
           null
         )}
 
         {(assistantProfileSaveState === "saving" || assistantProfileSaveState === "saved") && (
-          <div className="pointer-events-none fixed left-[calc(290px+(100vw-290px)/2)] top-6 z-[80] w-[min(520px,calc(100vw-338px))] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 text-center shadow-[var(--miva-shadow-md)] backdrop-blur-md save-toast-enter">
+          <div className="pointer-events-none fixed left-[calc(var(--miva-content-inset-left)+(100vw-var(--miva-content-inset-left)-2.5rem)/2)] top-6 z-[80] w-[min(520px,calc(100vw-var(--miva-content-inset-left)-5rem))] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 text-center shadow-[var(--miva-shadow-md)] backdrop-blur-md save-toast-enter">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">
               {assistantProfileSaveState === "saving" ? "Saving assistant" : "Saved"}
             </p>
@@ -453,7 +454,7 @@ export function StudioPage({
         )}
 
         {isAssistantEditorSection && (
-          <div className="fixed bottom-5 left-[290px] right-10 z-40 mx-auto max-w-[980px] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 shadow-[var(--miva-shadow-md)] backdrop-blur-md">
+          <div className="fixed bottom-5 left-[var(--miva-content-inset-left)] right-10 z-40 mx-auto max-w-[980px] rounded-lg border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-5 py-4 shadow-[var(--miva-shadow-md)] backdrop-blur-md">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">

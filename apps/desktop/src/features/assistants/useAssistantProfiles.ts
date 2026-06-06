@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../../app/tauri";
 import type { Locale } from "../../i18n";
 import { deleteCloudAssistantProfile, listCloudAssistantProfiles, upsertCloudAssistantProfile } from "../cloud/client";
+import { mapCloudAssistantProfileToLocal } from "./cloudPayload";
 import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
 import { buildLocalAssistantProfile } from "./profileFactory";
@@ -32,6 +33,7 @@ import type {
   LocalAssistantProfileStore,
   ProfileDetailsDraft,
   PromptSettings,
+  ImportedSkill,
   ProviderId,
   ProviderMode,
   RuntimeMemorySummary,
@@ -104,8 +106,14 @@ export function useAssistantProfiles({
   const [assistantProfileError, setAssistantProfileError] = useState<string | null>(null);
   const [assistantProfileSyncState, setAssistantProfileSyncState] = useState<AssistantProfileSyncState>("idle");
   const [assistantProfileSyncMessage, setAssistantProfileSyncMessage] = useState<string | null>(null);
+  const [importedSkillsDraft, setImportedSkillsDraft] = useState<ImportedSkill[]>([]);
   const newAssistantDraftBaselineRef = useRef<string | null>(null);
+  const studioDraftBaselineFingerprintRef = useRef<string | null>(null);
   const signedIn = Boolean(authSession);
+
+  function syncStudioDraftBaseline(profile: LocalAssistantProfile) {
+    studioDraftBaselineFingerprintRef.current = getAssistantProfileFingerprint(profile);
+  }
 
   const visibleAssistantProfiles = assistantProfileStore.profiles.filter((profile) => signedIn || profile.provider === "ollama");
   const visibleAssistantProfileStore = {
@@ -133,6 +141,7 @@ export function useAssistantProfiles({
       assistantProfiles: assistantProfileStore.profiles,
       profileDetailsDraft,
       promptSettingsDraft,
+      importedSkillsDraft,
       selectedProvider,
       selectedModel,
       selectedCloudModel,
@@ -171,6 +180,8 @@ export function useAssistantProfiles({
     setSelectedModel(savedLocalModel);
     setSelectedCloudModel(savedCloudModel);
     setPromptSettingsDraft(normalizePromptSettings(profile.prompt?.settings));
+    setImportedSkillsDraft(profile.capabilities?.skills?.imported ?? []);
+    syncStudioDraftBaseline(profile);
   }
 
   function editLocalAssistantProfile(profile: LocalAssistantProfile) {
@@ -205,8 +216,13 @@ export function useAssistantProfiles({
     }
 
     if (activeLocalProfile) {
-      const currentProfile = buildCurrentLocalAssistantProfile();
-      return getAssistantProfileFingerprint(activeLocalProfile) !== getAssistantProfileFingerprint(currentProfile);
+      const baseline = studioDraftBaselineFingerprintRef.current;
+      const currentFingerprint = getAssistantProfileFingerprint(buildCurrentLocalAssistantProfile());
+      if (baseline) {
+        return baseline !== currentFingerprint;
+      }
+
+      return getAssistantProfileFingerprint(activeLocalProfile) !== currentFingerprint;
     }
 
     if (activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID) {
@@ -218,6 +234,7 @@ export function useAssistantProfiles({
 
   function discardUnsavedStudioChanges() {
     newAssistantDraftBaselineRef.current = null;
+    studioDraftBaselineFingerprintRef.current = null;
     setAssistantProfileError(null);
     setAssistantProfileSaveState("idle");
 
@@ -235,6 +252,7 @@ export function useAssistantProfiles({
 
     setProfileDetailsDraft(defaultProfileDetails);
     setPromptSettingsDraft(defaultPromptSettings);
+    setImportedSkillsDraft([]);
     setSurvey({
       useCase: null,
       answerStyle: null,
@@ -292,11 +310,13 @@ export function useAssistantProfiles({
 
     try {
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      const savedProfile = savedStore.profiles.find((item) => item.id === profile.id) ?? profile;
       setAssistantProfileStore(savedStore);
+      applyLocalAssistantProfile(savedProfile);
       setAssistantProfileSaveState("saved");
       newAssistantDraftBaselineRef.current = null;
       window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
-      return profile;
+      return savedProfile;
     } catch (error) {
       const message = String(error);
       setAssistantProfileError(message);
@@ -323,12 +343,14 @@ export function useAssistantProfiles({
 
     try {
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      const savedProfile = savedStore.profiles.find((item) => item.id === profile.id) ?? profile;
       setAssistantProfileStore(savedStore);
+      applyLocalAssistantProfile(savedProfile);
       setAssistantProfileSaveState("saved");
       newAssistantDraftBaselineRef.current = null;
       window.setTimeout(() => setAssistantProfileSaveState("idle"), 1800);
       onLog(`Added assistant profile: ${profile.name}.`);
-      return profile;
+      return savedProfile;
     } catch (error) {
       const message = String(error);
       setAssistantProfileError(message);
@@ -365,6 +387,7 @@ export function useAssistantProfiles({
       setActiveLocalProfileId(DEFAULT_LOCAL_PROFILE_ID);
       setProfileDetailsDraft(defaultProfileDetails);
       setPromptSettingsDraft(defaultPromptSettings);
+      setImportedSkillsDraft([]);
       setSurvey({
         useCase: null,
         answerStyle: null,
@@ -546,6 +569,76 @@ export function useAssistantProfiles({
     }
   }
 
+  async function syncAllAssistantProfilesFromCloud() {
+    if (!authSession) {
+      setAssistantProfileSyncState("error");
+      setAssistantProfileSyncMessage(SIGN_IN_BEFORE_SYNC_MESSAGE);
+      return;
+    }
+
+    setAssistantProfileSyncState("syncing");
+    setAssistantProfileSyncMessage("Fetching assistant profiles from the web console...");
+
+    try {
+      const { profiles: cloudProfiles } = await listCloudAssistantProfiles({ authSession });
+      const syncedAt = new Date().toISOString();
+      let nextProfiles = [...assistantProfileStore.profiles];
+      let importedCount = 0;
+      let updatedCount = 0;
+
+      for (const cloudProfile of cloudProfiles) {
+        const existing = nextProfiles.find((profile) => (
+          profile.sync.cloudProfileId === cloudProfile.id || profile.id === cloudProfile.id
+        ));
+        const mapped = mapCloudAssistantProfileToLocal(cloudProfile, {
+          existing,
+          locale: activeLocale,
+          syncedAt,
+        });
+
+        if (existing) {
+          nextProfiles = nextProfiles.map((profile) => (profile.id === existing.id ? mapped : profile));
+          updatedCount += 1;
+        } else {
+          nextProfiles = [mapped, ...nextProfiles.filter((profile) => profile.id !== mapped.id)];
+          importedCount += 1;
+        }
+      }
+
+      const nextActiveProfileId = nextProfiles.some((profile) => profile.id === activeLocalProfileId)
+        ? activeLocalProfileId
+        : nextProfiles[0]?.id ?? activeLocalProfileId;
+      const nextStore = replaceSyncedAssistantProfileStore({
+        activeProfileId: nextActiveProfileId,
+        profiles: nextProfiles,
+        syncedAt,
+      });
+      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      setAssistantProfileStore(savedStore);
+      if (nextActiveProfileId) {
+        setActiveLocalProfileId(nextActiveProfileId);
+        const activeProfile = savedStore.profiles.find((profile) => profile.id === nextActiveProfileId);
+        if (activeProfile) {
+          applyLocalAssistantProfile(activeProfile);
+        }
+      }
+
+      setAssistantProfileSyncState("synced");
+      if (cloudProfiles.length === 0) {
+        setAssistantProfileSyncMessage("No assistant profiles were found in the web console.");
+      } else {
+        setAssistantProfileSyncMessage(
+          `Imported ${importedCount} and updated ${updatedCount} assistant profile${cloudProfiles.length === 1 ? "" : "s"} from the web console.`,
+        );
+      }
+    } catch (error) {
+      const message = `Cloud API offline or sync failed: ${String(error)}`;
+      setAssistantProfileSyncState("error");
+      setAssistantProfileSyncMessage(message);
+      onLog(message);
+    }
+  }
+
   async function syncAssistantProfileToCloud(profile: LocalAssistantProfile) {
     if (!authSession) {
       setAssistantProfileSyncState("error");
@@ -593,7 +686,9 @@ export function useAssistantProfiles({
       setActiveLocalProfileId(savedProfile.id);
 
       const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      const persistedProfile = savedStore.profiles.find((item) => item.id === savedProfile.id) ?? savedProfile;
       setAssistantProfileStore(savedStore);
+      applyLocalAssistantProfile(persistedProfile);
       setAssistantProfileSaveState("saved");
       newAssistantDraftBaselineRef.current = null;
       onLog("Assistant profile saved locally.");
@@ -623,10 +718,12 @@ export function useAssistantProfiles({
   }
 
   function startNewAssistantDraft() {
+    studioDraftBaselineFingerprintRef.current = null;
     newAssistantDraftBaselineRef.current = getNewAssistantDraftBaseline();
     setActiveLocalProfileId(NEW_LOCAL_PROFILE_DRAFT_ID);
     setProfileDetailsDraft(defaultProfileDetails);
     setPromptSettingsDraft(defaultPromptSettings);
+    setImportedSkillsDraft([]);
     setAssistantProfileError(null);
     setAssistantProfileSaveState("idle");
     setStudioSection("overview");
@@ -748,6 +845,7 @@ export function useAssistantProfiles({
     setSelectedCloudModel("gemini-2.5-flash");
     setProfileDetailsDraft(defaultProfileDetails);
     setPromptSettingsDraft(defaultPromptSettings);
+    setImportedSkillsDraft([]);
   }, [authSession, assistantProfileLoaded, assistantProfileStore.profiles, activeLocalProfileId]);
 
   return {
@@ -762,6 +860,8 @@ export function useAssistantProfiles({
     assistantProfileError,
     assistantProfileSyncState,
     assistantProfileSyncMessage,
+    importedSkillsDraft,
+    setImportedSkillsDraft,
     setActiveLocalProfileId,
     editLocalAssistantProfile,
     buildCurrentLocalAssistantProfile,
@@ -771,6 +871,7 @@ export function useAssistantProfiles({
     renameLocalAssistantProfile,
     deleteLocalAssistantProfile,
     syncAllAssistantProfilesToCloud,
+    syncAllAssistantProfilesFromCloud,
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
     saveSetupAssistantProfile,

@@ -15,8 +15,83 @@ export type WebMessages = {
     billing: string;
     integrations: string;
     voice: string;
+    personaHub: string;
     admin: string;
     settings: string;
+  };
+  personaHub: {
+    previewBadge: string;
+    notConnectedBadge: string;
+    title: string;
+    subtitle: string;
+    sharePreset: string;
+    uploadBundle: string;
+    browseTitle: string;
+    browseBody: string;
+    tableView: string;
+    cardsView: string;
+    filters: {
+      trending: string;
+      new: string;
+      voice: string;
+      character: string;
+    };
+    table: {
+      preset: string;
+      author: string;
+      voice: string;
+      character: string;
+      downloads: string;
+      comments: string;
+      likes: string;
+    };
+    featured: string;
+    useCases: {
+      daily: string;
+      study: string;
+      work: string;
+      character: string;
+    };
+    voiceLabel: string;
+    characterLabel: string;
+    importDesktop: string;
+    save: string;
+    previewVoice: string;
+    commentsTitle: string;
+    asyncThread: string;
+    helpful: string;
+    leaveComment: string;
+    commentPlaceholder: string;
+    post: string;
+    mockCommentNote: string;
+    selectPreset: string;
+    sharedBy: string;
+    steps: Array<{ title: string; body: string }>;
+    presets: Array<{
+      id: string;
+      icon: 'desk' | 'tutor' | 'focus' | 'character';
+      title: string;
+      author: string;
+      voice: string;
+      character: string;
+      useCase: 'daily' | 'study' | 'work' | 'character';
+      tags: string[];
+      description: string;
+      updatedAt: string;
+      featured?: boolean;
+      voiceFocused?: boolean;
+      characterFocused?: boolean;
+      comments: Array<{
+        id: string;
+        author: string;
+        body: string;
+        createdAt: string;
+        likes: number;
+      }>;
+      downloads: number;
+      likes: number;
+      commentCount: number;
+    }>;
   };
   shell: {
     brandTitle: string;
@@ -29,6 +104,11 @@ export type WebMessages = {
     checking: string;
     devUser: string;
     devAdmin: string;
+  };
+  desktopDownload: {
+    noticeTitle: string;
+    noticeBody: string;
+    dismiss: string;
   };
   login: {
     eyebrow: string;
@@ -138,6 +218,30 @@ export type WebMessages = {
     cancel: string;
     delete: string;
   };
+  settingsPage: {
+    title: string;
+    subtitle: string;
+    preferencesTitle: string;
+    languageTitle: string;
+    languageBody: string;
+    themeTitle: string;
+    themeBody: string;
+    themeDark: string;
+    themeLight: string;
+    maintenanceTitle: string;
+    resetTitle: string;
+    resetBody: string;
+    resetAction: string;
+    privacyTitle: string;
+    privacyBody: string;
+    privacyAction: string;
+    nodeHealth: string;
+    localBridge: string;
+    syncStatus: string;
+    version: string;
+    active: string;
+    synchronized: string;
+  };
 };
 
 export const messages: Record<WebLocale, WebMessages> = {
@@ -156,6 +260,7 @@ export const messages: Record<WebLocale, WebMessages> = {
       billing: '결제',
       integrations: '연동',
       voice: '음성 & 캐릭터',
+      personaHub: '프리셋 허브',
       admin: '관리자 분석',
       settings: '설정',
     },
@@ -170,6 +275,11 @@ export const messages: Record<WebLocale, WebMessages> = {
       checking: '확인 중',
       devUser: '개발 사용자',
       devAdmin: '개발 관리자',
+    },
+    desktopDownload: {
+      noticeTitle: 'Node.js 설치가 필요합니다',
+      noticeBody: 'MiVA Desktop 설치 후 Local Helper를 실행하려면 이 PC에 Node.js 22+가 있어야 합니다. CS 수업 환경이라면 대부분 이미 설치되어 있을 것입니다.',
+      dismiss: '닫기',
     },
     login: {
       eyebrow: 'MiVA',
@@ -280,6 +390,166 @@ export const messages: Record<WebLocale, WebMessages> = {
       cancel: '취소',
       delete: '삭제',
     },
+    settingsPage: {
+      title: '설정',
+      subtitle: '로컬 웹 콘솔과 브리지 환경을 구성합니다.',
+      preferencesTitle: '콘솔 환경설정',
+      languageTitle: '언어 선택',
+      languageBody: '관리 콘솔의 인터페이스 언어입니다.',
+      themeTitle: '테마',
+      themeBody: '대시보드의 시각 스타일입니다.',
+      themeDark: '다크',
+      themeLight: '라이트',
+      maintenanceTitle: '시스템 유지보수',
+      resetTitle: '웹 콘솔 상태 초기화',
+      resetBody: '로컬 저장소의 환경설정과 캐시를 모두 지웁니다.',
+      resetAction: '지금 초기화',
+      privacyTitle: '로컬 우선 프라이버시',
+      privacyBody: 'MiVA는 로컬 우선 원칙 위에 만들어졌습니다. 브리지를 명시적으로 설정하지 않는 한 데이터는 기기 밖으로 나가지 않습니다.',
+      privacyAction: '선언문 읽기',
+      nodeHealth: '노드 상태',
+      localBridge: '로컬 브리지',
+      syncStatus: '동기화 상태',
+      version: '버전',
+      active: '활성',
+      synchronized: '동기화됨',
+    },
+    personaHub: {
+      previewBadge: '미리보기 목업',
+      notConnectedBadge: 'API 미연결',
+      title: '프리셋 허브',
+      subtitle:
+        'AI 비서의 음성·캐릭터·프롬프트 설정을 업로드하고, 다른 사람 프리셋을 둘러본 뒤 댓글로 피드백하는 커뮤니티 보드입니다. 실시간 대화방이 아니라 게시글 + 댓글 + 가져오기 흐름을 가정한 UI 목업입니다.',
+      sharePreset: '내 프리셋 공유',
+      uploadBundle: '번들 업로드',
+      browseTitle: '프리셋 둘러보기',
+      browseBody: '다운로드, 최신순, 커뮤니티 피드백 기준으로 정렬된 공유 비서 설정입니다.',
+      tableView: '테이블',
+      cardsView: '카드',
+      filters: {
+        trending: '인기',
+        new: '최신',
+        voice: '음성',
+        character: '캐릭터',
+      },
+      table: {
+        preset: '프리셋',
+        author: '작성자',
+        voice: '음성',
+        character: '캐릭터',
+        downloads: '다운로드',
+        comments: '댓글',
+        likes: '좋아요',
+      },
+      featured: '추천',
+      useCases: {
+        daily: '일상',
+        study: '학습',
+        work: '업무',
+        character: '캐릭터',
+      },
+      voiceLabel: '음성',
+      characterLabel: '캐릭터',
+      importDesktop: '데스크톱으로 가져오기',
+      save: '저장',
+      previewVoice: '음성 미리듣기',
+      commentsTitle: '댓글',
+      asyncThread: '비동기 스레드 · 실시간 채팅 아님',
+      helpful: '도움됨',
+      leaveComment: '댓글 남기기',
+      commentPlaceholder: '이 프리셋이 제 노트북에서 잘 동작했어요...',
+      post: '등록',
+      mockCommentNote: '목업 전용 — 댓글은 아직 저장되지 않습니다.',
+      selectPreset: '프리셋을 선택하면 상세 스레드가 열립니다.',
+      sharedBy: '@{author} · {time}',
+      steps: [
+        { title: '1. 번들 업로드', body: '데스크톱에서 음성, 캐릭터, 프롬프트 설정을 보냅니다.' },
+        { title: '2. 커뮤니티 피드백', body: '다른 사람이 댓글, 좋아요, 포크로 비동기 피드백을 남깁니다.' },
+        { title: '3. 로컬 가져오기', body: '채팅 로그 없이 MiVA Desktop으로 원클릭 가져오기.' },
+      ],
+      presets: [
+        {
+          id: 'preset-nova',
+          icon: 'desk',
+          title: 'Nova Crystal — 차분한 데스크 비서',
+          author: 'mina.k',
+          voice: 'Solomon (깊은 톤)',
+          character: 'Nova Crystal',
+          useCase: 'daily',
+          tags: ['2D 아바타', '한국어', '저사양'],
+          description: '부드러운 TTS와 반응형 2D 아바타가 있는 조용한 사무용 비서입니다. 메모, 일정 알림, 짧은 Q&A에 적합합니다.',
+          updatedAt: '2026-06-04T09:12:00.000Z',
+          featured: true,
+          voiceFocused: true,
+          characterFocused: true,
+          downloads: 1284,
+          likes: 312,
+          commentCount: 24,
+          comments: [
+            { id: 'c1', author: 'jay.p', body: '8GB 노트북에서 가져왔는데 음성 지연이 좋아요. 나이트 모드 변형도 있으면 좋겠어요.', createdAt: '2026-06-04T11:20:00.000Z', likes: 14 },
+            { id: 'c2', author: 'studio.team', body: '음성 프로필을 포크해서 인사 멘트를 더 밝게 바꿨어요. 다음 주에 다시 공유할게요.', createdAt: '2026-06-03T18:02:00.000Z', likes: 8 },
+          ],
+        },
+        {
+          id: 'preset-lyra',
+          icon: 'tutor',
+          title: 'Lyra Spark — 친근한 튜터',
+          author: 'edu.lab',
+          voice: 'Lyra (밝은 톤)',
+          character: 'Pixel Mentor',
+          useCase: 'study',
+          tags: ['TTS', '설명 모드', '한영'],
+          description: '말 속도를 늦추고 단계별 답변 스타일을 쓰는 밝은 튜터 프리셋입니다. 캐릭터 idle 애니메이션 포함.',
+          updatedAt: '2026-06-03T14:40:00.000Z',
+          voiceFocused: true,
+          downloads: 892,
+          likes: 201,
+          commentCount: 17,
+          comments: [
+            { id: 'c3', author: 'hana.lee', body: '숙제 도우미로 딱이에요. explain-mode 프롬프트가 제일 좋습니다.', createdAt: '2026-06-03T16:10:00.000Z', likes: 11 },
+          ],
+        },
+        {
+          id: 'preset-sol',
+          icon: 'focus',
+          title: 'Solomon Night — 집중 모드',
+          author: 'dev.local',
+          voice: 'Solomon (깊은 톤)',
+          character: 'Minimal Orb',
+          useCase: 'work',
+          tags: ['아바타 없음', 'Whisper Small', '집중'],
+          description: '음성만 쓰는 집중 프리셋입니다. 산만함을 줄이고 짧은 답변으로 코딩·야간 작업에 맞춰져 있습니다.',
+          updatedAt: '2026-06-02T22:15:00.000Z',
+          voiceFocused: true,
+          downloads: 654,
+          likes: 148,
+          commentCount: 9,
+          comments: [
+            { id: 'c4', author: 'codex.user', body: '캐릭터 오버레이가 없어서 CPU 사용량이 낮아요. 데스크톱에서 원클릭 가져오기 됐습니다.', createdAt: '2026-06-02T23:01:00.000Z', likes: 6 },
+          ],
+        },
+        {
+          id: 'preset-hana',
+          icon: 'character',
+          title: 'Hana Bloom — 캐릭터 중심',
+          author: 'art.miva',
+          voice: 'Custom (따뜻한 톤)',
+          character: 'Hana Bloom',
+          useCase: 'character',
+          tags: ['Live2D 준비', '반응형', '감정 표현'],
+          description: '표현력 있는 리액션과 긴 인사 스크립트가 있는 캐릭터 중심 프리셋입니다. 오버레이 위치 기본값이 포함됩니다.',
+          updatedAt: '2026-06-01T08:30:00.000Z',
+          characterFocused: true,
+          downloads: 421,
+          likes: 97,
+          commentCount: 31,
+          comments: [
+            { id: 'c5', author: 'overlay.fan', body: 'hover-close 동작이 이 캐릭터 팩이랑 잘 맞아요.', createdAt: '2026-06-01T12:44:00.000Z', likes: 19 },
+            { id: 'c6', author: 'miva.team', body: 'Phase 2 커뮤니티 가져오기용으로 고정 예정. 지금은 웹 콘솔 미리보기만.', createdAt: '2026-05-30T09:00:00.000Z', likes: 22 },
+          ],
+        },
+      ],
+    },
   },
   en: {
     languageToggle: 'Change language',
@@ -296,6 +566,7 @@ export const messages: Record<WebLocale, WebMessages> = {
       billing: 'Billing',
       integrations: 'Integrations',
       voice: 'Voice & Character',
+      personaHub: 'Preset Hub',
       admin: 'Admin Analytics',
       settings: 'Settings',
     },
@@ -310,6 +581,11 @@ export const messages: Record<WebLocale, WebMessages> = {
       checking: 'Checking',
       devUser: 'Dev User',
       devAdmin: 'Dev Admin',
+    },
+    desktopDownload: {
+      noticeTitle: 'Node.js is required',
+      noticeBody: 'After installing MiVA Desktop, Node.js 22+ must be available on this PC to run Local Helper. In a CS lab, you likely already have it.',
+      dismiss: 'Dismiss',
     },
     login: {
       eyebrow: 'MiVA',
@@ -419,6 +695,166 @@ export const messages: Record<WebLocale, WebMessages> = {
         'The file will be removed from the Ollama store. Assistants using this model will automatically switch to OpenAI (gpt-4o-mini).',
       cancel: 'Cancel',
       delete: 'Delete',
+    },
+    settingsPage: {
+      title: 'Settings',
+      subtitle: 'Configure your local web console and bridge preferences.',
+      preferencesTitle: 'Console Preferences',
+      languageTitle: 'Language Selection',
+      languageBody: 'Interface language for the management console.',
+      themeTitle: 'Theme',
+      themeBody: 'Visual style of the dashboard.',
+      themeDark: 'Dark',
+      themeLight: 'Light',
+      maintenanceTitle: 'System Maintenance',
+      resetTitle: 'Reset web console state',
+      resetBody: 'Clear all local storage preferences and cache.',
+      resetAction: 'Reset Now',
+      privacyTitle: 'Local-First Privacy',
+      privacyBody: 'MiVA is built on the Local-First Manifesto. Your data never leaves your machine unless you explicitly configure a bridge.',
+      privacyAction: 'Read the Manifesto',
+      nodeHealth: 'Node Health',
+      localBridge: 'Local Bridge',
+      syncStatus: 'Sync Status',
+      version: 'Version',
+      active: 'Active',
+      synchronized: 'Synchronized',
+    },
+    personaHub: {
+      previewBadge: 'Preview Mockup',
+      notConnectedBadge: 'Not connected to API',
+      title: 'Preset Hub',
+      subtitle:
+        'Upload voice, character, and prompt settings for your AI assistant, browse presets from others, and leave async feedback. This is a community board mockup — posts, comments, and import — not a live chat room.',
+      sharePreset: 'Share my preset',
+      uploadBundle: 'Upload bundle',
+      browseTitle: 'Browse presets',
+      browseBody: 'Shared assistant bundles ranked by downloads, freshness, and community feedback.',
+      tableView: 'Table',
+      cardsView: 'Cards',
+      filters: {
+        trending: 'Trending',
+        new: 'New',
+        voice: 'Voice',
+        character: 'Character',
+      },
+      table: {
+        preset: 'Preset',
+        author: 'Author',
+        voice: 'Voice',
+        character: 'Character',
+        downloads: 'Downloads',
+        comments: 'Comments',
+        likes: 'Likes',
+      },
+      featured: 'Featured',
+      useCases: {
+        daily: 'Daily',
+        study: 'Study',
+        work: 'Work',
+        character: 'Character',
+      },
+      voiceLabel: 'Voice',
+      characterLabel: 'Character',
+      importDesktop: 'Import to Desktop',
+      save: 'Save',
+      previewVoice: 'Preview voice',
+      commentsTitle: 'Comments',
+      asyncThread: 'Async thread · not live chat',
+      helpful: 'helpful',
+      leaveComment: 'Leave a comment',
+      commentPlaceholder: 'This preset worked well on my laptop...',
+      post: 'Post',
+      mockCommentNote: 'Mock only — comments are not saved yet.',
+      selectPreset: 'Select a preset to open its detail thread.',
+      sharedBy: '@{author} · {time}',
+      steps: [
+        { title: '1. Upload bundle', body: 'Export voice, character, and prompt settings from Desktop.' },
+        { title: '2. Community feedback', body: 'Others comment, like, and fork your preset asynchronously.' },
+        { title: '3. Import locally', body: 'One-click import into MiVA Desktop without sharing chat logs.' },
+      ],
+      presets: [
+        {
+          id: 'preset-nova',
+          icon: 'desk',
+          title: 'Nova Crystal — Calm Desk Companion',
+          author: 'mina.k',
+          voice: 'Solomon (Deep)',
+          character: 'Nova Crystal',
+          useCase: 'daily',
+          tags: ['2D Avatar', 'Korean', 'Low VRAM'],
+          description: 'A quiet office assistant with soft TTS and a reactive 2D avatar. Best for note-taking, calendar reminders, and short Q&A.',
+          updatedAt: '2026-06-04T09:12:00.000Z',
+          featured: true,
+          voiceFocused: true,
+          characterFocused: true,
+          downloads: 1284,
+          likes: 312,
+          commentCount: 24,
+          comments: [
+            { id: 'c1', author: 'jay.p', body: 'Imported this on an 8GB laptop — voice latency is great. Would love a night-mode variant.', createdAt: '2026-06-04T11:20:00.000Z', likes: 14 },
+            { id: 'c2', author: 'studio.team', body: 'We forked the voice profile and added a brighter greeting line. Sharing back next week.', createdAt: '2026-06-03T18:02:00.000Z', likes: 8 },
+          ],
+        },
+        {
+          id: 'preset-lyra',
+          icon: 'tutor',
+          title: 'Lyra Spark — Friendly Tutor',
+          author: 'edu.lab',
+          voice: 'Lyra (Bright)',
+          character: 'Pixel Mentor',
+          useCase: 'study',
+          tags: ['TTS', 'Explain Mode', 'EN/KR'],
+          description: 'Cheerful tutor preset with slower speech rate and step-by-step answer style. Includes character idle animations.',
+          updatedAt: '2026-06-03T14:40:00.000Z',
+          voiceFocused: true,
+          downloads: 892,
+          likes: 201,
+          commentCount: 17,
+          comments: [
+            { id: 'c3', author: 'hana.lee', body: 'Perfect for homework help. The explain-mode prompt is the best part.', createdAt: '2026-06-03T16:10:00.000Z', likes: 11 },
+          ],
+        },
+        {
+          id: 'preset-sol',
+          icon: 'focus',
+          title: 'Solomon Night — Focus Mode',
+          author: 'dev.local',
+          voice: 'Solomon (Deep)',
+          character: 'Minimal Orb',
+          useCase: 'work',
+          tags: ['No Avatar', 'Whisper Small', 'Focus'],
+          description: 'Voice-only focus preset. Low distraction, short answers, optimized for coding sessions and late-night work.',
+          updatedAt: '2026-06-02T22:15:00.000Z',
+          voiceFocused: true,
+          downloads: 654,
+          likes: 148,
+          commentCount: 9,
+          comments: [
+            { id: 'c4', author: 'codex.user', body: 'No character overlay keeps CPU usage low. Imported in one click from Desktop.', createdAt: '2026-06-02T23:01:00.000Z', likes: 6 },
+          ],
+        },
+        {
+          id: 'preset-hana',
+          icon: 'character',
+          title: 'Hana Bloom — Character-first',
+          author: 'art.miva',
+          voice: 'Custom (Warm)',
+          character: 'Hana Bloom',
+          useCase: 'character',
+          tags: ['Live2D-ready', 'Reactive', 'Emotive'],
+          description: 'Character-heavy preset with expressive reactions and longer greeting scripts. Upload includes overlay position defaults.',
+          updatedAt: '2026-06-01T08:30:00.000Z',
+          characterFocused: true,
+          downloads: 421,
+          likes: 97,
+          commentCount: 31,
+          comments: [
+            { id: 'c5', author: 'overlay.fan', body: 'The hover-close behavior pairs nicely with this character pack.', createdAt: '2026-06-01T12:44:00.000Z', likes: 19 },
+            { id: 'c6', author: 'miva.team', body: 'Pinned for Phase 2 community import. Preview only in web console for now.', createdAt: '2026-05-30T09:00:00.000Z', likes: 22 },
+          ],
+        },
+      ],
     },
   },
 };

@@ -1,10 +1,11 @@
 import type { Locale } from "../../i18n";
 import { buildSystemPromptPreview } from "./promptPreview";
-import { defaultProfileDetails, normalizeProfileCapabilities, normalizePromptSettings } from "./profile";
+import { defaultProfileDetails, normalizeProfileCapabilities, normalizePromptSettings, normalizeSkillsCapability } from "./profile";
 import { LOCAL_PROFILE_SCHEMA_VERSION } from "./storage";
 import type {
   AppMode,
   HardwareInfo,
+  ImportedSkill,
   LocalAssistantProfile,
   ProfileDetailsDraft,
   PromptSettings,
@@ -26,6 +27,7 @@ export function buildLocalAssistantProfile(input: {
   assistantProfiles: LocalAssistantProfile[];
   profileDetailsDraft: ProfileDetailsDraft;
   promptSettingsDraft: PromptSettings;
+  importedSkillsDraft: ImportedSkill[];
   selectedProvider: ProviderId;
   selectedModel: string;
   selectedCloudModel: string;
@@ -102,7 +104,17 @@ export function buildLocalAssistantProfile(input: {
         guardrails: [],
       },
     },
-    capabilities: normalizeProfileCapabilities(existing?.capabilities, promptSettings, safeSurvey.memorySyncMode),
+    capabilities: normalizeProfileCapabilities(
+      {
+        ...existing?.capabilities,
+        skills: {
+          ...normalizeSkillsCapability(existing?.capabilities?.skills),
+          imported: input.importedSkillsDraft,
+        },
+      },
+      promptSettings,
+      safeSurvey.memorySyncMode,
+    ),
     sync: existing?.sync ?? {
       cloudEnabled: false,
       cloudProfileId: null,

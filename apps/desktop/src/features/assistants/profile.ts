@@ -13,6 +13,8 @@
   TtsProviderId,
   WorkspaceServiceId,
   WorkspaceToolPolicy,
+  ImportedSkill,
+  AssistantSkillsCapability,
 } from "../../types";
 export const defaultProfileDetails: ProfileDetailsDraft = {
   name: "MiVA Assistant",
@@ -451,6 +453,46 @@ export function normalizeMemoryCapability(
   };
 }
 
+function normalizeImportedSkill(value: unknown): ImportedSkill | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Partial<ImportedSkill>;
+  const slug = typeof source.slug === "string" ? source.slug.trim() : "";
+  const name = typeof source.name === "string" ? source.name.trim() : "";
+  const content = typeof source.content === "string" ? source.content : "";
+  if (!slug || !name || !content.trim()) {
+    return null;
+  }
+
+  return {
+    id: typeof source.id === "string" && source.id.trim() ? source.id.trim() : `skill_${slug}`,
+    slug,
+    name,
+    description: typeof source.description === "string" ? source.description.trim() : name,
+    icon: typeof source.icon === "string" && source.icon.trim() ? source.icon.trim() : "auto_awesome",
+    content,
+    sourceFileName: typeof source.sourceFileName === "string" ? source.sourceFileName.trim() : `${slug}.md`,
+    enabled: source.enabled !== false,
+    importedAt: typeof source.importedAt === "string" ? source.importedAt : new Date().toISOString(),
+  };
+}
+
+export function normalizeSkillsCapability(value: unknown): AssistantSkillsCapability {
+  const source = value && typeof value === "object" ? value as Partial<AssistantSkillsCapability> : {};
+  const imported = Array.isArray(source.imported)
+    ? source.imported.map(normalizeImportedSkill).filter((skill): skill is ImportedSkill => Boolean(skill))
+    : [];
+  const enabledImported = imported.filter((skill) => skill.enabled);
+
+  return {
+    enabled: source.enabled === true || enabledImported.length > 0,
+    skillIds: enabledImported.map((skill) => skill.id),
+    imported,
+  };
+}
+
 export function normalizeProfileCapabilities(
   value: Partial<LocalAssistantProfile["capabilities"]> | undefined,
   settings: PromptSettings,
@@ -486,7 +528,7 @@ export function normalizeProfileCapabilities(
       ...coding,
     },
     mcp: value?.mcp ?? { enabled: false, serverIds: [] },
-    skills: value?.skills ?? { enabled: false, skillIds: [] },
+    skills: normalizeSkillsCapability(value?.skills),
     externalApis: value?.externalApis ?? { enabled: false, providerIds: [] },
     memory: normalizeMemoryCapability(value?.memory, memorySyncMode),
   };
