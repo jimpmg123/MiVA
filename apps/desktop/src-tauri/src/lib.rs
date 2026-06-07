@@ -29,6 +29,14 @@ const LOCAL_HELPER_URL: &str = "http://127.0.0.1:43110";
 const DESKTOP_BRIDGE_ADDR: &str = "127.0.0.1:43111";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_command: &mut Command) {}
 const ALLOWED_MODELS: [&str; 6] = [
     "qwen3:4b",
     "exaone3.5:2.4b",
@@ -493,7 +501,10 @@ fn detect_ollama_cli() -> (bool, Option<String>, Option<String>, Option<String>)
     let mut last_error = None;
 
     for candidate in ollama_candidates() {
-        match Command::new(&candidate).arg("--version").output() {
+        let mut command = Command::new(&candidate);
+        command.arg("--version");
+        hide_console_window(&mut command);
+        match command.output() {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -646,6 +657,7 @@ fn delete_ollama_model_inner(model: &str) -> Result<Value, String> {
 }
 
 fn run_command_to_string(mut command: Command) -> Result<String, String> {
+    hide_console_window(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -671,7 +683,10 @@ fn run_command_to_string(mut command: Command) -> Result<String, String> {
 }
 
 fn command_version(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
+    let mut command = Command::new(program);
+    command.args(args);
+    hide_console_window(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1245,8 +1260,7 @@ fn start_local_helper_process(app: &AppHandle) -> Option<Child> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
+    hide_console_window(&mut command);
 
     match command.spawn() {
         Ok(child) => Some(child),
@@ -1263,14 +1277,14 @@ fn bytes_to_gb(bytes: u64) -> f64 {
 }
 
 fn detect_gpu_name() -> Option<String> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name)",
-        ])
-        .output()
-        .ok()?;
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name)",
+    ]);
+    hide_console_window(&mut command);
+    let output = command.output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -1392,11 +1406,14 @@ fn start_ollama_inner() -> Result<String, String> {
     }
 
     let command = command.ok_or_else(|| "Ollama CLI command was not found.".to_string())?;
-    Command::new(command)
+    let mut serve_command = Command::new(command);
+    serve_command
         .arg("serve")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    hide_console_window(&mut serve_command);
+    serve_command
         .spawn()
         .map_err(|error| error.to_string())?;
 

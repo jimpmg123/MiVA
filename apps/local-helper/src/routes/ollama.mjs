@@ -361,7 +361,7 @@ export async function handleOllamaInstall(req, res, origin) {
     "--accept-package-agreements",
     "--accept-source-agreements"
   ], {
-    windowsHide: false
+    windowsHide: true
   });
 
   child.stdout.on("data", (chunk) => {
