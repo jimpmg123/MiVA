@@ -1,19 +1,45 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VOICE_WORKER_BASE_URL, VOICE_WORKER_HOST, VOICE_WORKER_PORT } from "../config.mjs";
 
 const workerScript = fileURLToPath(new URL("../../../voice-worker/server.py", import.meta.url));
 
 let voiceWorkerProcess = null;
+let preferredVoicePython = null;
 
-function pythonCandidates() {
-  return [
+function pythonCandidates(preferredExecutable = null) {
+  const userHome = process.env.USERPROFILE || process.env.HOME || "";
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const candidates = [
+    { command: preferredExecutable, argsPrefix: [] },
+    { command: preferredVoicePython, argsPrefix: [] },
     { command: process.env.MIVA_PYTHON_BIN, argsPrefix: [] },
+    { command: "py", argsPrefix: ["-3.12"] },
+    {
+      command: localAppData
+        ? path.join(localAppData, "Programs", "Python", "Python312", "python.exe")
+        : null,
+      argsPrefix: [],
+    },
+    ...["miniforge3", "miniconda3", "anaconda3"].map((distribution) => ({
+      command: userHome ? path.join(userHome, distribution, "python.exe") : null,
+      argsPrefix: [],
+    })),
     { command: "python", argsPrefix: [] },
-    { command: "py", argsPrefix: ["-3"] },
     { command: "python3", argsPrefix: [] },
   ].filter((candidate) => candidate.command);
+
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const key = `${String(candidate.command).toLowerCase()}|${candidate.argsPrefix.join(" ")}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 async function fetchJson(url, timeoutMs = 2500) {
@@ -112,6 +138,103 @@ function runProcess(command, args, timeoutMs = 600000) {
   });
 }
 
+function normalizeExecutable(value) {
+  return path.resolve(String(value || "")).toLowerCase();
+}
+
+function sameExecutable(left, right) {
+  return Boolean(left && right) && normalizeExecutable(left) === normalizeExecutable(right);
+}
+
+async function inspectPythonCandidate(candidate) {
+  const result = await runProcess(candidate.command, [
+    ...candidate.argsPrefix,
+    "-c",
+    "import json,platform,sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version()}))",
+  ], 10000);
+
+  if (!result.ok) {
+    return null;
+  }
+
+  try {
+    const info = JSON.parse(result.stdout.split(/\r?\n/).at(-1));
+    const [major, minor] = String(info.version || "").split(".").map(Number);
+    if (major !== 3 || minor !== 12 || !info.executable) {
+      return null;
+    }
+    return {
+      command: info.executable,
+      argsPrefix: [],
+      version: info.version,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function findPython312(preferredExecutable = null) {
+  for (const candidate of pythonCandidates(preferredExecutable)) {
+    try {
+      const inspected = await inspectPythonCandidate(candidate);
+      if (inspected) {
+        preferredVoicePython = inspected.command;
+        return inspected;
+      }
+    } catch {
+      // Continue until a compatible Python 3.12 runtime is found.
+    }
+  }
+
+  return null;
+}
+
+async function findVoiceWorkerPid(status) {
+  const reportedPid = Number(status?.pid || voiceWorkerProcess?.pid || 0);
+  if (reportedPid > 0) {
+    return reportedPid;
+  }
+
+  if (process.platform !== "win32") {
+    return 0;
+  }
+
+  try {
+    const result = await runProcess("powershell", [
+      "-NoProfile",
+      "-Command",
+      `(Get-NetTCPConnection -LocalPort ${VOICE_WORKER_PORT} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)`,
+    ], 10000);
+    return Number(result.stdout.trim()) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function stopVoiceWorker(status) {
+  const pid = await findVoiceWorkerPid(status);
+  if (pid > 0) {
+    try {
+      process.kill(pid);
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        throw error;
+      }
+    }
+  }
+  voiceWorkerProcess = null;
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const nextStatus = await getVoiceWorkerStatus();
+    if (!nextStatus.running) {
+      return;
+    }
+  }
+
+  throw new Error("Unable to stop the incompatible Python voice worker.");
+}
+
 export async function getVoiceWorkerStatus() {
   try {
     const response = await fetchJson(`${VOICE_WORKER_BASE_URL}/voice/status`);
@@ -140,107 +263,93 @@ export async function getVoiceWorkerStatus() {
   }
 }
 
-export async function startVoiceWorker() {
+export async function startVoiceWorker({ pythonExecutable = null, forceRestart = false } = {}) {
+  const candidate = await findPython312(pythonExecutable);
+  if (!candidate) {
+    throw new Error("Python 3.12 is required for the MiVA Voice Worker and Kokoro TTS.");
+  }
+
   const current = await getVoiceWorkerStatus();
   if (current.running) {
-    return {
-      started: false,
-      message: "MiVA Voice Worker is already running.",
-      status: current,
-    };
+    if (!forceRestart && sameExecutable(current.python?.executable, candidate.command)) {
+      return {
+        started: false,
+        command: candidate.command,
+        message: "MiVA Voice Worker is already running with Python 3.12.",
+        status: current,
+      };
+    }
+    await stopVoiceWorker(current);
   }
 
   if (!existsSync(workerScript)) {
     throw new Error(`Voice worker script was not found at ${workerScript}`);
   }
 
-  let lastError = null;
-  for (const candidate of pythonCandidates()) {
-    const args = [
-      ...candidate.argsPrefix,
-      workerScript,
-      "--host",
-      VOICE_WORKER_HOST,
-      "--port",
-      String(VOICE_WORKER_PORT),
-    ];
+  const args = [
+    workerScript,
+    "--host",
+    VOICE_WORKER_HOST,
+    "--port",
+    String(VOICE_WORKER_PORT),
+  ];
 
-    try {
-      const child = spawn(candidate.command, args, {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      child.unref();
-      voiceWorkerProcess = child;
-
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      const nextStatus = await getVoiceWorkerStatus();
-      if (nextStatus.running) {
-        return {
-          started: true,
-          command: candidate.command,
-          message: "MiVA Voice Worker started.",
-          status: nextStatus,
-        };
-      }
-
-      lastError = nextStatus.error || "Voice worker did not become ready.";
-    } catch (error) {
-      lastError = String(error?.message || error);
-    }
-  }
-
-  throw new Error(`Unable to start MiVA Voice Worker. ${lastError || "No Python command worked."}`);
-}
-
-export async function installKokoroDependencies() {
-  let status = null;
   try {
-    const startResult = await startVoiceWorker();
-    status = startResult.status;
-  } catch {
-    status = await getVoiceWorkerStatus();
-  }
+    const child = spawn(candidate.command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+    voiceWorkerProcess = child;
 
-  const packages = ["kokoro>=0.9.4", "soundfile", "numpy", "pyopenjtalk", "misaki[ja]", "fugashi[unidic-lite]"];
-  const candidates = status?.python?.executable
-    ? [{ command: status.python.executable, argsPrefix: [] }]
-    : pythonCandidates();
-
-  let lastResult = null;
-  for (const candidate of candidates) {
-    const args = [...candidate.argsPrefix, "-m", "pip", "install", ...packages];
-    try {
-      const result = await runProcess(candidate.command, args);
-      lastResult = result;
-      if (result.ok) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        return {
-          ok: true,
-          message: "Kokoro TTS dependencies installed for the active Python runtime.",
-          packages,
-          command: candidate.command,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          status: await getVoiceWorkerStatus(),
-        };
-      }
-    } catch (error) {
-      lastResult = {
-        ok: false,
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const nextStatus = await getVoiceWorkerStatus();
+    if (nextStatus.running && sameExecutable(nextStatus.python?.executable, candidate.command)) {
+      return {
+        started: true,
         command: candidate.command,
-        args,
-        stderr: String(error?.message || error),
+        message: "MiVA Voice Worker started with Python 3.12.",
+        status: nextStatus,
       };
     }
+
+    throw new Error(nextStatus.error || "Voice worker did not become ready with Python 3.12.");
+  } catch (error) {
+    voiceWorkerProcess = null;
+    throw new Error(`Unable to start MiVA Voice Worker with Python 3.12. ${String(error?.message || error)}`);
+  }
+}
+
+export async function installKokoroDependencies({ pythonExecutable = null } = {}) {
+  const candidate = await findPython312(pythonExecutable);
+  if (!candidate) {
+    throw new Error("Python 3.12 is required before installing Kokoro TTS.");
+  }
+  const packages = ["kokoro>=0.9.4", "soundfile", "numpy", "pyopenjtalk", "misaki[ja]", "fugashi[unidic-lite]"];
+  const args = ["-m", "pip", "install", ...packages];
+  const result = await runProcess(candidate.command, args);
+  if (!result.ok) {
+    throw new Error(
+      `Unable to install Kokoro TTS dependencies with Python 3.12. ${
+        result.stderr || result.stdout || "pip failed without output."
+      }`
+    );
   }
 
-  throw new Error(
-    `Unable to install Kokoro TTS dependencies. ${
-      lastResult?.stderr || lastResult?.stdout || "No Python command worked."
-    }`
-  );
+  const worker = await startVoiceWorker({
+    pythonExecutable: candidate.command,
+    forceRestart: true,
+  });
+  return {
+    ok: true,
+    message: "Kokoro TTS dependencies installed with Python 3.12.",
+    packages,
+    command: candidate.command,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    status: worker.status,
+  };
 }
 
 export async function installDocumentDependencies() {

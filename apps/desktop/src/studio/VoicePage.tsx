@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PromptSettings, SttProviderId, TtsProviderId } from "../types";
 import { Badge, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select, SelectionOptionCard, StatusAlert, Switch } from "../components/ui";
-import { getVoiceWorkerStatus, installKokoroTts, startVoiceWorker } from "../features/voice/voiceRuntime";
+import {
+  getKokoroPythonRuntime,
+  getVoiceWorkerStatus,
+  installKokoroTts,
+  startVoiceWorker,
+} from "../features/voice/voiceRuntime";
 import type { VoiceWorkerStatus } from "../types";
 
 type VoiceStudioPanelProps = {
   settings: PromptSettings;
+  onOpenPythonSetup: () => void;
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
 };
 
@@ -106,7 +112,11 @@ const fallbackKokoroVoices = [
   { id: "zm_yunxi", label: "Yunxi", language: "Mandarin Chinese", gender: "Male" },
 ];
 
-export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStudioPanelProps) {
+export function VoiceStudioPanel({
+  settings,
+  onOpenPythonSetup,
+  onPromptSettingsChange,
+}: VoiceStudioPanelProps) {
   const voice = settings.voice;
   const [workerStatus, setWorkerStatus] = useState<VoiceWorkerStatus | null>(null);
   const [workerError, setWorkerError] = useState<string | null>(null);
@@ -135,7 +145,12 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
     setWorkerError(null);
     setWorkerNotice(null);
     try {
-      setWorkerStatus(await startVoiceWorker());
+      const python = await getKokoroPythonRuntime();
+      if (!python.meetsMinimum || !python.command) {
+        setWorkerError("Python 3.12 is required. Open Initial Setup to install it.");
+        return;
+      }
+      setWorkerStatus(await startVoiceWorker(python.command));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setWorkerError(/failed to fetch/i.test(message)
@@ -151,7 +166,12 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
     setWorkerError(null);
     setWorkerNotice(null);
     try {
-      const result = await installKokoroTts();
+      const python = await getKokoroPythonRuntime();
+      if (!python.meetsMinimum || !python.command) {
+        onOpenPythonSetup();
+        return;
+      }
+      const result = await installKokoroTts(python.command);
       setWorkerStatus(result.status);
       setWorkerNotice(result.message || "Kokoro TTS dependencies installed.");
     } catch (error) {
@@ -162,7 +182,7 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
     } finally {
       setInstallBusy(false);
     }
-  }, []);
+  }, [onOpenPythonSetup]);
 
   useEffect(() => {
     void refreshVoiceWorker();

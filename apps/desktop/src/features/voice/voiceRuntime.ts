@@ -1,5 +1,6 @@
 import { requestLocalHelper } from "../localHelper/client";
 import type { VoiceWorkerStatus } from "../../types";
+import { invokeCommand } from "../../app/tauri";
 
 const KOKORO_VOICE_ALIASES: Record<string, string> = {
   default: "af_heart",
@@ -34,10 +35,22 @@ export function getVoiceWorkerStatus() {
   return requestLocalHelper<VoiceWorkerStatus>("/voice/status");
 }
 
-export async function startVoiceWorker() {
+export type KokoroPythonRuntime = {
+  installed: boolean;
+  meetsMinimum: boolean;
+  command?: string | null;
+  version?: string | null;
+};
+
+export async function getKokoroPythonRuntime() {
+  const requirements = await invokeCommand<{ python: KokoroPythonRuntime }>("get_runtime_requirements");
+  return requirements.python;
+}
+
+export async function startVoiceWorker(pythonExecutable: string) {
   const result = await requestLocalHelper<{ status: VoiceWorkerStatus }>("/voice/start", {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify({ pythonExecutable }),
   });
   return result.status;
 }
@@ -52,10 +65,10 @@ export type KokoroInstallResult = {
   status: VoiceWorkerStatus;
 };
 
-export async function installKokoroTts() {
+export async function installKokoroTts(pythonExecutable: string) {
   return requestLocalHelper<KokoroInstallResult>("/voice/install-kokoro", {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify({ pythonExecutable }),
   });
 }
 

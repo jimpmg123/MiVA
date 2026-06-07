@@ -714,54 +714,101 @@ fn parse_python_version(value: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
+fn python_312_candidates() -> Vec<(String, Vec<String>)> {
+    let mut candidates = Vec::new();
+
+    if let Ok(value) = env::var("MIVA_PYTHON_BIN") {
+        if !value.trim().is_empty() {
+            candidates.push((value, Vec::new()));
+        }
+    }
+
+    candidates.push(("py".to_string(), vec!["-3.12".to_string()]));
+
+    if let Ok(value) = env::var("LOCALAPPDATA") {
+        candidates.push((
+            PathBuf::from(value)
+                .join("Programs")
+                .join("Python")
+                .join("Python312")
+                .join("python.exe")
+                .to_string_lossy()
+                .to_string(),
+            Vec::new(),
+        ));
+    }
+
+    if let Ok(value) = env::var("USERPROFILE") {
+        for distribution in ["miniforge3", "miniconda3", "anaconda3"] {
+            candidates.push((
+                PathBuf::from(&value)
+                    .join(distribution)
+                    .join("python.exe")
+                    .to_string_lossy()
+                    .to_string(),
+                Vec::new(),
+            ));
+        }
+    }
+
+    candidates.push(("python".to_string(), Vec::new()));
+    candidates.push(("python3".to_string(), Vec::new()));
+    candidates
+}
+
+fn inspect_python_candidate(program: &str, args_prefix: &[String]) -> Option<(String, String)> {
+    let mut command = Command::new(program);
+    command.args(args_prefix);
+    command.args([
+        "-c",
+        "import platform,sys; print(sys.executable); print(platform.python_version())",
+    ]);
+    hide_console_window(&mut command);
+    let output = command.output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines().map(str::trim).filter(|line| !line.is_empty());
+    let executable = lines.next()?.to_string();
+    let version = lines.next()?.to_string();
+    Some((executable, version))
+}
+
 fn detect_python_requirement() -> RuntimeRequirement {
-    let candidates: [(&str, &[&str]); 3] = [
-        ("python", &["--version"]),
-        ("python3", &["--version"]),
-        ("py", &["-3", "--version"]),
-    ];
-
-    for (program, args) in candidates {
-        if let Some(version) = command_version(program, args) {
-            let parsed = parse_python_version(&version);
-            let meets_minimum =
-                parsed.is_some_and(|(major, minor, _)| major > 3 || (major == 3 && minor >= 8));
-            let command = if args.is_empty() {
-                program.to_string()
-            } else {
-                format!("{program} {}", args.join(" "))
-            };
-
+    for (program, args_prefix) in python_312_candidates() {
+        if let Some((executable, version)) = inspect_python_candidate(&program, &args_prefix) {
+            let compatible = parse_python_version(&version)
+                .is_some_and(|(major, minor, _)| major == 3 && minor == 12);
+            if !compatible {
+                continue;
+            }
             return RuntimeRequirement {
                 id: "python".to_string(),
-                label: "Python 3.8+".to_string(),
+                label: "Python 3.12".to_string(),
                 required_for:
-                    "Optional developer tools, local TTS/STT helpers, and future model utilities."
+                    "Kokoro TTS, local STT helpers, and optional Python tools."
                         .to_string(),
                 installed: true,
-                meets_minimum,
-                command: Some(command),
+                meets_minimum: true,
+                command: Some(executable),
                 version: Some(version),
-                note: if meets_minimum {
-                    "Detected. Ollama itself does not require Python.".to_string()
-                } else {
-                    "Detected, but some optional tools may require Python 3.8 or newer. Ollama itself does not require Python.".to_string()
-                },
+                note: "Python 3.12 is ready for Kokoro TTS.".to_string(),
             };
         }
     }
 
     RuntimeRequirement {
         id: "python".to_string(),
-        label: "Python 3.8+".to_string(),
-        required_for:
-            "Optional developer tools, local TTS/STT helpers, and future model utilities."
-                .to_string(),
+        label: "Python 3.12".to_string(),
+        required_for: "Kokoro TTS, local STT helpers, and optional Python tools.".to_string(),
         installed: false,
         meets_minimum: false,
         command: None,
         version: None,
-        note: "Not detected. Ollama can still install and run without Python.".to_string(),
+        note: "Python 3.12 was not detected. Install it before setting up Kokoro TTS.".to_string(),
     }
 }
 
@@ -1149,7 +1196,7 @@ fn default_python_install_dir_inner() -> String {
 fn install_python_inner(target_dir: Option<String>) -> Result<String, String> {
     let current = detect_python_requirement();
     if current.meets_minimum {
-        return Ok("Python 3.8+ is already installed.".to_string());
+        return Ok("Python 3.12 is already installed.".to_string());
     }
 
     let install_dir = target_dir

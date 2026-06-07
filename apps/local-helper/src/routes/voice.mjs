@@ -6,11 +6,17 @@ export async function handleVoiceStatus(req, res, origin) {
 }
 
 export async function handleVoiceStart(req, res, origin) {
-  sendJson(res, 200, await startVoiceWorker(), origin);
+  const payload = await readJson(req);
+  sendJson(res, 200, await startVoiceWorker({
+    pythonExecutable: typeof payload.pythonExecutable === "string" ? payload.pythonExecutable : null,
+  }), origin);
 }
 
 export async function handleVoiceInstallKokoro(req, res, origin) {
-  sendJson(res, 200, await installKokoroDependencies(), origin);
+  const payload = await readJson(req);
+  sendJson(res, 200, await installKokoroDependencies({
+    pythonExecutable: typeof payload.pythonExecutable === "string" ? payload.pythonExecutable : null,
+  }), origin);
 }
 
 export async function handleVoiceTts(req, res, origin) {

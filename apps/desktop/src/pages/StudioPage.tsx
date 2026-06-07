@@ -121,6 +121,7 @@ type StudioPageProps = {
   setSelectedProvider: (providerId: ProviderId) => void;
   setToolsForAiOpen: (open: boolean) => void;
   onOpenWorkspaceConsent: () => void;
+  onOpenPythonSetup: () => void;
   onRefreshGoogleWorkspaceStatus: () => void;
   onAddAssistantStart: () => void;
   onConfirmDiscardStudioChanges: (action: () => void) => void;
@@ -182,6 +183,7 @@ export function StudioPage({
   setSelectedProvider,
   setToolsForAiOpen,
   onOpenWorkspaceConsent,
+  onOpenPythonSetup,
   onRefreshGoogleWorkspaceStatus,
   onAddAssistantStart,
   onConfirmDiscardStudioChanges,
@@ -360,6 +362,7 @@ export function StudioPage({
         <VoiceStudioPanel
           settings={profile.prompt.settings}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
+          onOpenPythonSetup={onOpenPythonSetup}
         />
       );
     };

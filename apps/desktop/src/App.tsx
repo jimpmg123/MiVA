@@ -724,6 +724,11 @@ function App() {
       setSelectedProvider={setSelectedProvider}
       setToolsForAiOpen={setToolsForAiOpen}
       onOpenWorkspaceConsent={() => void openWorkspaceConsent()}
+      onOpenPythonSetup={() => {
+        setAppMode("setup");
+        setActiveStep("clawCode");
+        void refreshRuntimeRequirements();
+      }}
       onRefreshGoogleWorkspaceStatus={() => void refreshGoogleWorkspaceStatus()}
       onAddAssistantStart={() => runAfterUnsavedCheck(startNewAssistantDraft)}
       onConfirmDiscardStudioChanges={runAfterUnsavedCheck}

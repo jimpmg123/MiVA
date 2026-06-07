@@ -1,4 +1,13 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -43,6 +52,19 @@ function copyVoiceWorker() {
   console.log(`[miva-package] bundled voice worker from ${voiceWorkerSource}`);
 }
 
+function copyDirectoryFiles(source, target) {
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = join(source, entry.name);
+    const targetPath = join(target, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectoryFiles(sourcePath, targetPath);
+    } else if (entry.isFile()) {
+      copyFileSync(sourcePath, targetPath);
+    }
+  }
+}
+
 function copyOptionalLive2dAssets() {
   const candidates = [
     join(repoRoot, "VtuberLLM", "Open-LLM-VTuber-main", "live2d-models"),
@@ -57,7 +79,7 @@ function copyOptionalLive2dAssets() {
 
   const modelsSource = candidates.find((path) => existsSync(path));
   if (modelsSource) {
-    cpSync(modelsSource, join(bundleRoot, "live2d-models"), { recursive: true });
+    copyDirectoryFiles(modelsSource, join(bundleRoot, "live2d-models"));
     console.log(`[miva-package] bundled Live2D models from ${modelsSource}`);
   } else {
     console.warn("[miva-package] Live2D models not found. Character install will be skipped in packaged builds.");
@@ -66,7 +88,7 @@ function copyOptionalLive2dAssets() {
   const coreSource = coreCandidates.find((path) => existsSync(path));
   if (coreSource) {
     mkdirSync(bundleRoot, { recursive: true });
-    cpSync(coreSource, join(bundleRoot, "live2dcubismcore.min.js"));
+    copyFileSync(coreSource, join(bundleRoot, "live2dcubismcore.min.js"));
     console.log(`[miva-package] bundled Live2D core script from ${coreSource}`);
   } else {
     console.warn("[miva-package] Live2D core script not found. Character install will be skipped in packaged builds.");
