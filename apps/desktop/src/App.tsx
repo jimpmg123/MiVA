@@ -89,7 +89,7 @@ function App() {
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
   const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
   const [pendingUnsavedAction, setPendingUnsavedAction] = useState<(() => void) | null>(null);
-  const [tauriRuntime] = useState(isTauriRuntime);
+  const [tauriRuntime] = useState(() => isTauriRuntime());
   const [googleWorkspaceStatus, setGoogleWorkspaceStatus] = useState<GoogleWorkspaceStatus | null>(null);
 
   const log = useCallback((message: string) => {
@@ -177,7 +177,6 @@ function App() {
     setClawCodeWorkspace,
   } = useClawCodeRuntime({
     openAiApiKey: effectiveProviderKeys.openai,
-    tauriRuntime,
     onLog: log,
     setBusyAction,
   });

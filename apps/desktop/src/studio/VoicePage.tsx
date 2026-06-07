@@ -121,7 +121,10 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
       setWorkerStatus(await getVoiceWorkerStatus());
     } catch (error) {
       setWorkerStatus(null);
-      setWorkerError(String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkerError(/failed to fetch/i.test(message)
+        ? "Local helper에 연결하지 못했습니다. MiVA 앱이 실행 중인지 확인한 뒤 Refresh status를 다시 눌러 주세요."
+        : message);
     } finally {
       setWorkerBusy(false);
     }
@@ -134,7 +137,10 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
     try {
       setWorkerStatus(await startVoiceWorker());
     } catch (error) {
-      setWorkerError(String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkerError(/failed to fetch/i.test(message)
+        ? "Local helper에 연결하지 못했습니다. MiVA 앱이 실행 중인지 확인한 뒤 다시 시도해 주세요."
+        : message);
     } finally {
       setWorkerBusy(false);
     }
@@ -149,7 +155,10 @@ export function VoiceStudioPanel({ settings, onPromptSettingsChange }: VoiceStud
       setWorkerStatus(result.status);
       setWorkerNotice(result.message || "Kokoro TTS dependencies installed.");
     } catch (error) {
-      setWorkerError(String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkerError(/failed to fetch/i.test(message)
+        ? "Local helper에 연결하지 못했습니다. MiVA 앱이 실행 중인지 확인한 뒤 다시 시도해 주세요."
+        : message);
     } finally {
       setInstallBusy(false);
     }

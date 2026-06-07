@@ -7,8 +7,10 @@ const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const repoRoot = dirname(dirname(desktopRoot));
 const bundleRoot = join(desktopRoot, "src-tauri", "bundle-resources");
 const helperSource = join(repoRoot, "apps", "local-helper");
+const voiceWorkerSource = join(repoRoot, "apps", "voice-worker");
 const sharedSource = join(repoRoot, "packages", "shared");
 const helperTarget = join(bundleRoot, "apps", "local-helper");
+const voiceWorkerTarget = join(bundleRoot, "apps", "voice-worker");
 const sharedTarget = join(bundleRoot, "packages", "shared");
 
 function copyDirectory(source, target) {
@@ -25,6 +27,20 @@ function copyDirectory(source, target) {
         && !normalized.endsWith("/demo.env");
     },
   });
+}
+
+function copyVoiceWorker() {
+  if (!existsSync(voiceWorkerSource)) {
+    throw new Error(`Missing voice worker source: ${voiceWorkerSource}`);
+  }
+
+  const workerScript = join(voiceWorkerSource, "server.py");
+  if (!existsSync(workerScript)) {
+    throw new Error(`Missing voice worker entrypoint: ${workerScript}`);
+  }
+
+  copyDirectory(voiceWorkerSource, voiceWorkerTarget);
+  console.log(`[miva-package] bundled voice worker from ${voiceWorkerSource}`);
 }
 
 function copyOptionalLive2dAssets() {
@@ -107,8 +123,21 @@ function loadDesktopProductionEnv() {
   return parseEnvFile(envPath);
 }
 
+function loadDemoEnvForBundle() {
+  const demoEnvPath = join(helperSource, "demo.env");
+  if (!existsSync(demoEnvPath)) {
+    return {};
+  }
+
+  return parseEnvFile(demoEnvPath);
+}
+
+// Only OpenAI is bundled for grading/test installs. Gemini, Groq, and Hugging Face stay user-provided.
+const BUNDLED_DEMO_ENV_KEYS = ["OPENAI_API_KEY", "OPENAI_DEFAULT_MODEL"];
+
 function writeBundledHelperEnv() {
   const productionEnv = loadDesktopProductionEnv();
+  const demoEnv = loadDemoEnvForBundle();
   const cloudApiUrl = process.env.VITE_MIVA_API_URL?.trim()
     || productionEnv.VITE_MIVA_API_URL?.trim()
     || process.env.MIVA_CLOUD_API_URL?.trim()
@@ -126,8 +155,20 @@ function writeBundledHelperEnv() {
     lines.push(`MIVA_WEB_ORIGINS=${webOrigins}`);
   }
 
+  for (const key of BUNDLED_DEMO_ENV_KEYS) {
+    const value = demoEnv[key]?.trim();
+    if (value) {
+      lines.push(`${key}=${value}`);
+    }
+  }
+
   writeFileSync(join(helperTarget, ".env"), `${lines.join("\n")}\n`, "utf8");
   console.log(`[miva-package] wrote bundled helper env (cloud API: ${cloudApiUrl})`);
+  if (demoEnv.OPENAI_API_KEY?.trim()) {
+    console.log("[miva-package] bundled OpenAI demo key from apps/local-helper/demo.env");
+  } else {
+    console.warn("[miva-package] no OPENAI_API_KEY in demo.env; OpenAI/Claw Code will need user keys in Settings");
+  }
 }
 
 function main() {
@@ -136,6 +177,7 @@ function main() {
   mkdirSync(bundleRoot, { recursive: true });
 
   copyDirectory(helperSource, helperTarget);
+  copyVoiceWorker();
   copyDirectory(sharedSource, sharedTarget);
   writeBundledHelperEnv();
   copyOptionalLive2dAssets();

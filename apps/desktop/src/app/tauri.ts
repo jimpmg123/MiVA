@@ -3,11 +3,20 @@ import { invoke } from "@tauri-apps/api/core";
 declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
+    isTauri?: boolean;
   }
 }
 
 export function isTauriRuntime() {
-  return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return "__TAURI_INTERNALS__" in window || window.isTauri === true;
+}
+
+export function shouldUseLocalHelperBridge() {
+  return isTauriRuntime();
 }
 
 export async function invokeCommand<T>(command: string, args?: Record<string, unknown>) {

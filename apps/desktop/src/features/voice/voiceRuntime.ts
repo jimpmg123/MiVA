@@ -1,6 +1,6 @@
+import { requestLocalHelper } from "../localHelper/client";
 import type { VoiceWorkerStatus } from "../../types";
 
-const LOCAL_HELPER_BASE_URL = "http://127.0.0.1:43110";
 const KOKORO_VOICE_ALIASES: Record<string, string> = {
   default: "af_heart",
   "kokoro-default": "af_heart",
@@ -30,29 +30,12 @@ function normalizeKokoroVoiceId(value: string) {
   return KOKORO_VOICE_ALIASES[withoutExtension.toLowerCase()] ?? withoutExtension;
 }
 
-async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${LOCAL_HELPER_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(data?.message || data?.error || `HTTP ${response.status}`);
-  }
-
-  return data as T;
-}
-
 export function getVoiceWorkerStatus() {
-  return readJson<VoiceWorkerStatus>("/voice/status");
+  return requestLocalHelper<VoiceWorkerStatus>("/voice/status");
 }
 
 export async function startVoiceWorker() {
-  const result = await readJson<{ status: VoiceWorkerStatus }>("/voice/start", {
+  const result = await requestLocalHelper<{ status: VoiceWorkerStatus }>("/voice/start", {
     method: "POST",
     body: "{}",
   });
@@ -70,7 +53,7 @@ export type KokoroInstallResult = {
 };
 
 export async function installKokoroTts() {
-  return readJson<KokoroInstallResult>("/voice/install-kokoro", {
+  return requestLocalHelper<KokoroInstallResult>("/voice/install-kokoro", {
     method: "POST",
     body: "{}",
   });
@@ -97,7 +80,7 @@ export type VoiceSynthesisResult = {
 };
 
 export function synthesizeVoice(request: VoiceSynthesisRequest) {
-  return readJson<VoiceSynthesisResult>("/voice/tts", {
+  return requestLocalHelper<VoiceSynthesisResult>("/voice/tts", {
     method: "POST",
     body: JSON.stringify({
       ...request,

@@ -1,21 +1,4 @@
-const LOCAL_HELPER_BASE_URL = "http://127.0.0.1:43110";
-
-async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${LOCAL_HELPER_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(data?.message || data?.error || data?.hint || `HTTP ${response.status}`);
-  }
-
-  return data as T;
-}
+import { requestLocalHelper } from "../localHelper/client";
 
 export type ImageGenStatus = {
   available: boolean;
@@ -33,7 +16,7 @@ export type ImageGenResult = {
 };
 
 export function getImageGenStatus() {
-  return readJson<ImageGenStatus>("/image-gen/status");
+  return requestLocalHelper<ImageGenStatus>("/image-gen/status");
 }
 
 export function generateImageRequest(input: {
@@ -41,7 +24,7 @@ export function generateImageRequest(input: {
   apiKey?: string;
   model?: string;
 }) {
-  return readJson<ImageGenResult>("/image-gen/generate", {
+  return requestLocalHelper<ImageGenResult>("/image-gen/generate", {
     method: "POST",
     body: JSON.stringify({
       prompt: input.prompt,

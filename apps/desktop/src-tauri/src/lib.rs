@@ -1875,6 +1875,100 @@ fn chat_via_local_helper(
         })
 }
 
+fn request_local_helper_json_once(
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let url = format!("{LOCAL_HELPER_URL}{path}");
+    let response = match method {
+        "GET" => client.get(url),
+        "POST" => {
+            let mut request = client.post(url);
+            if let Some(body) = body {
+                request = request.json(&body);
+            }
+            request
+        }
+        other => return Err(format!("Unsupported local helper method: {other}")),
+    }
+    .send()
+    .map_err(|error| error.to_string())?;
+
+    let status = response.status();
+    let text = response.text().map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        return Err(format!("Local helper returned HTTP {status}: {text}"));
+    }
+
+    serde_json::from_str::<Value>(&text)
+        .map_err(|error| format!("Failed to parse local helper response: {error}"))
+}
+
+fn request_local_helper_json(
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    const RETRY_DELAYS_MS: [u64; 4] = [0, 500, 1000, 2000];
+    let mut last_error = String::new();
+
+    for delay_ms in RETRY_DELAYS_MS {
+        if delay_ms > 0 {
+            thread::sleep(Duration::from_millis(delay_ms));
+        }
+
+        match request_local_helper_json_once(method, path, body.clone()) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let retryable = error.contains("connection")
+                    || error.contains("refused")
+                    || error.contains("connect")
+                    || error.contains("timed out");
+                last_error = error;
+                if !retryable {
+                    return Err(last_error);
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Local helper is not responding on {LOCAL_HELPER_URL}. Keep MiVA Desktop open and make sure Node.js is installed. ({last_error})"
+    ))
+}
+
+fn get_claw_code_status_inner() -> Result<Value, String> {
+    request_local_helper_json("GET", "/claw-code/status", None)
+}
+
+fn install_claw_code_inner(workspace_root: Option<String>) -> Result<Value, String> {
+    let mut body = json!({});
+    if let Some(workspace_root) = workspace_root.filter(|value| !value.trim().is_empty()) {
+        body["workspaceRoot"] = json!(workspace_root);
+    }
+
+    request_local_helper_json("POST", "/claw-code/install", Some(body))
+}
+
+fn set_claw_code_workspace_inner(workspace_root: String) -> Result<Value, String> {
+    let trimmed = workspace_root.trim();
+    if trimmed.is_empty() {
+        return Err("Workspace folder is required.".to_string());
+    }
+
+    request_local_helper_json(
+        "POST",
+        "/claw-code/workspace",
+        Some(json!({ "workspaceRoot": trimmed })),
+    )
+}
+
 fn chat_once_inner(
     provider: String,
     model: String,
@@ -2295,6 +2389,44 @@ async fn analyze_document(path: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn request_local_helper(
+    method: String,
+    path: String,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        request_local_helper_json(
+            method.trim(),
+            path.trim(),
+            body.filter(|value| !value.is_null()),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_claw_code_status() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(get_claw_code_status_inner)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn install_claw_code(workspace_root: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || install_claw_code_inner(workspace_root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_claw_code_workspace(workspace_root: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_claw_code_workspace_inner(workspace_root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn get_hardware_info() -> Result<HardwareInfo, String> {
     tauri::async_runtime::spawn_blocking(get_hardware_info_inner)
         .await
@@ -2560,6 +2692,10 @@ pub fn run() {
             chat_once,
             read_image_attachment,
             analyze_document,
+            request_local_helper,
+            get_claw_code_status,
+            install_claw_code,
+            set_claw_code_workspace,
             get_hardware_info,
             get_runtime_requirements,
             get_default_python_install_dir,
