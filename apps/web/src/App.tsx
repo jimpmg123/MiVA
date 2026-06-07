@@ -2172,6 +2172,83 @@ const MOCK_UI_PERSONAS = [
   { id: 'john-cena', label: 'John Cena', imageSrc: '/images/characters/john-cena.png' },
 ] as const;
 
+type MockUiPersona = (typeof MOCK_UI_PERSONAS)[number];
+
+function MockPersonaCharacterSelect({
+  personas,
+  selectedId,
+  onSelect,
+}: {
+  personas: readonly MockUiPersona[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = personas.find((persona) => persona.id === selectedId) ?? personas[0];
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  return (
+    <div className="relative w-full" ref={rootRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="flex w-full items-center justify-between rounded-2xl bg-slate-100 px-6 py-4 text-left font-bold text-slate-700 transition-all hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-container/30"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span>Character: {selected.label}</span>
+        <ChevronRight className={`h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? '-rotate-90' : 'rotate-90'}`} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-2xl border border-slate-100 bg-white p-1.5 shadow-[0px_12px_32px_rgba(15,23,42,0.12)] dark:border-[#243044] dark:bg-[#111827]"
+          role="listbox"
+        >
+          {personas.map((persona) => {
+            const isSelected = persona.id === selectedId;
+            return (
+              <button
+                key={persona.id}
+                aria-selected={isSelected}
+                className={`flex w-full items-center justify-between rounded-xl px-5 py-3 text-left text-sm font-bold transition-all ${
+                  isSelected
+                    ? 'bg-primary-container/8 text-primary-container shadow-sm dark:bg-primary-container/15'
+                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-[#172033]'
+                }`}
+                onClick={() => {
+                  onSelect(persona.id);
+                  setOpen(false);
+                }}
+                role="option"
+                type="button"
+              >
+                <span>Character: {persona.label}</span>
+                {isSelected ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const VoiceCharacterPage = () => {
   const [selectedPersonaId, setSelectedPersonaId] = useState<string>(MOCK_UI_PERSONAS[0].id);
   const selectedPersona = MOCK_UI_PERSONAS.find((persona) => persona.id === selectedPersonaId) ?? MOCK_UI_PERSONAS[0];
@@ -2280,23 +2357,11 @@ const VoiceCharacterPage = () => {
                 </div>
 
                 <div className="space-y-6 w-full">
-                    <label className="block text-left">
-                      <span className="sr-only">Character</span>
-                      <div className="relative">
-                        <select
-                          className="w-full appearance-none bg-slate-100 py-4 pl-6 pr-12 rounded-2xl font-bold text-slate-700 transition-all hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-container/30"
-                          onChange={(event) => setSelectedPersonaId(event.target.value)}
-                          value={selectedPersonaId}
-                        >
-                          {MOCK_UI_PERSONAS.map((persona) => (
-                            <option key={persona.id} value={persona.id}>
-                              Character: {persona.label}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronRight className="pointer-events-none absolute right-5 top-1/2 h-5 w-5 -translate-y-1/2 rotate-90 text-slate-500" />
-                      </div>
-                    </label>
+                    <MockPersonaCharacterSelect
+                      onSelect={setSelectedPersonaId}
+                      personas={MOCK_UI_PERSONAS}
+                      selectedId={selectedPersonaId}
+                    />
                     <div className="flex gap-2 justify-center">
                         <Badge variant="active">3D Rendered</Badge>
                         <Badge variant="info">Reactive</Badge>
