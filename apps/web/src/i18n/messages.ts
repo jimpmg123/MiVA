@@ -23,7 +23,8 @@ export type WebMessages = {
     previewBadge: string;
     notConnectedBadge: string;
     title: string;
-    subtitle: string;
+    subtitlePrimary: string;
+    subtitleSecondary: string;
     sharePreset: string;
     uploadBundle: string;
     browseTitle: string;
@@ -418,8 +419,10 @@ export const messages: Record<WebLocale, WebMessages> = {
       previewBadge: '미리보기 목업',
       notConnectedBadge: 'API 미연결',
       title: '프리셋 허브',
-      subtitle:
-        'AI 비서의 음성·캐릭터·프롬프트 설정을 업로드하고, 다른 사람 프리셋을 둘러본 뒤 댓글로 피드백하는 커뮤니티 보드입니다. 실시간 대화방이 아니라 게시글 + 댓글 + 가져오기 흐름을 가정한 UI 목업입니다.',
+      subtitlePrimary:
+        'AI 비서의 음성·캐릭터·프롬프트 설정을 업로드하고, 다른 사람 프리셋을 둘러본 뒤 댓글로 피드백하는 커뮤니티 보드입니다.',
+      subtitleSecondary:
+        '실시간 대화방이 아니라 게시글 + 댓글 + 가져오기 흐름을 가정한 UI 목업입니다.',
       sharePreset: '내 프리셋 공유',
       uploadBundle: '번들 업로드',
       browseTitle: '프리셋 둘러보기',
@@ -566,7 +569,7 @@ export const messages: Record<WebLocale, WebMessages> = {
       billing: 'Billing',
       integrations: 'Integrations',
       voice: 'Voice & Character',
-      personaHub: 'Preset Hub',
+      personaHub: 'Persona Hub',
       admin: 'Admin Analytics',
       settings: 'Settings',
     },
@@ -723,9 +726,11 @@ export const messages: Record<WebLocale, WebMessages> = {
     personaHub: {
       previewBadge: 'Preview Mockup',
       notConnectedBadge: 'Not connected to API',
-      title: 'Preset Hub',
-      subtitle:
-        'Upload voice, character, and prompt settings for your AI assistant, browse presets from others, and leave async feedback. This is a community board mockup — posts, comments, and import — not a live chat room.',
+      title: 'Persona Hub',
+      subtitlePrimary:
+        'Upload voice, character, and prompt settings for your AI assistant, browse presets from others, and leave async feedback on this community board.',
+      subtitleSecondary:
+        'This is a UI mockup for a posts, comments, and import flow — not a live chat room.',
       sharePreset: 'Share my preset',
       uploadBundle: 'Upload bundle',
       browseTitle: 'Browse presets',

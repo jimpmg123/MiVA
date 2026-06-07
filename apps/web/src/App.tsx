@@ -32,7 +32,8 @@ import {
   Pause,
   Play,
   Minus,
-  X
+  X,
+  Bot,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LandingPage } from './pages/LandingPage';
@@ -718,8 +719,8 @@ const DashboardPage = ({ connection, action, actions }: { connection: Connection
           <h3 className="text-xl font-bold font-display">Active Assistant</h3>
         </div>
         <div className="flex items-start gap-6 p-6 bg-primary-container/5 rounded-2xl border border-primary-container/10">
-          <div className="w-20 h-20 rounded-2xl bg-primary-container flex items-center justify-center text-white shrink-0 overflow-hidden">
-             <img src="https://images.unsplash.com/photo-1675271591211-126ad5cc0625?q=80&w=260&auto=format&fit=crop" className="w-full h-full object-cover" />
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-primary-container text-white shadow-lg shadow-primary-container/25">
+            <Bot className="h-10 w-10" strokeWidth={1.75} />
           </div>
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -2164,7 +2165,18 @@ const IntegrationsPage = () => (
     </motion.div>
 );
 
-const VoiceCharacterPage = () => (
+const MOCK_UI_PERSONAS = [
+  { id: 'nova-crystal', label: 'Nova Crystal', imageSrc: '/images/characters/nova-crystal.png' },
+  { id: 'mira-wave', label: 'Mira Wave', imageSrc: '/images/characters/mira-wave.png' },
+  { id: 'miva-dog', label: 'MiVA Dog', imageSrc: '/images/characters/miva-dog.png' },
+  { id: 'john-cena', label: 'John Cena', imageSrc: '/images/characters/john-cena.png' },
+] as const;
+
+const VoiceCharacterPage = () => {
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string>(MOCK_UI_PERSONAS[0].id);
+  const selectedPersona = MOCK_UI_PERSONAS.find((persona) => persona.id === selectedPersonaId) ?? MOCK_UI_PERSONAS[0];
+
+  return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-10">
         <div className="flex justify-between items-end">
             <div>
@@ -2252,24 +2264,39 @@ const VoiceCharacterPage = () => (
             </Card>
 
             <Card className="col-span-12 md:col-span-4 p-10 text-center flex flex-col items-center h-full">
-                <h3 className="text-2xl font-bold font-display mb-2">UI Persona</h3>
+                <h3 className="text-2xl font-bold font-display mb-2">Mock UI Persona</h3>
                 <p className="text-slate-500 mb-10 text-sm">Active 2D Avatar Character</p>
                 
-                <div className="w-full aspect-square rounded-[40px] overflow-hidden mb-10 shadow-2xl relative group bg-gradient-to-br from-primary-container/10 via-blue-50 to-violet-100 flex items-center justify-center">
-                    <div className="flex h-32 w-32 items-center justify-center rounded-[32px] bg-white/80 text-primary-container shadow-inner">
-                        <UserCircle className="h-20 w-20" />
-                    </div>
+                <div className="w-full aspect-square rounded-[40px] overflow-hidden mb-10 shadow-2xl relative group bg-gradient-to-br from-primary-container/10 via-blue-50 to-violet-100 flex items-center justify-center p-4">
+                    <img
+                      alt={selectedPersona.label}
+                      className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                      src={selectedPersona.imageSrc}
+                    />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                        <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white"><Settings className="w-5 h-5" /></button>
-                        <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white"><Download className="w-5 h-5" /></button>
+                        <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white" type="button"><Settings className="w-5 h-5" /></button>
+                        <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white" type="button"><Download className="w-5 h-5" /></button>
                     </div>
                 </div>
 
                 <div className="space-y-6 w-full">
-                    <button className="w-full bg-slate-100 py-4 px-6 rounded-2xl font-bold text-slate-700 flex justify-between items-center transition-all hover:bg-slate-200">
-                        Character: Nova Crystal
-                        <ChevronRight className="w-5 h-5 rotate-90" />
-                    </button>
+                    <label className="block text-left">
+                      <span className="sr-only">Character</span>
+                      <div className="relative">
+                        <select
+                          className="w-full appearance-none bg-slate-100 py-4 pl-6 pr-12 rounded-2xl font-bold text-slate-700 transition-all hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-container/30"
+                          onChange={(event) => setSelectedPersonaId(event.target.value)}
+                          value={selectedPersonaId}
+                        >
+                          {MOCK_UI_PERSONAS.map((persona) => (
+                            <option key={persona.id} value={persona.id}>
+                              Character: {persona.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronRight className="pointer-events-none absolute right-5 top-1/2 h-5 w-5 -translate-y-1/2 rotate-90 text-slate-500" />
+                      </div>
+                    </label>
                     <div className="flex gap-2 justify-center">
                         <Badge variant="active">3D Rendered</Badge>
                         <Badge variant="info">Reactive</Badge>
@@ -2341,7 +2368,8 @@ const VoiceCharacterPage = () => (
             </p>
         </footer>
     </motion.div>
-);
+  );
+};
 
 const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refreshCloud: () => Promise<void> }) => {
   const stats = cloud.adminStats;
@@ -2452,7 +2480,7 @@ const AdminAnalyticsPage = ({ cloud, refreshCloud }: { cloud: CloudState; refres
 };
 
 export default function App() {
-  const { copy } = useLocale();
+  const { copy, locale } = useLocale();
   const shell = copy.shell;
   const navItems = useMemo(() => buildNavItems(copy.nav), [copy.nav]);
   const [activePage, setActivePage] = useState<PageId>('dashboard');
@@ -3210,7 +3238,7 @@ export default function App() {
       case 'billing': return <BillingPage />;
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
-      case 'personaHub': return <PersonaHubPage />;
+      case 'personaHub': return <PersonaHubPage key={locale} />;
       case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'settings': return <SettingsPage />;
       default: return null;

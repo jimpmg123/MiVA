@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   AudioLines,
@@ -94,6 +94,12 @@ export function PersonaHubPage() {
   const [likedPresetIds, setLikedPresetIds] = useState<string[]>([]);
   const [bookmarkedPresetIds, setBookmarkedPresetIds] = useState<string[]>(['preset-nova']);
 
+  useEffect(() => {
+    setSelectedPresetId(hub.presets[0]?.id ?? '');
+    setPersonaFilter('trending');
+    setDraftComment('');
+  }, [locale, hub.presets]);
+
   const filteredPresets = useMemo(() => {
     const sorted = [...hub.presets];
     if (personaFilter === 'new') {
@@ -136,7 +142,7 @@ export function PersonaHubPage() {
   ];
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+    <motion.div key={locale} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
       <div className="rounded-[28px] border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-6 md:p-8 dark:border-[#243044] dark:from-[#141C2E] dark:via-[#111827] dark:to-[#1A2740]">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
@@ -145,7 +151,10 @@ export function PersonaHubPage() {
               <HubBadge>{hub.notConnectedBadge}</HubBadge>
             </div>
             <h2 className="font-display text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{hub.title}</h2>
-            <p className="max-w-3xl text-sm leading-relaxed text-slate-600 dark:text-slate-400 md:text-base">{hub.subtitle}</p>
+            <div className="max-w-3xl space-y-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400 md:text-base">
+              <p>{hub.subtitlePrimary}</p>
+              <p>{hub.subtitleSecondary}</p>
+            </div>
           </div>
           <div className="flex flex-wrap gap-3">
             <button type="button" className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 dark:bg-[#1E293B] dark:text-slate-200 dark:ring-[#243044] dark:hover:bg-[#243044]">
