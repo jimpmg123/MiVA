@@ -1,4 +1,6 @@
-import { buildCloudAssistantProfilePayload } from "../assistants/cloudPayload";
+import { buildCloudAssistantProfilePayload, type CloudAssistantProfileRecord } from "../assistants/cloudPayload";
+import { CLOUD_API_URL } from "../../config/endpoints";
+import { APP_VERSION } from "../../app/version";
 import { loadOrCreateDeviceId } from "../auth/storage";
 import { providerMeta } from "../models/catalog";
 import type {
@@ -13,7 +15,7 @@ import type {
   ProviderId,
 } from "../../types";
 
-export const CLOUD_API_URL = "http://127.0.0.1:4000";
+export { CLOUD_API_URL } from "../../config/endpoints";
 
 export async function fetchCloudJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${CLOUD_API_URL}${path}`, init);
@@ -78,7 +80,7 @@ export async function registerDesktopDevice(input: {
       id: deviceId,
       name: deviceName,
       os: input.hardware?.osName ?? navigator.platform ?? null,
-      appVersion: "0.1.0",
+      appVersion: APP_VERSION,
       status: "connected",
       modelRuntime: {
         provider: input.selectedProvider,
@@ -158,7 +160,7 @@ export async function upsertCloudAssistantProfile(input: {
 export function listCloudAssistantProfiles(input: {
   authSession: AuthSession | null;
 }) {
-  return fetchCloudJson<{ profiles: Array<{ id: string }> }>("/assistant-profiles", {
+  return fetchCloudJson<{ profiles: CloudAssistantProfileRecord[] }>("/assistant-profiles", {
     headers: getCloudHeaders(input.authSession),
   });
 }

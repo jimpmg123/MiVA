@@ -38,6 +38,7 @@ export function useProviderKeySync({
           openai: response.keys.openai ?? "",
           gemini: response.keys.gemini ?? "",
           groq: response.keys.groq ?? "",
+          huggingface: "",
         });
         setProviderKeysSyncedAt(response.syncedAt);
         setProviderKeysSyncError(null);

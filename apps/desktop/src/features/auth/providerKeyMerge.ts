@@ -4,6 +4,7 @@ export const emptyCloudProviderKeys: ProviderKeyState = {
   openai: "",
   gemini: "",
   groq: "",
+  huggingface: "",
 };
 
 export function mergeProviderKeys(
@@ -14,6 +15,7 @@ export function mergeProviderKeys(
     openai: localKeys.openai.trim() || cloudKeys.openai.trim(),
     gemini: localKeys.gemini.trim() || cloudKeys.gemini.trim(),
     groq: localKeys.groq.trim() || cloudKeys.groq.trim(),
+    huggingface: localKeys.huggingface.trim() || cloudKeys.huggingface.trim(),
   };
 }
 

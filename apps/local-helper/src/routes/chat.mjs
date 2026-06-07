@@ -16,7 +16,12 @@ import { getOpenAiAnswer, streamOpenAiAnswer } from "../services/openai.mjs";
 import { resolveWorkspaceActionPrompt } from "../services/action-confirmation.mjs";
 import { getProviderApiKey } from "../services/provider-keys.mjs";
 import { runClawCodeAgent, shouldRouteToClawCode } from "../services/claw-code.mjs";
-import { buildWorkspaceActionContext, buildWorkspaceContext } from "../services/workspace.mjs";
+import {
+  buildUnsolicitedWorkspaceGuidance,
+  buildWorkspaceActionContext,
+  buildWorkspaceContext,
+  isWorkspaceSlashSession,
+} from "../services/workspace.mjs";
 import { readJson, sendJson, writeCorsHeaders } from "../utils/http.mjs";
 import { sendOllamaUnavailable } from "./ollama.mjs";
 
@@ -125,21 +130,63 @@ export async function handleChat(req, res, origin) {
     return;
   }
 
-  const workspaceContext = await buildWorkspaceContext({
-    prompt: workspacePrompt,
+  const clawCodeForced = body.clawCodeForced === true;
+  const routeToClawCode = shouldRouteToClawCode({
     profile: body.profile,
-    authToken: typeof body.authToken === "string" ? body.authToken : "",
+    prompt: latestUserPrompt,
+    force: clawCodeForced,
   });
-  const workspaceActionContext = await buildWorkspaceActionContext({
-    prompt: workspaceActionPrompt,
-    profile: body.profile,
-    authToken: typeof body.authToken === "string" ? body.authToken : "",
-    provider,
-    model,
-    apiKey,
-    locale,
-    workspaceContext,
+  const workspaceSlashForced = body.workspaceSlashForced === true;
+  const workspaceSlashSession = isWorkspaceSlashSession({
+    workspaceSlashForced,
+    messages,
+    latestUserPrompt,
   });
+
+  if (!routeToClawCode && !workspaceSlashSession) {
+    const guidance = buildUnsolicitedWorkspaceGuidance({ prompt: latestUserPrompt, locale });
+    if (guidance) {
+      if (body.stream === true) {
+        writeCorsHeaders(res, origin);
+        res.writeHead(200, {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "cache-control": "no-cache",
+        });
+        res.write(`${JSON.stringify({ message: { content: guidance } })}\n`);
+        res.write(`${JSON.stringify({ done: true, answer: guidance })}\n`);
+        res.end();
+        return;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        provider,
+        model,
+        answer: guidance,
+      }, origin);
+      return;
+    }
+  }
+
+  const workspaceContext = workspaceSlashSession
+    ? await buildWorkspaceContext({
+      prompt: workspacePrompt,
+      profile: body.profile,
+      authToken: typeof body.authToken === "string" ? body.authToken : "",
+    })
+    : null;
+  const workspaceActionContext = routeToClawCode || !workspaceSlashSession
+    ? null
+    : await buildWorkspaceActionContext({
+      prompt: workspaceActionPrompt,
+      profile: body.profile,
+      authToken: typeof body.authToken === "string" ? body.authToken : "",
+      provider,
+      model,
+      apiKey,
+      locale,
+      workspaceContext,
+    });
   if (workspaceActionContext?.type === "direct-answer") {
     const answer = workspaceActionContext.answer;
     if (body.stream === true) {
@@ -163,7 +210,7 @@ export async function handleChat(req, res, origin) {
     return;
   }
 
-  if (shouldRouteToClawCode({ profile: body.profile, prompt: latestUserPrompt })) {
+  if (routeToClawCode) {
     const clawOpenAiKey = typeof body.openAiApiKey === "string" && body.openAiApiKey.trim()
       ? body.openAiApiKey.trim()
       : typeof body.apiKey === "string" && body.provider === "openai"
@@ -177,6 +224,7 @@ export async function handleChat(req, res, origin) {
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => ({ role: message.role, content: message.content })),
       locale,
+      forced: clawCodeForced,
     });
 
     if (clawResult?.type === "direct-answer") {
@@ -191,6 +239,7 @@ export async function handleChat(req, res, origin) {
         res.write(`${JSON.stringify({
           done: true,
           answer,
+          uiAction: clawResult.uiAction || null,
           provider: clawResult.meta?.provider || "openai",
           model: clawResult.meta?.model || "gpt-4o-mini",
         })}\n`);
@@ -203,6 +252,7 @@ export async function handleChat(req, res, origin) {
         provider: clawResult.meta?.provider || "openai",
         model: clawResult.meta?.model || "gpt-4o-mini",
         answer,
+        uiAction: clawResult.uiAction || null,
       }, origin);
       return;
     }

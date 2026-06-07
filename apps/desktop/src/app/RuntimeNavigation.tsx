@@ -54,43 +54,43 @@ export function RuntimeNavigation({
   }
 
   return (
-    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
-        <BrandLogo />
-        <div>
-          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
-          <p className="miva-nav-section-label">{t.assistantWorkspace}</p>
+    <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
+      <div className="miva-sidebar-header">
+        <BrandLogo className="h-7 w-7 rounded-lg" />
+        <div className="min-w-0">
+          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
+          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.assistantWorkspace}</p>
         </div>
       </div>
 
-      <div className="border-b border-[var(--miva-border)]/60 p-4">
+      <div className="border-b border-[var(--miva-border)]/60 p-2.5">
         <button
-          className="miva-soft-card flex min-h-11 w-full items-center justify-between rounded-lg px-4 py-3 text-sm font-bold text-[var(--miva-text)] transition hover:border-[var(--miva-primary)]/60"
+          className="miva-soft-card flex min-h-9 w-full items-center justify-between rounded-lg px-3 py-2 text-[13px] font-bold text-[var(--miva-text)] transition hover:border-[var(--miva-primary)]/60"
           type="button"
           onClick={onClearCurrentChat}
         >
-          <span className="flex items-center gap-3">
-            <span className="material-symbols-outlined text-[18px] text-[var(--miva-primary)]">add_comment</span>
+          <span className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-[var(--miva-primary)]">add_comment</span>
             {t.newChat}
           </span>
-          <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">arrow_forward</span>
+          <span className="material-symbols-outlined text-[14px] text-[var(--miva-text-muted)]">arrow_forward</span>
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-5">
+      <div className="flex-1 overflow-y-auto px-2.5 py-3">
         <section>
-          <h2 className="miva-nav-section-label px-3">By assistant</h2>
-          <div className="mt-3 grid gap-2">
+          <h2 className="miva-nav-section-label px-2">By assistant</h2>
+          <div className="mt-2 grid gap-1.5">
             {assistantConversationGroups.map((group) => {
               const expanded = expandedAssistantIds.includes(group.assistantId);
               const isActiveAssistant = group.assistantId === activeAssistantId;
 
               return (
                 <div className="rounded-xl" key={group.assistantId}>
-                  <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${isActiveAssistant ? "bg-[var(--miva-primary-surface)]" : ""}`}>
+                  <div className={`flex items-center justify-between gap-1.5 rounded-[var(--miva-radius-sm)] px-2 py-1.5 ${isActiveAssistant ? "bg-[var(--miva-primary-surface)]" : ""}`}>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-[var(--miva-text)]">{group.assistantName}</p>
-                      <p className="text-xs text-[var(--miva-text-muted)]">{group.conversations.length} conversations</p>
+                      <p className="truncate text-[13px] font-bold text-[var(--miva-text)]">{group.assistantName}</p>
+                      <p className="text-[10px] text-[var(--miva-text-muted)]">{group.conversations.length} conversations</p>
                     </div>
                     <button
                       aria-label={expanded ? `Collapse ${group.assistantName}` : `Expand ${group.assistantName}`}
@@ -143,15 +143,15 @@ export function RuntimeNavigation({
           </div>
         </section>
 
-        <section className="mt-8">
-          <h2 className="miva-nav-section-label px-3">Collection</h2>
-          <div className="mt-3 grid gap-1">
-            <button className="miva-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition" type="button">
-              <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">bookmark</span>
+        <section className="mt-5">
+          <h2 className="miva-nav-section-label px-2">Collection</h2>
+          <div className="mt-2 grid gap-0.5">
+            <button className="miva-nav-item flex min-h-9 items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left text-[13px] transition" type="button">
+              <span className="material-symbols-outlined text-[15px] text-[var(--miva-text-muted)]">bookmark</span>
               {t.savedSnippets}
             </button>
-            <button className="miva-nav-item flex min-h-11 items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition" type="button">
-              <span className="material-symbols-outlined text-[16px] text-[var(--miva-text-muted)]">monitoring</span>
+            <button className="miva-nav-item flex min-h-9 items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left text-[13px] transition" type="button">
+              <span className="material-symbols-outlined text-[15px] text-[var(--miva-text-muted)]">monitoring</span>
               {t.systemLogs}
             </button>
           </div>

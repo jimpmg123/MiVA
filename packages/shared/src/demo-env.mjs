@@ -40,6 +40,7 @@ const providerEnvKeys = {
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
   groq: "GROQ_API_KEY",
+  huggingface: "HUGGINGFACE_API_KEY",
 };
 
 export function getDemoProviderKey(provider) {

@@ -1,4 +1,4 @@
-import type { ImageAttachmentPayload, LocalAssistantProfile, ProviderId } from "../../types";
+import type { ChatUiAction, ImageAttachmentPayload, LocalAssistantProfile, ProviderId } from "../../types";
 import type { ChatMessage } from "../../types";
 
 const LOCAL_HELPER_URL = "http://127.0.0.1:43110";
@@ -16,6 +16,8 @@ export type StreamChatInput = {
   memorySummary?: string | null;
   toolContext?: string | null;
   imageAttachments?: ImageAttachmentPayload[];
+  clawCodeForced?: boolean;
+  workspaceSlashForced?: boolean;
 };
 
 function parseStreamError(text: string) {
@@ -27,13 +29,18 @@ function parseStreamError(text: string) {
   }
 }
 
+export type StreamChatResult = {
+  answer: string;
+  uiAction: ChatUiAction | null;
+};
+
 export async function streamChatOnce(
   input: StreamChatInput,
   callbacks: {
     onDelta: (delta: string) => void;
   },
   signal?: AbortSignal,
-) {
+): Promise<StreamChatResult> {
   const response = await fetch(`${LOCAL_HELPER_URL}/chat`, {
     method: "POST",
     headers: {
@@ -59,6 +66,7 @@ export async function streamChatOnce(
   const decoder = new TextDecoder();
   let buffer = "";
   let answer = "";
+  let uiAction: ChatUiAction | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -79,6 +87,7 @@ export async function streamChatOnce(
         error?: string;
         done?: boolean;
         answer?: string;
+        uiAction?: ChatUiAction | null;
         message?: { content?: string };
       };
 
@@ -97,23 +106,34 @@ export async function streamChatOnce(
         callbacks.onDelta(event.message.content);
       }
 
-      if (event.done && typeof event.answer === "string" && event.answer.trim()) {
-        answer = event.answer.trim();
+      if (event.done) {
+        if (typeof event.answer === "string" && event.answer.trim()) {
+          answer = event.answer.trim();
+        }
+        if (event.uiAction === "claw-pick-workspace") {
+          uiAction = event.uiAction;
+        }
       }
     }
   }
 
   if (!answer.trim() && buffer.trim()) {
     try {
-      const payload = JSON.parse(buffer.trim()) as { answer?: string };
+      const payload = JSON.parse(buffer.trim()) as { answer?: string; uiAction?: ChatUiAction | null };
       if (typeof payload.answer === "string" && payload.answer.trim()) {
         answer = payload.answer.trim();
         callbacks.onDelta(answer);
+      }
+      if (payload.uiAction === "claw-pick-workspace") {
+        uiAction = payload.uiAction;
       }
     } catch {
       // Ignore non-JSON fallback payloads.
     }
   }
 
-  return answer.trim();
+  return {
+    answer: answer.trim(),
+    uiAction,
+  };
 }

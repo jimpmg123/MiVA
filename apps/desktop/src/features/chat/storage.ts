@@ -29,12 +29,38 @@ function normalizeMessages(value: unknown): ChatMessage[] {
     return [];
   }
 
-  return value.filter((message) => (
-    message &&
-    typeof message === "object" &&
-    ((message as ChatMessage).role === "user" || (message as ChatMessage).role === "assistant") &&
-    typeof (message as ChatMessage).content === "string"
-  )) as ChatMessage[];
+  return value.flatMap((message) => {
+    if (
+      !message ||
+      typeof message !== "object" ||
+      (((message as ChatMessage).role !== "user" && (message as ChatMessage).role !== "assistant")) ||
+      typeof (message as ChatMessage).content !== "string"
+    ) {
+      return [];
+    }
+
+    const source = message as ChatMessage;
+    const normalized: ChatMessage = {
+      role: source.role,
+      content: source.content,
+      createdAt: typeof source.createdAt === "string" ? source.createdAt : undefined,
+      provider: source.provider,
+      model: source.model,
+      latencyMs: source.latencyMs,
+      uiAction: source.uiAction ?? undefined,
+    };
+
+    if (Array.isArray(source.images) && source.images.length > 0) {
+      normalized.images = source.images.filter((image) => (
+        image &&
+        typeof image === "object" &&
+        typeof image.dataUrl === "string" &&
+        image.dataUrl.startsWith("data:")
+      ));
+    }
+
+    return [normalized];
+  });
 }
 
 function createConversationTitle(messages: ChatMessage[]) {

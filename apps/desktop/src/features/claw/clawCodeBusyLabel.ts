@@ -48,7 +48,12 @@ export function resolveClawCodeBusyLabel(
   input: string,
   profile: LocalAssistantProfile,
   locale: string,
+  forceClawCode = false,
 ) {
+  if (forceClawCode) {
+    return locale === "en" ? "Running Claw Code with OpenAI..." : "OpenAI로 Claw Code 실행 중...";
+  }
+
   const coding = profile.prompt?.settings?.coding;
   if (!coding) {
     return null;

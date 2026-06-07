@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "prepare:bundle": "node scripts/prepare-desktop-bundle.mjs",
     "tauri:build": "tauri build",
+    "package": "node scripts/package-desktop.mjs",
+    "copy-installer:web": "node scripts/copy-installer-to-web.mjs",
     "check": "node scripts/build.mjs"
   },
   "dependencies": {

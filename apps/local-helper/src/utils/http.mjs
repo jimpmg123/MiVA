@@ -16,6 +16,7 @@ export function writeCorsHeaders(res, origin) {
   res.setHeader("vary", "origin");
   res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
   res.setHeader("access-control-allow-headers", "content-type,x-miva-token");
+  res.setHeader("access-control-allow-private-network", "true");
 }
 
 export function sendJson(res, statusCode, data, origin) {

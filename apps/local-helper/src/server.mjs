@@ -12,6 +12,7 @@ import {
   handleClawCodeWorkspace,
 } from "./routes/claw-code.mjs";
 import { handleDaisoRun, handleDaisoStatus } from "./routes/daiso.mjs";
+import { handleImageGenGenerate, handleImageGenStatus } from "./routes/image-gen.mjs";
 import { handleDocumentAnalyze } from "./routes/documents.mjs";
 import {
   handleCatalog,
@@ -107,6 +108,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/daiso/run") {
       await handleDaisoRun(req, res, origin);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/image-gen/status") {
+      await handleImageGenStatus(req, res, origin);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/image-gen/generate") {
+      await handleImageGenGenerate(req, res, origin);
       return;
     }
 

@@ -239,9 +239,22 @@ cd apps/desktop/src-tauri
 cargo check
 ```
 
+## Production Go-Live
+
+Desktop packaging is already wired in this repo. After Railway and Vercel are live, use:
+
+```bash
+npm run verify:packaging
+npm run apply:release-env
+npm run package:desktop
+```
+
+Full cloud-only checklist: [docs/GO-LIVE.md](GO-LIVE.md)
+
 ## Additional Documentation
 
-- [Product Requirements](docs/PRD.md)
+- [Deployment Plan](docs/DEPLOYMENT.md)
+- [Go-Live Checklist (Railway / Vercel / Google Cloud)](docs/GO-LIVE.md)
 - [System Architecture and Tech Stack](docs/TECH_STACK.md)
 - [Database Design](docs/DATABASE_DESIGN.md)
 - [Local Data Store](docs/LOCAL_DATA_STORE.md)

@@ -50,6 +50,13 @@ desktop.ini
 # Local npm config
 .npmrc
 
+# Release secrets (generated locally)
+release.env
+apps/desktop/.env.production
+
+# Large desktop installers (rebuild with npm run package:desktop before deploy)
+apps/web/public/downloads/*.exe
+
 # Package manager stores
 pnpm-lock.yaml
 .pnpm-store/

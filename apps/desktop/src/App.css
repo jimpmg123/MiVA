@@ -56,6 +56,9 @@
   --miva-shell-gradient-a: radial-gradient(circle at 84% -8%, rgba(220, 233, 251, 0.82), transparent 28rem);
   --miva-shell-gradient-b: radial-gradient(circle at 14% 10%, rgba(208, 225, 251, 0.46), transparent 24rem);
   --miva-shell-gradient-c: linear-gradient(180deg, var(--miva-bg-soft) 0%, var(--miva-bg) 100%);
+  --miva-sidebar-width: 204px;
+  --miva-content-inset-left: calc(var(--miva-sidebar-width) + 2.5rem);
+  --miva-shell-header-height: 52px;
   --miva-sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(244, 247, 251, 0.88) 100%);
   --miva-sidebar-border: rgba(184, 198, 210, 0.55);
   --miva-sidebar-inset: inset -1px 0 0 rgba(255, 255, 255, 0.65);
@@ -260,13 +263,43 @@ button:disabled {
 }
 
 .miva-sidebar {
+  width: var(--miva-sidebar-width);
   border-right: 1px solid var(--miva-sidebar-border);
   background: var(--miva-sidebar-bg);
   box-shadow: var(--miva-sidebar-inset);
   backdrop-filter: blur(18px);
 }
 
+.miva-sidebar-header {
+  display: flex;
+  height: var(--miva-shell-header-height);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--miva-border) 70%, transparent);
+  padding-inline: 0.875rem;
+}
+
+.miva-sidebar-brand-title {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--miva-text);
+}
+
+.miva-sidebar-nav {
+  flex: 1;
+  padding: 0.625rem;
+  overflow-y: auto;
+}
+
+.miva-sidebar-footer {
+  border-top: 1px solid color-mix(in srgb, var(--miva-border) 70%, transparent);
+  padding: 0.625rem;
+}
+
 .miva-topbar {
+  height: var(--miva-shell-header-height);
   border-bottom: 1px solid var(--miva-topbar-border);
   background: var(--miva-topbar-bg);
   box-shadow: var(--miva-topbar-inset);
@@ -275,16 +308,19 @@ button:disabled {
 
 .miva-nav-section-label {
   color: var(--miva-text-soft);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .miva-nav-item {
   color: var(--miva-text-muted);
-  min-height: 44px;
+  min-height: 34px;
+  font-size: 13px;
+  line-height: 1.25;
   border: 1px solid transparent;
+  border-radius: var(--miva-radius-sm);
 }
 
 .miva-nav-item:hover {

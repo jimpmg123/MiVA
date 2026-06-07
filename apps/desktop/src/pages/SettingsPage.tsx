@@ -266,6 +266,30 @@ export function SettingsPage({
           );
         })}
 
+        <label className="grid gap-2">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Hugging Face API token</span>
+            <a
+              className="rounded-full border border-[var(--miva-border)] px-3 py-2 text-xs font-bold text-[var(--miva-primary)] transition hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]"
+              href="https://huggingface.co/settings/tokens"
+              rel="noreferrer"
+              target="_blank"
+            >
+              Get API token
+            </a>
+          </div>
+          <Input
+            autoComplete="off"
+            placeholder="hf_..."
+            type="password"
+            value={providerKeys.huggingface}
+            onChange={(event) => onProviderKeysChange((current) => ({ ...current, huggingface: event.target.value }))}
+          />
+          <p className="text-xs leading-5 text-[var(--miva-text-muted)]">
+            Used by the /image skill (Hugging Face Inference API). Leave empty to use HUGGINGFACE_API_KEY from demo.env.
+          </p>
+        </label>
+
         <div className="rounded-lg bg-[var(--miva-warning-soft)] p-4 text-sm leading-6 text-[var(--miva-warning)]">
           {t.keyStorageNotice}
         </div>

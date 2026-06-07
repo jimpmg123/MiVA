@@ -17,6 +17,14 @@ export function pullOllamaModel(model: string) {
   return invokeCommand<string>("pull_model", { model });
 }
 
+export function pauseOllamaModelPull(model: string) {
+  return invokeCommand<string>("pause_model_pull", { model });
+}
+
+export function cancelOllamaModelPull(model: string) {
+  return invokeCommand<string>("cancel_model_pull", { model });
+}
+
 export function getHardwareInfo() {
   return invokeCommand<HardwareInfo>("get_hardware_info");
 }

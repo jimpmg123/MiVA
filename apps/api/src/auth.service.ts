@@ -57,10 +57,11 @@ export class AuthService {
 
   startDeviceAuth() {
     const request = this.createDeviceAuthRequest();
+    const webConsoleUrl = (process.env.MIVA_WEB_CONSOLE_URL || "http://127.0.0.1:5173").replace(/\/$/, "");
     return {
       deviceCode: request.deviceCode,
       userCode: request.userCode,
-      verificationUrl: `http://127.0.0.1:5173/?desktopLogin=1&deviceCode=${encodeURIComponent(request.deviceCode)}&userCode=${encodeURIComponent(request.userCode)}`,
+      verificationUrl: `${webConsoleUrl}/?desktopLogin=1&deviceCode=${encodeURIComponent(request.deviceCode)}&userCode=${encodeURIComponent(request.userCode)}`,
       expiresAt: request.expiresAt,
       intervalMs: 1500,
     };

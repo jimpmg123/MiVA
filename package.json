@@ -16,7 +16,11 @@
     "dev:api": "node scripts/dev-services.mjs start api",
     "dev:stop": "node scripts/dev-services.mjs stop all",
     "dev:status": "node scripts/dev-services.mjs status all",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "package:desktop": "npm run package --prefix apps/desktop",
+    "copy-installer:web": "npm run copy-installer:web --prefix apps/desktop",
+    "apply:release-env": "node scripts/apply-release-env.mjs",
+    "verify:packaging": "node scripts/verify-packaging.mjs"
   },
   "engines": {
     "node": ">=22"

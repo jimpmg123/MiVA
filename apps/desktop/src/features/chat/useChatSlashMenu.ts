@@ -1,15 +1,18 @@
 import { useCallback, useMemo, useState, type KeyboardEvent, type RefObject } from "react";
 import {
-  buildSlashCommandInput,
   CHAT_SLASH_COMMANDS,
   filterSlashCommands,
   getSlashMenuQuery,
+  parseSlashCommand,
   type ChatSlashCommand,
 } from "./slashCommands";
 
 type UseChatSlashMenuOptions = {
   chatInput: string;
   setChatInput: (value: string) => void;
+  selectedSlashCommand: ChatSlashCommand | null;
+  setSelectedSlashCommand: (command: ChatSlashCommand | null) => void;
+  slashCommands?: ChatSlashCommand[];
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   disabled?: boolean;
 };
@@ -17,6 +20,9 @@ type UseChatSlashMenuOptions = {
 export function useChatSlashMenu({
   chatInput,
   setChatInput,
+  selectedSlashCommand,
+  setSelectedSlashCommand,
+  slashCommands = CHAT_SLASH_COMMANDS,
   inputRef,
   disabled = false,
 }: UseChatSlashMenuOptions) {
@@ -24,8 +30,17 @@ export function useChatSlashMenu({
   const [activeIndex, setActiveIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
 
-  const slashQuery = useMemo(() => getSlashMenuQuery(chatInput, caretIndex), [caretIndex, chatInput]);
-  const filteredCommands = useMemo(() => filterSlashCommands(slashQuery), [slashQuery]);
+  const slashQuery = useMemo(() => {
+    if (selectedSlashCommand) {
+      return null;
+    }
+
+    return getSlashMenuQuery(chatInput, caretIndex);
+  }, [caretIndex, chatInput, selectedSlashCommand]);
+  const filteredCommands = useMemo(
+    () => filterSlashCommands(slashQuery, slashCommands),
+    [slashCommands, slashQuery],
+  );
   const menuOpen = !disabled && !menuDismissed && slashQuery !== null && filteredCommands.length > 0;
   const activeCommand = filteredCommands[activeIndex] ?? filteredCommands[0] ?? null;
 
@@ -42,7 +57,8 @@ export function useChatSlashMenu({
   }, []);
 
   const selectCommand = useCallback((command: ChatSlashCommand) => {
-    setChatInput(buildSlashCommandInput(command));
+    setSelectedSlashCommand(command);
+    setChatInput("");
     setMenuDismissed(true);
     setActiveIndex(0);
 
@@ -53,18 +69,41 @@ export function useChatSlashMenu({
       }
 
       element.focus();
-      element.setSelectionRange(element.value.length, element.value.length);
+      element.setSelectionRange(0, 0);
     });
-  }, [inputRef, setChatInput]);
+  }, [inputRef, setChatInput, setSelectedSlashCommand]);
+
+  const clearSelectedCommand = useCallback(() => {
+    setSelectedSlashCommand(null);
+    setMenuDismissed(false);
+  }, [setSelectedSlashCommand]);
 
   const handleInputChange = useCallback((value: string, element: HTMLTextAreaElement) => {
+    if (!selectedSlashCommand) {
+      const parsed = value.trim() ? parseSlashCommand(value, slashCommands) : null;
+      if (parsed && value.trimStart().startsWith("/")) {
+        setSelectedSlashCommand(parsed.command);
+        setChatInput(parsed.prompt);
+        syncCaret(element);
+        setMenuDismissed(true);
+        setActiveIndex(0);
+        return;
+      }
+    }
+
     setChatInput(value);
     syncCaret(element);
     setMenuDismissed(false);
     setActiveIndex(0);
-  }, [setChatInput, syncCaret]);
+  }, [selectedSlashCommand, setChatInput, setSelectedSlashCommand, slashCommands, syncCaret]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Backspace" && !chatInput && selectedSlashCommand) {
+      event.preventDefault();
+      clearSelectedCommand();
+      return true;
+    }
+
     if (!menuOpen) {
       return false;
     }
@@ -100,13 +139,23 @@ export function useChatSlashMenu({
     }
 
     return false;
-  }, [activeCommand, closeMenu, filteredCommands.length, menuOpen, selectCommand]);
+  }, [
+    activeCommand,
+    chatInput,
+    clearSelectedCommand,
+    closeMenu,
+    filteredCommands.length,
+    menuOpen,
+    selectCommand,
+    selectedSlashCommand,
+  ]);
 
   return {
     activeCommand,
     activeIndex,
-    allCommands: CHAT_SLASH_COMMANDS,
+    allCommands: slashCommands,
     caretIndex,
+    clearSelectedCommand,
     filteredCommands,
     handleInputChange,
     handleKeyDown,

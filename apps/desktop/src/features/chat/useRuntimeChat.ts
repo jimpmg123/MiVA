@@ -7,17 +7,26 @@ import {
   IMAGE_VISION_MODEL,
   IMAGE_VISION_PROVIDER,
 } from "./imageVision";
-import { analyzeDocument, chooseDocumentPaths, openDocument } from "../documents/documentRuntime";
+import { analyzeDocument, chooseDocumentPaths, isAttachmentImagePath, openDocument } from "../documents/documentRuntime";
 import { runDaisoRequest } from "../daiso/daisoRuntime";
+import { generateImageRequest, toImageDataUrl } from "../imageGen/imageGenRuntime";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { streamChatOnce } from "./chatStream";
+import {
+  clawCodeInstallRequiredCopy,
+  clawWorkspaceSuccessCopy,
+} from "../claw/clawCodeChatActions";
 import { resolveClawCodeBusyLabel } from "../claw/clawCodeBusyLabel";
 import { resolveWorkspaceBusyLabel } from "./workspaceBusyLabel";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import {
   applySlashCommandProfile,
+  buildSlashCommandsForProfile,
   formatSlashUserMessage,
-  parseSlashCommand,
+  getImportedSkillContent,
+  resolveSlashInvocation,
+  slashCommandHelpCopy,
+  type ChatSlashCommand,
 } from "./slashCommands";
 import {
   createRuntimeConversationId,
@@ -42,12 +51,15 @@ import type {
   AuthSession,
   ChatMessage,
   ChatMetrics,
+  ChatUiAction,
   DocumentAttachment,
   ImageAttachment,
   LocalAssistantProfile,
   PromptSettings,
   ProviderId,
+  ProviderKeyState,
   RuntimeMemorySummary,
+  ClawCodeRuntimeInfo,
   GoogleWorkspaceStatus,
 } from "../../types";
 
@@ -73,10 +85,11 @@ type UseRuntimeChatOptions = {
   selectedProvider: ProviderId;
   selectedModel: string;
   selectedCloudModel: string;
-  providerKeys: { openai: string; gemini: string; groq: string };
+  providerKeys: ProviderKeyState;
   statusInstalled: boolean;
   busyAction: string | null;
   visibleAssistantProfiles: LocalAssistantProfile[];
+  assistantProfileLoaded: boolean;
   chatIntroKey: string;
   chatTitle: string;
   justNowLabel: string;
@@ -94,6 +107,9 @@ type UseRuntimeChatOptions = {
   runtimeTtsSettings: PromptSettings["voice"]["tts"] | null;
   refreshGoogleWorkspaceStatus: () => Promise<GoogleWorkspaceStatus | null>;
   onWorkspaceAuthRequired: () => Promise<void>;
+  applyClawCodeWorkspace: (workspaceRoot: string) => Promise<void> | void;
+  chooseClawCodeWorkspace: () => Promise<string | null> | string | null;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
   onLog: (message: string) => void;
 };
 
@@ -111,6 +127,7 @@ export function useRuntimeChat({
   statusInstalled,
   busyAction,
   visibleAssistantProfiles,
+  assistantProfileLoaded,
   chatIntroKey,
   chatTitle,
   justNowLabel,
@@ -128,9 +145,13 @@ export function useRuntimeChat({
   runtimeTtsSettings,
   refreshGoogleWorkspaceStatus,
   onWorkspaceAuthRequired,
+  applyClawCodeWorkspace,
+  chooseClawCodeWorkspace,
+  clawCodeStatus,
   onLog,
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
+  const [selectedSlashCommand, setSelectedSlashCommand] = useState<ChatSlashCommand | null>(null);
   const [testChatMessages, setTestChatMessages] = useState<ChatMessage[]>([]);
   const [runtimeChatStore, setRuntimeChatStore] = useState(emptyRuntimeChatStore);
   const [runtimeChatMessages, setRuntimeChatMessages] = useState<ChatMessage[]>([]);
@@ -150,6 +171,16 @@ export function useRuntimeChat({
   const runtimeChatStoreRef = useRef(emptyRuntimeChatStore);
   const runtimeChatStoreLoadedRef = useRef(false);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
+
+  function resetChatComposer() {
+    setChatInput("");
+    setSelectedSlashCommand(null);
+  }
+
+  const slashCommands = useMemo(() => {
+    const profile = activeLocalProfile ?? buildCurrentLocalAssistantProfile();
+    return buildSlashCommandsForProfile(profile);
+  }, [activeLocalProfile, buildCurrentLocalAssistantProfile, promptProfileId]);
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
   const currentConversationId = activeRuntimeConversationId ?? runtimeChatStore.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
@@ -218,6 +249,10 @@ export function useRuntimeChat({
       return;
     }
 
+    if (visibleAssistantIds.size === 0) {
+      return;
+    }
+
     const nextConversations = Object.fromEntries(
       Object.entries(runtimeChatStoreRef.current.conversations).filter(([, conversation]) => visibleAssistantIds.has(conversation.assistantId)),
     );
@@ -258,7 +293,7 @@ export function useRuntimeChat({
 
   function clearCurrentChat() {
     updateChatMessages(appMode, () => []);
-    setChatInput("");
+    resetChatComposer();
     setDocumentAttachments([]);
     setImageAttachments([]);
     if (appMode === "runtime") {
@@ -276,7 +311,7 @@ export function useRuntimeChat({
     }
 
     setRuntimeChatMessages([]);
-    setChatInput("");
+    resetChatComposer();
     setDocumentAttachments([]);
     setImageAttachments([]);
     setActiveRuntimeConversationId(createRuntimeConversationId(assistantId));
@@ -364,10 +399,27 @@ export function useRuntimeChat({
   async function chooseAndAttachDocuments() {
     try {
       const selectedPaths = await chooseDocumentPaths();
-      const existingPaths = new Set(documentAttachments.map((attachment) => attachment.path.toLowerCase()));
-      const availableSlots = Math.max(0, 4 - documentAttachments.length - imageAttachments.length);
-      const paths = selectedPaths
-        .filter((path) => !existingPaths.has(path.toLowerCase()))
+      const imagePaths = selectedPaths.filter((path) => isAttachmentImagePath(path));
+      const documentPaths = selectedPaths.filter((path) => !isAttachmentImagePath(path));
+      const existingImagePaths = new Set(imageAttachments.map((attachment) => attachment.path.toLowerCase()));
+      const existingDocumentPaths = new Set(documentAttachments.map((attachment) => attachment.path.toLowerCase()));
+      let availableSlots = Math.max(0, 4 - imageAttachments.length - documentAttachments.length);
+
+      const nextImagePaths = imagePaths
+        .filter((path) => !existingImagePaths.has(path.toLowerCase()))
+        .slice(0, availableSlots);
+
+      if (nextImagePaths.length > 0) {
+        const loaded = await Promise.all(nextImagePaths.map(async (path) => {
+          const payload = await readImageAttachment(path);
+          return createImageAttachment(path, payload);
+        }));
+        setImageAttachments((current) => [...current, ...loaded]);
+        availableSlots -= loaded.length;
+      }
+
+      const paths = documentPaths
+        .filter((path) => !existingDocumentPaths.has(path.toLowerCase()))
         .slice(0, availableSlots);
 
       if (paths.length === 0) {
@@ -679,30 +731,50 @@ export function useRuntimeChat({
     onLog(`Stored image analysis in assistant memory for ${input.assistantProfile.name}.`);
   }
 
+  async function completeClawCodeWorkspaceFromChat(messageCreatedAt: string, workspaceRoot: string) {
+    await applyClawCodeWorkspace(workspaceRoot);
+    updateChatMessages(appMode, (current) => current.map((message) => (
+      message.createdAt === messageCreatedAt
+        ? {
+            ...message,
+            content: clawWorkspaceSuccessCopy(activeLocale, workspaceRoot),
+            uiAction: null,
+          }
+        : message
+    )));
+  }
+
   async function sendMessage() {
     const rawInput = chatInput.trim();
     const readyAttachments = documentAttachments.filter((attachment) => attachment.status === "ready");
     const readyImageAttachments = imageAttachments;
     const attachmentsAnalyzing = documentAttachments.some((attachment) => attachment.status === "analyzing");
     const usesImageVision = readyImageAttachments.length > 0;
-    const parsed = rawInput ? parseSlashCommand(rawInput) : null;
+    const parsed = resolveSlashInvocation(chatInput, selectedSlashCommand, slashCommands);
     const prompt = parsed?.prompt ?? (rawInput || (usesImageVision
       ? getDefaultImagePrompt()
       : readyAttachments.length > 0
         ? "Analyze the attached document data and summarize the information relevant to me."
         : ""));
     const isDaisoSlashCommand = parsed?.command.id === "daiso";
-    const imageLabel = readyImageAttachments.length > 0
-      ? `\n\nAttached images: ${readyImageAttachments.map((attachment) => attachment.name).join(", ")}`
-      : "";
+    const isCodeSlashCommand = parsed?.command.id === "code";
+    const isImageSlashCommand = parsed?.command.id === "image";
+    const isWorkspaceSlashCommand = Boolean(parsed?.command.workspaceService);
+    const isImportedSkillSlashCommand = Boolean(parsed?.command.importedSkillId);
     const baseDisplayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput || (usesImageVision ? "Analyze the attached image(s)." : "Analyze the attached document data.");
     const attachmentLabel = readyAttachments.length > 0
       ? `\n\nAttached: ${readyAttachments.map((attachment) => attachment.name).join(", ")}`
       : "";
-    const displayContent = `${baseDisplayContent}${attachmentLabel}${imageLabel}`;
+    const displayContent = `${baseDisplayContent}${attachmentLabel}`;
+    const messageImages = readyImageAttachments.length > 0
+      ? readyImageAttachments.map((attachment) => ({
+          dataUrl: attachment.previewUrl,
+          alt: attachment.name,
+        }))
+      : undefined;
     let assistantProfile = buildCurrentLocalAssistantProfile();
     if (parsed) {
-      assistantProfile = applySlashCommandProfile(assistantProfile, parsed.command.id);
+      assistantProfile = applySlashCommandProfile(assistantProfile, parsed.command.id, slashCommands);
     }
     const chatMode = appMode;
     const activeProvider = usesImageVision ? IMAGE_VISION_PROVIDER : selectedProvider;
@@ -720,23 +792,71 @@ export function useRuntimeChat({
 
     if (
       attachmentsAnalyzing ||
-      (!prompt && !isDaisoSlashCommand) ||
       localUnavailable ||
       busyAction === "chat"
     ) {
       return;
     }
 
+    if (parsed && !prompt.trim()) {
+      const requestedAt = new Date().toISOString();
+      const helpContent = isCodeSlashCommand && !clawCodeStatus?.installed
+        ? clawCodeInstallRequiredCopy(activeLocale)
+        : slashCommandHelpCopy(parsed.command, activeLocale);
+      resetChatComposer();
+      shouldAutoScrollChatRef.current = true;
+      setShowJumpToLatest(false);
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+        {
+          role: "assistant",
+          content: helpContent,
+          createdAt: new Date().toISOString(),
+          provider: activeProvider,
+          model: providerModel,
+        },
+      ]);
+      return;
+    }
+
+    if (
+      !prompt &&
+      !usesImageVision &&
+      readyAttachments.length === 0
+    ) {
+      return;
+    }
+
+    if (isCodeSlashCommand && !clawCodeStatus?.installed) {
+      const requestedAt = new Date().toISOString();
+      resetChatComposer();
+      shouldAutoScrollChatRef.current = true;
+      setShowJumpToLatest(false);
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+        {
+          role: "assistant",
+          content: clawCodeInstallRequiredCopy(activeLocale),
+          createdAt: new Date().toISOString(),
+          provider: activeProvider,
+          model: providerModel,
+        },
+      ]);
+      return;
+    }
+
     const latestUserMessage = displayContent;
 
-    const workspaceEnabled = assistantProfile.prompt.settings.toolConnections.googleWorkspace;
+    const workspaceEnabled = isWorkspaceSlashCommand && assistantProfile.prompt.settings.toolConnections.googleWorkspace;
     const workspaceServices = assistantProfile.prompt.settings.toolConnections.googleWorkspaceServices;
-    if (!isDaisoSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
+    if (!isDaisoSlashCommand && !isCodeSlashCommand && !isImageSlashCommand && !isImportedSkillSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
       const workspaceStatus = await refreshGoogleWorkspaceStatus();
       if (!workspaceStatus?.connected) {
         await onWorkspaceAuthRequired();
         const requestedAt = new Date().toISOString();
-        setChatInput("");
+        resetChatComposer();
         shouldAutoScrollChatRef.current = true;
         setShowJumpToLatest(false);
         updateChatMessages(chatMode, (current) => [
@@ -754,9 +874,9 @@ export function useRuntimeChat({
       }
     }
 
-    if (!usesImageVision && selectedProvider !== "ollama" && !authSession) {
+    if (!usesImageVision && !isCodeSlashCommand && !isImageSlashCommand && selectedProvider !== "ollama" && !authSession) {
       const requestedAt = new Date().toISOString();
-      setChatInput("");
+      resetChatComposer();
       shouldAutoScrollChatRef.current = true;
       setShowJumpToLatest(false);
       updateChatMessages(chatMode, (current) => [
@@ -775,11 +895,13 @@ export function useRuntimeChat({
     }
 
     setChatBusyLabel(
-      resolveClawCodeBusyLabel(rawInput, assistantProfile, activeLocale)
-      || resolveWorkspaceBusyLabel(rawInput, currentMessages, assistantProfile, activeLocale),
+      isImageSlashCommand
+        ? (activeLocale === "en" ? "Generating image with Hugging Face..." : "Hugging Face로 이미지 생성 중...")
+        : resolveClawCodeBusyLabel(prompt, assistantProfile, activeLocale, isCodeSlashCommand)
+          || resolveWorkspaceBusyLabel(rawInput, currentMessages, assistantProfile, activeLocale, isWorkspaceSlashCommand),
     );
     setBusyAction("chat");
-    if (!usesImageVision) {
+    if (!usesImageVision && !isCodeSlashCommand && !isImageSlashCommand) {
       const runtimeReady = await ensureOllamaReadyForChat(providerModel);
       if (!runtimeReady) {
         setBusyAction(null);
@@ -788,7 +910,7 @@ export function useRuntimeChat({
       }
     }
 
-    setChatInput("");
+    resetChatComposer();
     setDocumentAttachments([]);
     setImageAttachments([]);
     shouldAutoScrollChatRef.current = true;
@@ -797,11 +919,68 @@ export function useRuntimeChat({
     const requestedAt = new Date().toISOString();
     updateChatMessages(chatMode, (current) => [
       ...current,
-      { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+      { role: "user", content: displayContent, images: messageImages, createdAt: requestedAt, provider: activeProvider, model: providerModel },
     ]);
 
     try {
+      if (isImageSlashCommand) {
+        const assistantCreatedAt = new Date().toISOString();
+        updateChatMessages(chatMode, (current) => [
+          ...current,
+          {
+            role: "assistant",
+            content: "",
+            createdAt: assistantCreatedAt,
+            provider: activeProvider,
+            model: providerModel,
+          },
+        ]);
+
+        try {
+          const result = await generateImageRequest({
+            prompt,
+            apiKey: providerKeys.huggingface,
+          });
+          const dataUrl = toImageDataUrl(result.mimeType, result.imageBase64);
+          const successCopy = activeLocale === "en"
+            ? `Generated with ${result.model}.`
+            : `${result.model}로 이미지를 생성했습니다.`;
+          updateChatMessages(chatMode, (current) => current.map((message) => (
+            message.role === "assistant" && message.createdAt === assistantCreatedAt
+              ? {
+                  ...message,
+                  content: successCopy,
+                  images: [{ dataUrl, alt: result.prompt, model: result.model }],
+                  latencyMs: Math.round(performance.now() - startedAt),
+                }
+              : message
+          )));
+          onLog(`Image generated with Hugging Face (${result.model}).`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Image generation failed.";
+          updateChatMessages(chatMode, (current) => current.map((entry) => (
+            entry.role === "assistant" && entry.createdAt === assistantCreatedAt
+              ? { ...entry, content: message }
+              : entry
+          )));
+          onLog(message);
+        }
+        return;
+      }
+
       const toolContexts: string[] = [];
+      if (isImportedSkillSlashCommand && parsed) {
+        const skillContent = getImportedSkillContent(assistantProfile, parsed.command);
+        if (skillContent) {
+          toolContexts.push([
+            `The user invoked imported skill /${parsed.command.id} (${parsed.command.label}).`,
+            "Follow the skill instructions below for this request only.",
+            "===== Skill instructions =====",
+            skillContent,
+          ].join("\n\n"));
+        }
+      }
+
       if (readyAttachments.length > 0) {
         toolContexts.push([
           "The user attached local documents. MiVA parsed these files locally before this model request.",
@@ -833,12 +1012,13 @@ export function useRuntimeChat({
           onLog(message);
           return;
         }
-        if (daisoResult.featureGuide && daisoResult.directReply) {
+        if (daisoResult.featureGuide && daisoResult.directReply?.trim()) {
+          const directReply = daisoResult.directReply.trim();
           updateChatMessages(chatMode, (current) => [
             ...current,
             {
               role: "assistant",
-              content: daisoResult.directReply,
+              content: directReply,
               createdAt: new Date().toISOString(),
               provider: selectedProvider,
               model: providerModel,
@@ -891,6 +1071,8 @@ export function useRuntimeChat({
         locale: activeLocale,
         apiKey: apiKey || null,
         openAiApiKey: providerKeys.openai.trim() || null,
+        clawCodeForced: isCodeSlashCommand,
+        workspaceSlashForced: isWorkspaceSlashCommand,
         authToken: authSession?.token ?? null,
         profile: assistantProfile,
         messages: recentContextMessages,
@@ -903,10 +1085,14 @@ export function useRuntimeChat({
         })),
       };
 
+      let chatUiAction: ChatUiAction | null = null;
+
       try {
-        answer = await streamChatOnce(chatPayload, {
+        const streamResult = await streamChatOnce(chatPayload, {
           onDelta: appendAssistantDelta,
         }, streamSignal);
+        answer = streamResult.answer;
+        chatUiAction = streamResult.uiAction;
       } catch (streamError) {
         const streamMessage = streamError instanceof Error ? streamError.message : String(streamError);
         const fetchBlocked = streamError instanceof TypeError || /failed to fetch/i.test(streamMessage);
@@ -916,9 +1102,10 @@ export function useRuntimeChat({
 
         onLog("Streaming chat unavailable. Falling back to standard chat response.");
         answer = await runChatOnce(chatPayload);
+        chatUiAction = null;
         updateChatMessages(chatMode, (current) => current.map((message) => (
           message.role === "assistant" && message.createdAt === assistantCreatedAt
-            ? { ...message, content: answer }
+            ? { ...message, content: answer, uiAction: null }
             : message
         )));
       }
@@ -935,6 +1122,7 @@ export function useRuntimeChat({
               ...message,
               content: answer || message.content,
               latencyMs,
+              uiAction: chatUiAction,
             }
           : message
       )));
@@ -1069,6 +1257,11 @@ export function useRuntimeChat({
       return;
     }
 
+    if (!assistantProfileLoaded) {
+      return;
+    }
+
+    loadedRuntimeProfileIdRef.current = "";
     let cancelled = false;
     void loadRuntimeChatStore(appMode === "runtime" ? promptProfileId : undefined).then((store) => {
       if (cancelled) {
@@ -1092,10 +1285,7 @@ export function useRuntimeChat({
     });
 
     if (appMode === "runtime") {
-      setActiveRuntimeConversationId((current) => (
-        current?.startsWith(`runtime_${promptProfileId}_`) ? current : createRuntimeConversationId(promptProfileId)
-      ));
-      setChatInput("");
+      resetChatComposer();
       shouldAutoScrollChatRef.current = true;
       setShowJumpToLatest(false);
     }
@@ -1103,7 +1293,7 @@ export function useRuntimeChat({
     return () => {
       cancelled = true;
     };
-  }, [appMode, onLog, promptProfileId]);
+  }, [appMode, assistantProfileLoaded, onLog, promptProfileId]);
 
   useLayoutEffect(() => {
     if (appMode !== "runtime" && !(appMode === "setup" && activeStep === "chat")) {
@@ -1151,13 +1341,19 @@ export function useRuntimeChat({
     chatScrollRef,
     chooseAndAttachDocuments,
     chooseAndAttachImages,
+    chooseClawCodeWorkspace,
+    completeClawCodeWorkspaceFromChat,
     documentAttachments,
     imageAttachments,
     handleChatScroll,
     runtimeChatStore,
     scrollChatToLatest,
     sendMessage,
+    selectedSlashCommand,
+    slashCommands,
     setChatInput,
+    setSelectedSlashCommand,
+    clearSlashCommand: () => setSelectedSlashCommand(null),
     setDismissedChatIntroKeys: onDismissedChatIntroKeysChange,
     showJumpToLatest,
     openDocumentAttachment,

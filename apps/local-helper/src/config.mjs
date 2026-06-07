@@ -47,6 +47,11 @@ export const PUBLIC_DIR = fileURLToPath(new URL("../public/", import.meta.url));
 export const modelCatalog = lightweightModels;
 export const allowedModels = new Set(modelCatalog.map((model) => model.ollamaName));
 
+const configuredWebOrigins = (process.env.MIVA_WEB_ORIGINS || process.env.MIVA_CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 export const allowedOrigins = new Set([
   "http://localhost:1420",
   "http://127.0.0.1:1420",
@@ -56,5 +61,6 @@ export const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
   "tauri://localhost",
   `http://localhost:${HELPER_PORT}`,
-  `http://127.0.0.1:${HELPER_PORT}`
+  `http://127.0.0.1:${HELPER_PORT}`,
+  ...configuredWebOrigins,
 ]);

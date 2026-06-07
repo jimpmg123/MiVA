@@ -1,4 +1,5 @@
 import type { ChatMessage, LocalAssistantProfile } from "../../types";
+import { parseSlashUserMessage } from "./slashCommands";
 
 const calendarKeywords = ["calendar", "schedule", "event", "meeting", "일정", "캘린더", "회의", "예약"];
 const docsKeywords = ["docs", "doc", "document", "google docs", "구글 문서", "문서", "독스"];
@@ -36,14 +37,28 @@ function looksLikeWorkspaceConfirmation(input: string) {
   return confirmationMarkers.some((marker) => normalized.includes(marker)) && normalized.length <= 32;
 }
 
+function messageUsesWorkspaceSlash(content: string) {
+  if (parseSlashUserMessage(content)) {
+    return true;
+  }
+
+  return /^\[(Google Calendar|Google Docs|Google Drive|Gmail|Google Sheets)\]/.test(content.trim());
+}
+
+function hasWorkspaceSlashSession(messages: ChatMessage[]) {
+  return messages.some((message) => message.role === "user" && messageUsesWorkspaceSlash(message.content));
+}
+
 export function resolveWorkspaceBusyLabel(
   input: string,
   messages: ChatMessage[],
   profile: LocalAssistantProfile,
   locale: string,
+  workspaceSlashActive = false,
 ) {
   const settings = profile.prompt?.settings?.toolConnections;
-  if (!settings?.googleWorkspace || !looksLikeWorkspaceConfirmation(input)) {
+  const slashSession = workspaceSlashActive || hasWorkspaceSlashSession(messages);
+  if (!settings?.googleWorkspace || !slashSession || !looksLikeWorkspaceConfirmation(input)) {
     return null;
   }
 

@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { WEB_CONSOLE_URL } from "../../config/endpoints";
 import { getDeviceAuthStatus, getGoogleWorkspaceAuthUrl, startDeviceAuth } from "../cloud/client";
 import { clearAuthSessionStorage, loadAuthSession, saveAuthSessionToStorage } from "./storage";
 import type { AuthFlowState, AuthSession, DeviceAuthStart } from "../../types";
-
-const WEB_CONSOLE_URL = import.meta.env.VITE_WEB_CONSOLE_URL ?? "http://127.0.0.1:5173";
 
 type UseAuthFlowOptions = {
   tauriRuntime: boolean;

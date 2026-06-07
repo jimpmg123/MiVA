@@ -9,7 +9,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use sysinfo::{Disks, System};
@@ -94,8 +95,17 @@ struct ModelDownloadProgress {
     total: Option<u64>,
     percent: Option<f64>,
     done: bool,
+    paused: bool,
     error: Option<String>,
 }
+
+struct ActiveModelPull {
+    model: String,
+    cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+}
+
+static ACTIVE_MODEL_PULL: Mutex<Option<ActiveModelPull>> = Mutex::new(None);
 
 #[derive(Debug, Deserialize)]
 struct PullStreamMessage {
@@ -790,11 +800,14 @@ fn live2d_dev_models_dir() -> Option<PathBuf> {
 }
 
 fn live2d_resource_models_dir(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("live2d-models"))
-        .filter(|path| path.exists())
+    app.path().resource_dir().ok().and_then(|dir| {
+        [
+            dir.join("bundle-resources").join("live2d-models"),
+            dir.join("live2d-models"),
+        ]
+        .into_iter()
+        .find(|path| path.exists())
+    })
 }
 
 fn live2d_dev_core_script_path() -> Option<PathBuf> {
@@ -814,11 +827,14 @@ fn live2d_dev_core_script_path() -> Option<PathBuf> {
 }
 
 fn live2d_resource_core_script_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("live2dcubismcore.min.js"))
-        .filter(|path| path.exists())
+    app.path().resource_dir().ok().and_then(|dir| {
+        [
+            dir.join("bundle-resources").join("live2dcubismcore.min.js"),
+            dir.join("live2dcubismcore.min.js"),
+        ]
+        .into_iter()
+        .find(|path| path.exists())
+    })
 }
 
 fn live2d_source_core_script_path(app: &AppHandle) -> Option<PathBuf> {
@@ -1158,22 +1174,71 @@ fn local_helper_dev_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("..").join("local-helper"))
 }
 
-fn start_local_helper_process() -> Option<Child> {
+fn local_helper_bundled_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().resource_dir().ok().map(|dir| {
+        dir.join("bundle-resources")
+            .join("apps")
+            .join("local-helper")
+    })
+}
+
+fn resolve_local_helper_dir(app: &AppHandle) -> PathBuf {
+    if let Some(bundled_dir) = local_helper_bundled_dir(app) {
+        if bundled_dir.join("package.json").exists() {
+            return bundled_dir;
+        }
+    }
+
+    local_helper_dev_dir()
+}
+
+fn resolve_node_command() -> String {
+    if let Ok(path) = env::var("MIVA_NODE_PATH") {
+        if !path.trim().is_empty() {
+            return path;
+        }
+    }
+
+    if cfg!(windows) {
+        let candidates = [
+            PathBuf::from(env::var("ProgramFiles").unwrap_or_default())
+                .join("nodejs")
+                .join("node.exe"),
+            PathBuf::from(env::var("ProgramFiles(x86)").unwrap_or_default())
+                .join("nodejs")
+                .join("node.exe"),
+            PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default())
+                .join("Programs")
+                .join("nodejs")
+                .join("node.exe"),
+        ];
+
+        for candidate in candidates {
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    "node".to_string()
+}
+
+fn start_local_helper_process(app: &AppHandle) -> Option<Child> {
     if is_local_helper_running() {
         return None;
     }
 
-    let helper_dir = local_helper_dev_dir();
+    let helper_dir = resolve_local_helper_dir(app);
     let package_json = helper_dir.join("package.json");
     if !package_json.exists() {
         eprintln!(
-            "Local helper package was not found at {}. Packaged sidecar startup is not configured yet.",
+            "Local helper package was not found at {}.",
             package_json.display()
         );
         return None;
     }
 
-    let mut command = Command::new("node");
+    let mut command = Command::new(resolve_node_command());
     command
         .args(["src/server.mjs"])
         .current_dir(helper_dir)
@@ -1344,6 +1409,49 @@ fn start_ollama_inner() -> Result<String, String> {
     }
 }
 
+fn register_active_pull(model: &str) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let pause = Arc::new(AtomicBool::new(false));
+    if let Ok(mut guard) = ACTIVE_MODEL_PULL.lock() {
+        *guard = Some(ActiveModelPull {
+            model: model.to_string(),
+            cancel: cancel.clone(),
+            pause: pause.clone(),
+        });
+    }
+    (cancel, pause)
+}
+
+fn clear_active_pull(model: &str) {
+    if let Ok(mut guard) = ACTIVE_MODEL_PULL.lock() {
+        if guard
+            .as_ref()
+            .map(|pull| pull.model == model)
+            .unwrap_or(false)
+        {
+            *guard = None;
+        }
+    }
+}
+
+fn cleanup_cancelled_pull(model: &str) -> Result<(), String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let _ = client
+        .post(format!("{LOCAL_HELPER_URL}/models/pull/cancel"))
+        .json(&json!({ "model": model }))
+        .send();
+
+    if let Err(error) = delete_ollama_model_inner(model) {
+        eprintln!("cancelled pull cleanup warning for {model}: {error}");
+    }
+
+    Ok(())
+}
+
 fn emit_download_progress(
     app: &AppHandle,
     model: &str,
@@ -1351,6 +1459,7 @@ fn emit_download_progress(
     completed: Option<u64>,
     total: Option<u64>,
     done: bool,
+    paused: bool,
     error: Option<String>,
 ) {
     let percent = match (completed, total) {
@@ -1369,6 +1478,7 @@ fn emit_download_progress(
             total,
             percent,
             done,
+            paused,
             error,
         },
     );
@@ -1379,7 +1489,17 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         return Err(format!("{model} is not allowed in Phase 1."));
     }
 
-    emit_download_progress(&app, &model, "Preparing download", None, None, false, None);
+    let (cancel_flag, pause_flag) = register_active_pull(&model);
+    emit_download_progress(
+        &app,
+        &model,
+        "Preparing download",
+        None,
+        None,
+        false,
+        false,
+        None,
+    );
 
     let client = Client::builder()
         .timeout(Duration::from_secs(60 * 60))
@@ -1395,6 +1515,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         .send()
         .map_err(|error| {
             let message = error.to_string();
+            clear_active_pull(&model);
             emit_download_progress(
                 &app,
                 &model,
@@ -1402,6 +1523,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
                 None,
                 None,
                 true,
+                false,
                 Some(message.clone()),
             );
             message
@@ -1409,6 +1531,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
 
     if !response.status().is_success() {
         let message = format!("Ollama returned HTTP {}", response.status());
+        clear_active_pull(&model);
         emit_download_progress(
             &app,
             &model,
@@ -1416,6 +1539,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
             None,
             None,
             true,
+            false,
             Some(message.clone()),
         );
         return Err(message);
@@ -1424,8 +1548,40 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
     let reader = BufReader::new(response);
     let mut last_status = "Downloading".to_string();
     let mut layer_progress: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut last_completed: Option<u64> = None;
+    let mut last_total: Option<u64> = None;
 
     for line in reader.lines() {
+        if cancel_flag.load(Ordering::Relaxed) {
+            clear_active_pull(&model);
+            emit_download_progress(
+                &app,
+                &model,
+                "Download cancelled",
+                last_completed,
+                last_total,
+                true,
+                false,
+                Some("Download cancelled.".to_string()),
+            );
+            return Err("Download cancelled.".to_string());
+        }
+
+        if pause_flag.load(Ordering::Relaxed) {
+            clear_active_pull(&model);
+            emit_download_progress(
+                &app,
+                &model,
+                "Download paused",
+                last_completed,
+                last_total,
+                false,
+                true,
+                None,
+            );
+            return Ok(format!("{model} download paused."));
+        }
+
         let line = line.map_err(|error| error.to_string())?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -1436,6 +1592,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
             .map_err(|error| format!("Failed to parse Ollama progress: {error}"))?;
 
         if let Some(error) = progress.error {
+            clear_active_pull(&model);
             emit_download_progress(
                 &app,
                 &model,
@@ -1443,6 +1600,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
                 progress.completed,
                 progress.total,
                 true,
+                false,
                 Some(error.clone()),
             );
             return Err(error);
@@ -1479,6 +1637,8 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         } else {
             progress.total
         };
+        last_completed = completed;
+        last_total = total;
 
         let done = last_status.eq_ignore_ascii_case("success");
         emit_download_progress(
@@ -1488,6 +1648,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
             completed,
             total,
             done,
+            false,
             None,
         );
     }
@@ -1509,6 +1670,7 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         None
     };
 
+    clear_active_pull(&model);
     emit_download_progress(
         &app,
         &model,
@@ -1516,10 +1678,56 @@ fn pull_model_inner(app: AppHandle, model: String) -> Result<String, String> {
         completed,
         total,
         true,
+        false,
         None,
     );
 
     Ok(format!("{model} downloaded."))
+}
+
+fn pause_model_pull_inner(model: &str) -> Result<String, String> {
+    let guard = ACTIVE_MODEL_PULL
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let pull = guard
+        .as_ref()
+        .ok_or_else(|| "No active download.".to_string())?;
+    if pull.model != model {
+        return Err("No active download for that model.".to_string());
+    }
+
+    pull.pause.store(true, Ordering::Relaxed);
+    Ok(format!("{model} download paused."))
+}
+
+fn cancel_model_pull_inner(model: &str) -> Result<String, String> {
+    let cancel = {
+        let guard = ACTIVE_MODEL_PULL
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let pull = guard
+            .as_ref()
+            .ok_or_else(|| "No active download.".to_string())?;
+        if pull.model != model {
+            return Err("No active download for that model.".to_string());
+        }
+        pull.cancel.clone()
+    };
+
+    cancel.store(true, Ordering::Relaxed);
+    for _ in 0..30 {
+        let still_active = ACTIVE_MODEL_PULL
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|pull| pull.model == model))
+            .unwrap_or(false);
+        if !still_active {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    cleanup_cancelled_pull(model)?;
+    Ok(format!("{model} download cancelled."))
 }
 
 fn chat_ollama_direct_inner(
@@ -1770,7 +1978,7 @@ fn analyze_document_inner(path: String) -> Result<Value, String> {
 fn http_json_response(status: &str, body: serde_json::Value) -> String {
     let body = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".to_string());
     format!(
-        "HTTP/1.1 {status}\r\ncontent-type: application/json; charset=utf-8\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\ncontent-type: application/json; charset=utf-8\r\ncontent-length: {}\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\naccess-control-allow-private-network: true\r\nconnection: close\r\n\r\n{body}",
         body.len()
     )
 }
@@ -1799,7 +2007,7 @@ fn http_status_error(prefix: &str, status: reqwest::StatusCode, text: &str) -> S
 
 fn http_empty_response(status: &str) -> String {
     format!(
-        "HTTP/1.1 {status}\r\ncontent-length: 0\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\nconnection: close\r\n\r\n"
+        "HTTP/1.1 {status}\r\ncontent-length: 0\r\naccess-control-allow-origin: *\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\naccess-control-allow-headers: content-type\r\naccess-control-allow-private-network: true\r\nconnection: close\r\n\r\n"
     )
 }
 
@@ -2004,6 +2212,20 @@ async fn start_ollama() -> Result<String, String> {
 #[tauri::command]
 async fn pull_model(app: AppHandle, model: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || pull_model_inner(app, model))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn pause_model_pull(model: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || pause_model_pull_inner(&model))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn cancel_model_pull(model: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || cancel_model_pull_inner(&model))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -2290,7 +2512,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             start_desktop_bridge(app.handle().clone());
-            app.manage(LocalHelperProcess(Mutex::new(start_local_helper_process())));
+            app.manage(LocalHelperProcess(Mutex::new(start_local_helper_process(app.handle()))));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -2316,6 +2538,8 @@ pub fn run() {
             install_ollama,
             start_ollama,
             pull_model,
+            pause_model_pull,
+            cancel_model_pull,
             chat_once,
             read_image_attachment,
             analyze_document,

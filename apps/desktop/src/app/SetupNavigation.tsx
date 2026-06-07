@@ -33,38 +33,38 @@ export function SetupNavigation({
   onAppModeChange,
 }: SetupNavigationProps) {
   return (
-    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
-        <BrandLogo />
-        <div>
-          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
-          <p className="miva-nav-section-label">{t.setupFlowSubtitle}</p>
+    <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
+      <div className="miva-sidebar-header">
+        <BrandLogo className="h-7 w-7 rounded-lg" />
+        <div className="min-w-0">
+          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
+          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.setupFlowSubtitle}</p>
         </div>
       </div>
 
-      <nav className="flex-1 p-4">
+      <nav className="miva-sidebar-nav">
         {activeStep === "settings" ? (
           <>
-            <p className="miva-nav-section-label px-3 pb-3">Settings</p>
-            <div className="grid gap-1">
+            <p className="miva-nav-section-label px-2 pb-1.5">Settings</p>
+            <div className="grid gap-0.5">
               {settingsSections.map((section) => {
                 const active = settingsSection === section.id;
 
                 return (
                   <button
-                    className={`miva-nav-item flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                    className={`miva-nav-item flex w-full items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition ${
                       active ? "miva-nav-item-active" : ""
                     }`}
                     key={section.id}
                     onClick={() => onSettingsSectionChange(section.id)}
                     type="button"
                   >
-                    <span className={`grid h-8 w-8 place-items-center rounded-full ${active ? "miva-nav-icon-active" : "miva-nav-icon"}`}>
-                      <span className="material-symbols-outlined text-[18px]">{section.icon}</span>
+                    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${active ? "miva-nav-icon-active" : "miva-nav-icon"}`}>
+                      <span className="material-symbols-outlined text-[16px]">{section.icon}</span>
                     </span>
                     <span className="min-w-0">
-                      <span className="block">{section.label}</span>
-                      <span className="block text-xs font-medium opacity-70">{section.detail}</span>
+                      <span className="block truncate text-[13px]">{section.label}</span>
+                      <span className="block truncate text-[10px] font-medium leading-4 opacity-70">{section.detail}</span>
                     </span>
                   </button>
                 );
@@ -73,15 +73,15 @@ export function SetupNavigation({
           </>
         ) : (
           <>
-            <p className="miva-nav-section-label px-3 pb-3">Setup</p>
-            <div className="grid gap-1">
+            <p className="miva-nav-section-label px-2 pb-1.5">Setup</p>
+            <div className="grid gap-0.5">
               {steps.map((step, index) => {
                 const active = step.id === activeStep;
                 const completed = index < activeIndex;
 
                 return (
                   <button
-                    className={`miva-nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+                    className={`miva-nav-item relative flex w-full items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition ${
                       active ? "miva-nav-item-active" : completed ? "text-[var(--miva-success)]" : ""
                     }`}
                     key={step.id}
@@ -92,19 +92,19 @@ export function SetupNavigation({
                     type="button"
                   >
                     <span
-                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold transition-all duration-300 ${
+                      className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold transition-all duration-300 ${
                         active ? "miva-nav-icon-active" : completed ? "miva-nav-icon-success" : "miva-nav-icon"
                       } ${active ? "miva-status-glow" : ""}`}
                     >
                       {completed ? (
-                        <span className="material-symbols-outlined miva-nav-check-enter text-[18px]">check</span>
+                        <span className="material-symbols-outlined miva-nav-check-enter text-[16px]">check</span>
                       ) : (
                         String(index + 1).padStart(2, "0")
                       )}
                     </span>
                     <span className="min-w-0">
-                      <span className="block">{step.label}</span>
-                      <span className="block text-xs font-medium opacity-70">{step.detail}</span>
+                      <span className="block truncate text-[13px]">{step.label}</span>
+                      <span className="block truncate text-[10px] font-medium leading-4 opacity-70">{step.detail}</span>
                     </span>
                   </button>
                 );

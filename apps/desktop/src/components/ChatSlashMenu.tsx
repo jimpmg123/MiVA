@@ -1,17 +1,25 @@
+import type { Locale } from "../i18n";
 import type { ChatSlashCommand } from "../features/chat/slashCommands";
+import { slashMenuHintCopy } from "../features/chat/slashCommands";
 
 type ChatSlashMenuProps = {
   commands: ChatSlashCommand[];
   activeIndex: number;
+  locale: Locale;
   onHighlight: (index: number) => void;
   onSelect: (command: ChatSlashCommand) => void;
 };
 
-export function ChatSlashMenu({ commands, activeIndex, onHighlight, onSelect }: ChatSlashMenuProps) {
+export function ChatSlashMenu({ commands, activeIndex, locale, onHighlight, onSelect }: ChatSlashMenuProps) {
   return (
     <div className="absolute bottom-full left-0 z-40 mb-2 w-full min-w-[280px] max-w-[420px] overflow-hidden rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] shadow-[var(--miva-shadow-lg)]">
       <div className="border-b border-[var(--miva-border)] px-3 py-2">
-        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Skills</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Skills</p>
+          <p className="text-[10px] font-medium normal-case tracking-normal text-[var(--miva-text-soft)]">
+            {slashMenuHintCopy(locale)}
+          </p>
+        </div>
       </div>
       <ul className="max-h-56 overflow-y-auto p-1">
         {commands.map((command, index) => {
@@ -39,8 +47,7 @@ export function ChatSlashMenu({ commands, activeIndex, onHighlight, onSelect }: 
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold text-[var(--miva-text)]">{command.label}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-[var(--miva-text-muted)]">{command.description}</span>
-                  <span className="mt-1 block font-mono text-[11px] text-[var(--miva-text-soft)]">/{command.id}</span>
+                  <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">{command.description}</span>
                 </span>
               </button>
             </li>

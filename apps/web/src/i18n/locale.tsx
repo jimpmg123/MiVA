@@ -75,7 +75,7 @@ export function LanguageToggle({ className = '' }: LanguageToggleProps) {
   return (
     <button
       aria-label={`${copy.languageToggle}: ${nextLabel}`}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-secondary-container hover:text-primary-container ${className}`}
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-secondary-container hover:text-primary-container dark:hover:text-blue-300 ${className}`}
       onClick={toggleLocale}
       title={`${copy.languageToggle} (${nextLabel})`}
       type="button"

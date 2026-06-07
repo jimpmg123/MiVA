@@ -8,8 +8,21 @@ import {
   buildActionConfirmationMessage,
   createActionPlan,
   hasExplicitActionConfirmation,
+  isActionConfirmationMessage,
   summarizeActionRequest,
 } from "./action-confirmation.mjs";
+
+const WORKSPACE_SLASH_LABELS = [
+  "Google Calendar",
+  "Google Docs",
+  "Google Drive",
+  "Gmail",
+  "Google Sheets",
+];
+
+const WORKSPACE_SLASH_PATTERN = /^\/(?:calendar|google-calendar|gcal|docs|google-docs|gdocs|drive|google-drive|gdrive|gmail|mail|email|sheets|google-sheets|spreadsheet)\b/i;
+
+const WORKSPACE_SLASH_COMMAND_LIST = "/calendar, /docs, /drive, /gmail, /sheets";
 import { getProviderApiKey } from "./provider-keys.mjs";
 
 const serviceKeywords = {
@@ -209,6 +222,103 @@ function directWorkspaceAnswer(answer) {
     type: "direct-answer",
     answer,
   };
+}
+
+export function userMessageUsesWorkspaceSlash(content) {
+  const text = String(content || "").trim();
+  if (WORKSPACE_SLASH_PATTERN.test(text)) {
+    return true;
+  }
+
+  return WORKSPACE_SLASH_LABELS.some((label) => text.startsWith(`[${label}]`));
+}
+
+export function isWorkspaceSlashSession({ workspaceSlashForced, messages, latestUserPrompt }) {
+  if (workspaceSlashForced) {
+    return true;
+  }
+
+  const lastAssistant = [...(messages || [])].reverse().find((message) => message.role === "assistant");
+  if (!isActionConfirmationMessage(lastAssistant?.content)) {
+    return false;
+  }
+
+  const confirming = hasExplicitActionConfirmation(latestUserPrompt);
+  if (!confirming) {
+    return false;
+  }
+
+  return (messages || []).some((message) => (
+    message.role === "user" && userMessageUsesWorkspaceSlash(message.content)
+  ));
+}
+
+export function buildUnsolicitedWorkspaceGuidance({ prompt, locale }) {
+  const services = mentionedWorkspaceServices(prompt);
+  if (services.length === 0) {
+    return null;
+  }
+
+  const slashExamples = {
+    calendar: locale === "en" ? "`/calendar add a meeting tomorrow at 3 PM`" : "`/calendar 내일 오후 3시 회의 추가`",
+    docs: locale === "en" ? "`/docs append a summary to my report`" : "`/docs 보고서에 요약 추가`",
+    drive: locale === "en" ? "`/drive find my project proposal PDF`" : "`/drive 프로젝트 제안서 PDF 찾아줘`",
+    gmail: locale === "en" ? "`/gmail summarize recent inbox messages`" : "`/gmail 최근 받은편지함 요약`",
+    sheets: locale === "en" ? "`/sheets summarize this week's sales tab`" : "`/sheets 이번 주 매출 시트 요약`",
+  };
+  const slashByService = {
+    calendar: "/calendar",
+    docs: "/docs",
+    drive: "/drive",
+    gmail: "/gmail",
+    sheets: "/sheets",
+  };
+
+  if (services.length === 1 && slashByService[services[0]]) {
+    const service = services[0];
+    const name = formatWorkspaceServiceName(service, locale);
+    const slash = slashByService[service];
+    const example = slashExamples[service];
+    if (locale === "en") {
+      return [
+        `${name} actions only run after you start the message with a slash command.`,
+        "",
+        `Use ${slash} first, then describe what you want.`,
+        `Example: ${example}`,
+        "",
+        `Available commands: ${WORKSPACE_SLASH_COMMAND_LIST}`,
+      ].join("\n");
+    }
+
+    return [
+      `${name} 작업은 슬래시 명령으로 기능을 활성화한 뒤에만 실행할 수 있습니다.`,
+      "",
+      `먼저 ${slash}로 시작한 다음 요청을 이어서 작성해 주세요.`,
+      `예: ${example}`,
+      "",
+      `사용 가능한 명령: ${WORKSPACE_SLASH_COMMAND_LIST}`,
+    ].join("\n");
+  }
+
+  if (locale === "en") {
+    return [
+      "Google Workspace actions only run after you start with a slash command.",
+      "",
+      "Enable the feature with a slash command, then describe what you want.",
+      "Examples: `/calendar ...`, `/docs ...`, `/drive ...`, `/gmail ...`, `/sheets ...`",
+      "",
+      `Available commands: ${WORKSPACE_SLASH_COMMAND_LIST}`,
+    ].join("\n");
+  }
+
+  return [
+    "Google Calendar, Docs, Drive, Gmail, Sheets 기능은 슬래시 명령으로만 사용할 수 있습니다.",
+    "",
+    "슬래시로 기능을 활성화한 뒤 요청을 이어서 작성해 주세요.",
+    "예: `/calendar 내일 3시 회의 추가`, `/docs 보고서에 내용 추가`, `/drive 제안서 PDF 찾아줘`",
+    "",
+    `사용 가능한 명령: ${WORKSPACE_SLASH_COMMAND_LIST}`,
+  ].join("\n");
 }
 
 function buildWorkspaceActionCompletedMessage(result, locale) {

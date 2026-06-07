@@ -482,7 +482,7 @@ const Badge = ({ children, variant = 'info' }: { children: React.ReactNode, vari
 };
 
 const Card: React.FC<CardProps> = ({ children, className = "" }) => (
-  <div className={`rounded-2xl border border-slate-50 bg-white p-6 shadow-[0px_4px_20px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-[0px_4px_20px_rgba(0,0,0,0.35)] ${className}`}>
+  <div className={`miva-card ${className}`}>
     {children}
   </div>
 );
@@ -1841,7 +1841,7 @@ const LoginPage = ({
   ] as const;
 
   return (
-    <div className="min-h-screen bg-surface-bg text-slate-900">
+    <div className="min-h-screen bg-surface-bg text-slate-900 dark:text-slate-100">
       <div className="sticky top-0 z-50 flex items-center justify-between border-b border-slate-100/80 bg-white/90 px-6 py-4 backdrop-blur-md">
         {onBack ? (
           <button
@@ -3254,7 +3254,7 @@ export default function App() {
         visible={showDesktopDownloadNotice}
       />
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 z-50 flex h-full w-[280px] flex-col border-r border-slate-100 bg-white shadow-xl shadow-slate-200/20 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/30">
+      <aside className="fixed left-0 top-0 z-50 flex h-full w-[280px] flex-col border-r border-slate-100 bg-surface-elevated shadow-xl shadow-slate-200/20">
         <div className="p-8">
           <div className="flex items-center gap-3 mb-12">
             <div className="w-10 h-10 bg-primary-container rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-container/30">
@@ -3312,13 +3312,13 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 ml-[280px] flex flex-col">
         {/* Top Header */}
-        <header className="sticky top-0 z-40 flex h-20 items-center justify-between border-b border-slate-50 bg-white/80 px-10 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
+        <header className="sticky top-0 z-40 flex h-20 items-center justify-between border-b border-slate-50 bg-white/80 px-10 backdrop-blur-md">
           <div className="flex flex-1 items-center gap-3 max-w-2xl">
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 placeholder={shell.searchPlaceholder}
-                className="w-full rounded-2xl border-none bg-slate-100 py-3 pl-12 pr-4 text-sm font-medium shadow-inner transition-all focus:bg-white focus:ring-2 focus:ring-primary-container dark:bg-slate-800 dark:text-slate-100 dark:focus:bg-slate-900"
+                className="w-full rounded-2xl border-none bg-slate-100 py-3 pl-12 pr-4 text-sm font-medium shadow-inner transition-all focus:bg-white focus:ring-2 focus:ring-primary-container dark:text-slate-100"
               />
             </div>
             <button

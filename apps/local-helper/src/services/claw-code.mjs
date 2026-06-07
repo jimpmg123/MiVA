@@ -186,7 +186,11 @@ export function isCodeRelatedPrompt(prompt) {
   return codeKeywords.some((keyword) => lower.includes(keyword.toLowerCase()));
 }
 
-export function shouldRouteToClawCode({ profile, prompt }) {
+export function shouldRouteToClawCode({ profile, prompt, force = false }) {
+  if (force) {
+    return true;
+  }
+
   const coding = profile?.prompt?.settings?.coding;
   if (!coding || typeof coding !== "object") {
     return false;
@@ -388,14 +392,20 @@ export async function runClawCodeAgent({
   messages = [],
   locale = "ko",
   workspaceRoot: workspaceRootOverride,
+  forced = false,
 }) {
   const status = await getClawCodeStatus();
   if (!status.installed) {
     return {
       type: "direct-answer",
-      answer: locale === "en"
-        ? "Claw Code is not installed yet. Install it from Setup or Settings > Claw Code, then retry."
-        : "Claw Code가 아직 설치되지 않았습니다. Setup 또는 설정 > Claw Code에서 설치한 뒤 다시 시도해 주세요.",
+      uiAction: forced ? null : "claw-pick-workspace",
+      answer: forced
+        ? (locale === "en"
+          ? "Claw Code installation is required. Install it from Settings > Claw Code, then run /code again."
+          : "Claw Code 설치가 필요합니다. 설정 > Claw Code에서 설치한 뒤 /code를 다시 사용해 주세요.")
+        : (locale === "en"
+          ? "To edit files on this computer, choose a workspace folder below."
+          : "파일 수정을 원하시면 작업 폴더를 선택해 주세요."),
     };
   }
 
@@ -413,9 +423,10 @@ export async function runClawCodeAgent({
   if (!workspaceRoot) {
     return {
       type: "direct-answer",
+      uiAction: "claw-pick-workspace",
       answer: locale === "en"
-        ? "Choose a workspace folder in Claw Code settings before asking for file edits."
-        : "파일 수정을 요청하기 전에 Claw Code 설정에서 작업 폴더를 선택해 주세요.",
+        ? "To edit files on this computer, choose a workspace folder below."
+        : "파일 수정을 원하시면 작업 폴더를 선택해 주세요.",
     };
   }
 

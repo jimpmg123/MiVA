@@ -26,21 +26,21 @@ export function StudioNavigation({
   const editorSections = studioSections.filter((section) => section.id !== "myAssistants" && section.id !== "overview");
 
   return (
-    <aside className="miva-sidebar flex h-screen w-[250px] shrink-0 flex-col">
-      <div className="flex h-[60px] items-center gap-3 border-b border-[var(--miva-border)]/70 px-6">
-        <BrandLogo />
-        <div>
-          <h1 className="font-heading text-sm font-extrabold text-[var(--miva-text)]">MiVA</h1>
-          <p className="miva-nav-section-label">Assistant Studio</p>
+    <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
+      <div className="miva-sidebar-header">
+        <BrandLogo className="h-7 w-7 rounded-lg" />
+        <div className="min-w-0">
+          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
+          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">Assistant Studio</p>
         </div>
       </div>
 
-      <nav className="flex-1 p-4">
-        <p className="miva-nav-section-label px-3 pb-3">Studio</p>
-        <div className="grid gap-1">
+      <nav className="miva-sidebar-nav">
+        <p className="miva-nav-section-label px-2 pb-1.5">Studio</p>
+        <div className="grid gap-0.5">
           {librarySection && (
             <button
-              className={`miva-nav-item relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+              className={`miva-nav-item relative flex w-full items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition ${
                 studioSection === "myAssistants"
                   ? "miva-nav-item-active"
                   : ""
@@ -48,35 +48,35 @@ export function StudioNavigation({
               onClick={() => onStudioSectionChange("myAssistants")}
               type="button"
             >
-              <span className={`grid h-8 w-8 place-items-center rounded-full ${
+              <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
                 studioSection === "myAssistants" ? "miva-nav-icon-active" : "miva-nav-icon"
               }`}>
-                <span className="material-symbols-outlined text-[18px]">{librarySection.icon}</span>
+                <span className="material-symbols-outlined text-[16px]">{librarySection.icon}</span>
               </span>
               <span className="min-w-0">
-                <span className="block">{librarySection.label}</span>
-                <span className="block text-xs font-medium opacity-70">{librarySection.detail}</span>
+                <span className="block truncate text-[13px]">{librarySection.label}</span>
+                <span className="block truncate text-[10px] font-medium leading-4 opacity-70">{librarySection.detail}</span>
               </span>
             </button>
           )}
 
           <div
             className={`grid transition-all duration-300 ease-out ${
-              editorExpanded ? "mt-3 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"
+              editorExpanded ? "mt-2 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"
             }`}
           >
             <div className="min-h-0 overflow-hidden">
-              <div className="grid gap-1 pt-1">
+              <div className="grid gap-0.5 pt-0.5">
                 {[...(overviewSection ? [overviewSection] : []), ...editorSections].map((section, index) => {
                   const active = studioSection === section.id;
                   const childOfOverview = section.id !== "overview";
 
                   return (
                     <button
-                      className={`miva-nav-item relative flex items-center rounded-xl px-3 py-3 text-left text-sm font-semibold transition-all duration-300 ${
+                      className={`miva-nav-item relative flex items-center rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition-all duration-300 ${
                         active ? "miva-nav-item-active" : ""
                       } ${editorExpanded ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"} ${
-                        childOfOverview ? "mr-2 w-[calc(100%-0.5rem)] gap-2 pl-6 text-[12px]" : "w-full gap-3"
+                        childOfOverview ? "mr-1 w-[calc(100%-0.25rem)] gap-1.5 pl-3.5 text-[12px]" : "w-full gap-2"
                       }`}
                       key={section.id}
                       onClick={() => onStudioSectionChange(section.id)}
@@ -85,8 +85,14 @@ export function StudioNavigation({
                     >
                       <span className={`grid shrink-0 place-items-center rounded-full transition-colors ${
                         active ? "miva-nav-icon-active" : "miva-nav-icon"
-                      } ${childOfOverview ? "h-7 w-7" : "h-8 w-8"}`}>
-                        <span className={`material-symbols-outlined ${childOfOverview ? "text-[16px]" : "text-[18px]"}`}>{section.icon}</span>
+                      } ${childOfOverview ? "h-6 w-6" : "h-7 w-7"}`}>
+                        <span className={`material-symbols-outlined ${
+                          section.id === "googleWorkspace"
+                            ? "text-[12px]"
+                            : childOfOverview
+                              ? "text-[14px]"
+                              : "text-[16px]"
+                        }`}>{section.icon}</span>
                       </span>
                       <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
                         <span className="block truncate">{section.label}</span>

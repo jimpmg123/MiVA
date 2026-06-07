@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AssistantProfileSyncState, LocalAssistantProfile } from "../types";
 import { Badge, IconTile, Input, ModalBackdrop, ModalPanel, Panel, PrimaryButton, SecondaryButton, SectionHeader } from "../components/ui";
 import { MyAssistantCard } from "./MyAssistantCard";
+import { SyncIconButton, SyncIconButtonGroup } from "./SyncIconButton";
 
 type MyAssistantsPanelProps = {
   profiles: LocalAssistantProfile[];
@@ -10,6 +11,7 @@ type MyAssistantsPanelProps = {
   onEdit: (profile: LocalAssistantProfile) => void;
   onSync: (profile: LocalAssistantProfile) => void;
   onSyncAll: () => void;
+  onSyncAllFromWeb: () => void;
   onAddAssistant: () => void;
   onRun: (profile: LocalAssistantProfile) => void;
   onDelete: (profile: LocalAssistantProfile) => Promise<void> | void;
@@ -23,6 +25,7 @@ export function MyAssistantsPanel({
   onEdit,
   onSync,
   onSyncAll,
+  onSyncAllFromWeb,
   onAddAssistant,
   onRun,
   onDelete,
@@ -84,9 +87,23 @@ export function MyAssistantsPanel({
             <>
             <Badge className="min-w-[88px] px-4" tone="action">{profiles.length} saved</Badge>
             <PrimaryButton onClick={onAddAssistant}>Add assistant</PrimaryButton>
-            <SecondaryButton disabled={syncState === "syncing"} onClick={onSyncAll}>
-              {syncState === "syncing" ? "Syncing..." : "Sync all"}
-            </SecondaryButton>
+            <SyncIconButtonGroup>
+              <SyncIconButton
+                active={syncState === "synced"}
+                description="Push every saved assistant on this device to the MiVA web console."
+                disabled={syncState === "syncing"}
+                icon={syncState === "syncing" ? "progress_activity" : "cloud_upload"}
+                onClick={onSyncAll}
+                title="Sync all to web"
+              />
+              <SyncIconButton
+                description="Download assistant profiles from the web console and merge them into this device."
+                disabled={syncState === "syncing"}
+                icon="cloud_download"
+                onClick={onSyncAllFromWeb}
+                title="Sync from web"
+              />
+            </SyncIconButtonGroup>
             </>
           }
         />

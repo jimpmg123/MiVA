@@ -606,7 +606,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
   const landing = copy.landing;
 
   return (
-    <div className="min-h-screen bg-surface-elevated text-slate-900">
+    <div className="min-h-screen bg-surface-bg text-slate-900 dark:text-slate-100">
       <LandingNav landing={landing} onGetStarted={onGetStarted} />
       <main>
         <HeroSection landing={landing} onGetStarted={onGetStarted} />

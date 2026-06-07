@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { HardwareInfo, ModelDownloadProgress, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
+import type { HardwareInfo, ModelDownloadDockMode, ModelDownloadProgress, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
 import {
+  cancelOllamaModelPull,
   getDefaultPythonInstallDir,
   getHardwareInfo,
   getOllamaStatus,
   getRuntimeRequirements,
   installOllamaRuntime,
   installPythonRuntime,
+  pauseOllamaModelPull,
   pullOllamaModel,
   startOllamaRuntime,
 } from "./ollamaRuntime";
@@ -40,6 +42,7 @@ export function useOllamaRuntime({
   const [pythonInstallPath, setPythonInstallPath] = useState("");
   const [status, setStatus] = useState<OllamaStatus | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<ModelDownloadProgress | null>(null);
+  const [downloadDockMode, setDownloadDockMode] = useState<ModelDownloadDockMode>("modal");
   const autoStartOllamaAttemptedRef = useRef(false);
 
   const refreshStatus = useCallback(async () => {
@@ -188,23 +191,46 @@ export function useOllamaRuntime({
 
   const downloadModel = useCallback(async (model: string) => {
     setBusyAction(`download:${model}`);
-    setDownloadProgress({
+    setDownloadDockMode((current) => (current === "minimal" || current === "compact" ? current : "modal"));
+    setDownloadProgress((current) => ({
       model,
-      status: preparingDownloadLabel,
-      completed: null,
-      total: null,
-      percent: 0,
+      status: current?.model === model && current.paused ? preparingDownloadLabel : preparingDownloadLabel,
+      completed: current?.model === model ? current.completed ?? null : null,
+      total: current?.model === model ? current.total ?? null : null,
+      percent: current?.model === model ? current.percent ?? 0 : 0,
       done: false,
+      paused: false,
       error: null,
-    });
+    }));
     try {
       onLog(`Downloading ${model}.`);
       const output = await pullOllamaModel(model);
       onLog(output);
+      if (output.toLowerCase().includes("paused")) {
+        setDownloadProgress((current) => ({
+          model,
+          status: "Download paused",
+          completed: current?.completed ?? null,
+          total: current?.total ?? null,
+          percent: current?.percent ?? null,
+          done: false,
+          paused: true,
+          error: null,
+        }));
+        return;
+      }
       onModelDownloaded(model);
       await refreshStatus();
+      setDownloadDockMode("modal");
     } catch (error) {
       const message = String(error);
+      if (message.toLowerCase().includes("cancelled")) {
+        setDownloadProgress(null);
+        setDownloadDockMode("modal");
+        onLog(`Download cancelled: ${model}`);
+        await refreshStatus();
+        return;
+      }
       setDownloadProgress((current) => ({
         model,
         status: downloadFailedLabel,
@@ -212,6 +238,7 @@ export function useOllamaRuntime({
         total: current?.total ?? null,
         percent: current?.percent ?? null,
         done: true,
+        paused: false,
         error: message,
       }));
       onLog(`Download failed: ${message}`);
@@ -226,6 +253,39 @@ export function useOllamaRuntime({
     refreshStatus,
     setBusyAction,
   ]);
+
+  const pauseModelDownload = useCallback(async (model: string) => {
+    try {
+      await pauseOllamaModelPull(model);
+      setDownloadProgress((current) => (
+        current?.model === model
+          ? { ...current, paused: true, status: "Download paused" }
+          : current
+      ));
+      setBusyAction(null);
+      onLog(`Download paused: ${model}`);
+    } catch (error) {
+      onLog(`Pause failed: ${String(error)}`);
+    }
+  }, [onLog, setBusyAction]);
+
+  const resumeModelDownload = useCallback(async (model: string) => {
+    await downloadModel(model);
+  }, [downloadModel]);
+
+  const cancelModelDownload = useCallback(async (model: string) => {
+    try {
+      await cancelOllamaModelPull(model);
+    } catch (error) {
+      onLog(`Cancel request failed: ${String(error)}`);
+    } finally {
+      setDownloadProgress(null);
+      setDownloadDockMode("modal");
+      setBusyAction(null);
+      await refreshStatus();
+      onLog(`Download cancelled: ${model}`);
+    }
+  }, [onLog, refreshStatus, setBusyAction]);
 
   useEffect(() => {
     if (tauriRuntime) {
@@ -286,6 +346,11 @@ export function useOllamaRuntime({
     pythonInstallPath,
     status,
     downloadProgress,
+    downloadDockMode,
+    setDownloadDockMode,
+    pauseModelDownload,
+    resumeModelDownload,
+    cancelModelDownload,
     refreshStatus,
     refreshHardware,
     refreshRuntimeRequirements,

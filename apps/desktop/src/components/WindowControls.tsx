@@ -82,32 +82,32 @@ export function WindowControls({ className = "" }: WindowControlsProps) {
   }
 
   return (
-    <div className={`flex h-full shrink-0 items-stretch ${className}`}>
+    <div className={`flex h-7 shrink-0 items-stretch ${className}`}>
       <button
         aria-label="Minimize window"
-        className="grid w-8 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+        className="grid w-7 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
         onClick={() => void minimizeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[14px]">remove</span>
+        <span className="material-symbols-outlined text-[13px]">remove</span>
       </button>
       <button
         aria-label={isMaximized ? "Restore window" : "Maximize window"}
-        className="grid w-8 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+        className="grid w-7 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
         onClick={() => void toggleMaximizeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[14px]">
+        <span className="material-symbols-outlined text-[13px]">
           {isMaximized ? "close_fullscreen" : "crop_square"}
         </span>
       </button>
       <button
         aria-label="Close window"
-        className="grid w-8 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-danger)] hover:text-white"
+        className="grid w-7 place-items-center text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-danger)] hover:text-white"
         onClick={() => void closeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[14px]">close</span>
+        <span className="material-symbols-outlined text-[13px]">close</span>
       </button>
     </div>
   );

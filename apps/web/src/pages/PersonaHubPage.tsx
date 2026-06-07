@@ -67,7 +67,7 @@ function HubBadge({ children, variant = 'info' }: { children: React.ReactNode; v
 
 function HubCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-slate-50 bg-white p-6 shadow-[0px_4px_20px_rgba(0,0,0,0.04)] dark:border-[#243044] dark:bg-[#111827] dark:shadow-[0px_4px_20px_rgba(0,0,0,0.35)] ${className}`}>
+    <div className={`miva-card ${className}`}>
       {children}
     </div>
   );

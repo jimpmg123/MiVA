@@ -3,15 +3,23 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { invokeCommand } from "../../app/tauri";
 import type { DocumentAnalysisResult } from "../../types";
 
+const ATTACHMENT_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+
+export function isAttachmentImagePath(path: string) {
+  const name = path.split(/[\\/]/).pop() || "";
+  const extension = name.includes(".") ? name.split(".").pop()?.toLowerCase() || "" : "";
+  return ATTACHMENT_IMAGE_EXTENSIONS.has(extension);
+}
+
 export async function chooseDocumentPaths() {
   const selected = await openDialog({
-    title: "Attach PDF or spreadsheet",
+    title: "Attach file",
     multiple: true,
     directory: false,
     filters: [
       {
-        name: "Documents",
-        extensions: ["pdf", "xlsx", "xls", "csv"],
+        name: "Files",
+        extensions: ["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg", "webp", "gif"],
       },
     ],
   });

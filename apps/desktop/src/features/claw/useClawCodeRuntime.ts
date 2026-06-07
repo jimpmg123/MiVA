@@ -98,6 +98,19 @@ export function useClawCodeRuntime({
     }
   }, [onLog, refreshStatus, setBusyAction, tauriRuntime]);
 
+  const applyClawCodeWorkspace = useCallback(async (workspaceRoot: string) => {
+    if (!tauriRuntime) {
+      return;
+    }
+
+    if (!status?.installed) {
+      await installClawCode(workspaceRoot);
+      return;
+    }
+
+    await setWorkspaceRoot(workspaceRoot);
+  }, [installClawCode, setWorkspaceRoot, status?.installed, tauriRuntime]);
+
   useEffect(() => {
     if (tauriRuntime) {
       void refreshStatus();
@@ -107,6 +120,7 @@ export function useClawCodeRuntime({
   return {
     clawCodeStatus: status,
     clawCodeStatusError: statusError,
+    applyClawCodeWorkspace,
     chooseClawCodeWorkspace: chooseWorkspaceRoot,
     installClawCode,
     refreshClawCodeStatus: refreshStatus,

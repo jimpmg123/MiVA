@@ -1,8 +1,10 @@
+# Run from monorepo root so packages/shared is available during build.
+# Railway: clear Root Directory (use repo root) and set Config File to /apps/api/railway.toml
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm run build"
+buildCommand = "cd apps/api && npm ci && npm run build"
 
 [deploy]
-startCommand = "npm run start:prod"
+startCommand = "cd apps/api && npm run start:prod"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

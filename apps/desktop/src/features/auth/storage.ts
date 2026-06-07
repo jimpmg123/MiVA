@@ -8,6 +8,7 @@ export const emptyProviderKeys: ProviderKeyState = {
   openai: "",
   gemini: "",
   groq: "",
+  huggingface: "",
 };
 
 export function loadProviderKeys(): ProviderKeyState {
@@ -26,6 +27,7 @@ export function loadProviderKeys(): ProviderKeyState {
       openai: typeof parsed.openai === "string" ? parsed.openai : "",
       gemini: typeof parsed.gemini === "string" ? parsed.gemini : "",
       groq: typeof parsed.groq === "string" ? parsed.groq : "",
+      huggingface: typeof parsed.huggingface === "string" ? parsed.huggingface : "",
     };
   } catch {
     return emptyProviderKeys;

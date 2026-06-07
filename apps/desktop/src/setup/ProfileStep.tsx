@@ -43,7 +43,6 @@ export function ProfileStep({
     ["Google Workspace", profile.capabilities.googleWorkspace.enabled],
     ["Files", profile.capabilities.files.enabled],
     ["Tools", profile.capabilities.tools.enabled],
-    ["MCP", profile.capabilities.mcp.enabled],
     ["Skills", profile.capabilities.skills.enabled],
     ["External APIs", profile.capabilities.externalApis.enabled],
   ];
@@ -92,7 +91,7 @@ export function ProfileStep({
         <Panel className="miva-stagger-item miva-stagger-1">
           <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Extension Slots</h3>
           <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-            These fields are placeholders for later role details, voice, character, Google Workspace, MCP, and skills.
+            These fields are placeholders for later role details, voice, character, Google Workspace, and skills.
           </p>
 
           <div className="mt-6 grid gap-3">
