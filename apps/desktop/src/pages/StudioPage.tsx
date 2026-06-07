@@ -234,6 +234,7 @@ export function StudioPage({
           onSyncAllFromWeb={() => void syncAllAssistantProfilesFromCloud()}
           onAddAssistant={onAddAssistantStart}
           profiles={profiles}
+          syncMessage={assistantProfileSyncMessage}
           syncState={assistantProfileSyncState}
         />
       );
@@ -361,8 +362,8 @@ export function StudioPage({
       return (
         <VoiceStudioPanel
           settings={profile.prompt.settings}
-          onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
           onOpenPythonSetup={onOpenPythonSetup}
+          onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
         />
       );
     };

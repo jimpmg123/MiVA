@@ -64,14 +64,14 @@ export class UsageService {
         estimatedOutputChars: totals.estimatedOutputChars,
         averageLatencyMs: totals.events ? Math.round(totals.totalLatencyMs / totals.events) : 0,
       },
-      byProvider: toTopList(events.reduce<Record<string, number>>((acc, event) => {
+      byProvider: toTopList(events.reduce((acc: Record<string, number>, event: any) => {
         acc[event.provider] = (acc[event.provider] || 0) + 1;
         return acc;
-      }, {})),
-      byModel: toTopList(events.reduce<Record<string, number>>((acc, event) => {
+      }, {} as Record<string, number>)),
+      byModel: toTopList(events.reduce((acc: Record<string, number>, event: any) => {
         acc[event.model] = (acc[event.model] || 0) + 1;
         return acc;
-      }, {})),
+      }, {} as Record<string, number>)),
       recentEvents: events.slice(0, 10).map(serializeLocalUsageEvent),
     };
   }

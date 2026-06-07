@@ -3304,7 +3304,7 @@ export default function App() {
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
       case 'personaHub': return <PersonaHubPage key={locale} />;
-      case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
+      case 'admin': return <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'settings': return <SettingsPage />;
       default: return null;
     }

@@ -216,6 +216,7 @@ export type ModelDownloadDockMode = "modal" | "compact" | "minimal";
 
 export type VoiceWorkerStatus = {
   running: boolean;
+  pid?: number;
   ok?: boolean;
   service?: string;
   version?: string;
@@ -541,4 +542,24 @@ export type LocalAssistantProfileStore = {
   activeProfileId: string | null;
   profiles: LocalAssistantProfile[];
   updatedAt: string | null;
+};
+
+export type CloudAssistantProfile = {
+  id: string;
+  name?: string | null;
+  description?: string | null;
+  useCase?: string | null;
+  answerStyle?: string | null;
+  priority?: string | null;
+  languageUse?: string | null;
+  localMode?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  futureFeatures?: unknown;
+  isDefault?: boolean;
+  source?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  prompt?: unknown;
+  capabilities?: unknown;
 };

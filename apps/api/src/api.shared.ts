@@ -291,6 +291,7 @@ export function normalizePromptSettings(value: any) {
     : defaultPromptSettings.scheduleRules.mode;
 
   return {
+    ...source,
     persona: typeof source.persona === "string" && source.persona.trim()
       ? source.persona.trim()
       : defaultPromptSettings.persona,

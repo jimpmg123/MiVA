@@ -45,6 +45,7 @@ desktop.ini
 .env
 .env.*
 !.env.example
+!apps/desktop/.env.production.example
 .settings/
 
 # Local npm config

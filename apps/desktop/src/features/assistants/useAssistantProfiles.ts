@@ -4,8 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../../app/tauri";
 import type { Locale } from "../../i18n";
 import { deleteCloudAssistantProfile, listCloudAssistantProfiles, upsertCloudAssistantProfile } from "../cloud/client";
-import { mapCloudAssistantProfileToLocal } from "./cloudPayload";
 import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
+import { mergeCloudAssistantProfiles } from "./cloudProfile";
 import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
 import { buildLocalAssistantProfile } from "./profileFactory";
 import {
@@ -577,62 +577,40 @@ export function useAssistantProfiles({
     }
 
     setAssistantProfileSyncState("syncing");
-    setAssistantProfileSyncMessage("Fetching assistant profiles from the web console...");
+    setAssistantProfileSyncMessage("Loading assistant profiles from the web...");
 
     try {
-      const { profiles: cloudProfiles } = await listCloudAssistantProfiles({ authSession });
+      const response = await listCloudAssistantProfiles({ authSession });
       const syncedAt = new Date().toISOString();
-      let nextProfiles = [...assistantProfileStore.profiles];
-      let importedCount = 0;
-      let updatedCount = 0;
-
-      for (const cloudProfile of cloudProfiles) {
-        const existing = nextProfiles.find((profile) => (
-          profile.sync.cloudProfileId === cloudProfile.id || profile.id === cloudProfile.id
-        ));
-        const mapped = mapCloudAssistantProfileToLocal(cloudProfile, {
-          existing,
-          locale: activeLocale,
-          syncedAt,
-        });
-
-        if (existing) {
-          nextProfiles = nextProfiles.map((profile) => (profile.id === existing.id ? mapped : profile));
-          updatedCount += 1;
-        } else {
-          nextProfiles = [mapped, ...nextProfiles.filter((profile) => profile.id !== mapped.id)];
-          importedCount += 1;
-        }
-      }
-
-      const nextActiveProfileId = nextProfiles.some((profile) => profile.id === activeLocalProfileId)
-        ? activeLocalProfileId
-        : nextProfiles[0]?.id ?? activeLocalProfileId;
-      const nextStore = replaceSyncedAssistantProfileStore({
-        activeProfileId: nextActiveProfileId,
-        profiles: nextProfiles,
+      const result = mergeCloudAssistantProfiles({
+        currentStore: assistantProfileStore,
+        cloudProfiles: response.profiles,
+        locale: activeLocale,
         syncedAt,
       });
-      const savedStore = await saveLocalAssistantProfileStore(nextStore);
+      const savedStore = await saveLocalAssistantProfileStore(result.store);
       setAssistantProfileStore(savedStore);
-      if (nextActiveProfileId) {
-        setActiveLocalProfileId(nextActiveProfileId);
-        const activeProfile = savedStore.profiles.find((profile) => profile.id === nextActiveProfileId);
-        if (activeProfile) {
-          applyLocalAssistantProfile(activeProfile);
-        }
+
+      const nextActiveProfile = savedStore.profiles.find((profile) => profile.id === savedStore.activeProfileId)
+        ?? savedStore.profiles[0]
+        ?? null;
+      if (nextActiveProfile) {
+        setActiveLocalProfileId(nextActiveProfile.id);
+        applyLocalAssistantProfile(nextActiveProfile);
       }
 
       setAssistantProfileSyncState("synced");
-      if (cloudProfiles.length === 0) {
-        setAssistantProfileSyncMessage("No assistant profiles were found in the web console.");
+      if (response.profiles.length === 0) {
+        setAssistantProfileSyncMessage("No assistant profiles were found on the web.");
       } else {
         setAssistantProfileSyncMessage(
-          `Imported ${importedCount} and updated ${updatedCount} assistant profile${cloudProfiles.length === 1 ? "" : "s"} from the web console.`,
+          `Loaded ${response.profiles.length} assistant profile${response.profiles.length === 1 ? "" : "s"} from the web: `
+          + `${result.added} added, ${result.updated} updated, ${result.unchanged} unchanged.`,
         );
       }
+      onLog(`Loaded assistant profiles from web: ${result.added} added, ${result.updated} updated, ${result.unchanged} unchanged.`);
     } catch (error) {
-      const message = `Cloud API offline or sync failed: ${String(error)}`;
+      const message = `Cloud API offline or web load failed: ${String(error)}`;
       setAssistantProfileSyncState("error");
       setAssistantProfileSyncMessage(message);
       onLog(message);

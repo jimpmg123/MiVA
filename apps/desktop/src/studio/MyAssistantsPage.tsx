@@ -8,6 +8,7 @@ type MyAssistantsPanelProps = {
   profiles: LocalAssistantProfile[];
   activeProfileId: string;
   syncState: AssistantProfileSyncState;
+  syncMessage: string | null;
   onEdit: (profile: LocalAssistantProfile) => void;
   onSync: (profile: LocalAssistantProfile) => void;
   onSyncAll: () => void;
@@ -22,6 +23,7 @@ export function MyAssistantsPanel({
   profiles,
   activeProfileId,
   syncState,
+  syncMessage,
   onEdit,
   onSync,
   onSyncAll,
@@ -107,6 +109,18 @@ export function MyAssistantsPanel({
             </>
           }
         />
+        {syncMessage && (
+          <div
+            className={`mt-4 rounded-lg border px-4 py-3 text-sm font-semibold ${
+              syncState === "error"
+                ? "border-[var(--miva-danger-soft)] bg-[var(--miva-danger-soft)] text-[var(--miva-danger-hover)]"
+                : "border-[var(--miva-border)] bg-[var(--miva-bg-soft)] text-[var(--miva-text-muted)]"
+            }`}
+            role={syncState === "error" ? "alert" : "status"}
+          >
+            {syncMessage}
+          </div>
+        )}
       </Panel>
 
       <div className="grid items-start gap-3 lg:grid-cols-2">

@@ -139,6 +139,7 @@ def worker_status() -> dict[str, Any]:
         "ok": True,
         "service": "miva-voice-worker",
         "version": "0.1.0",
+        "pid": os.getpid(),
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,
