@@ -1,6 +1,6 @@
 {
-    "sourceInstaller":  "MiVA Desktop_0.1.0_x64-setup.exe",
-    "builtAt":  "2026-06-07T09:03:44.085Z",
-    "fileName":  "MiVA-Desktop-setup.exe",
-    "version":  "0.1.0"
+  "fileName": "MiVA-Desktop-setup.exe",
+  "version": "0.1.0",
+  "builtAt": "2026-06-07T09:13:16.138Z",
+  "sourceInstaller": "MiVA Desktop_0.1.0_x64-setup.exe"
 }
