@@ -37,27 +37,26 @@ export function AuthPage({
             <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">MiVA Desktop</span>
           </div>
           <div className="relative z-10 pointer-events-auto">
-            <WindowControls className="-mr-1" />
+            <WindowControls className="mr-1" />
           </div>
         </div>
       )}
-      <Panel className={`w-full max-w-[440px] p-8 shadow-[var(--miva-shadow-lg)] ${desktopChrome ? "mt-8" : ""}`}>
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">MiVA Account</p>
-            <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[var(--miva-text)]">Sign in</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-              MiVA Desktop opens web login in your system browser, then receives a desktop session from the API.
-            </p>
-          </div>
-          <IconButton
-            aria-label="Close sign in"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--miva-text-soft)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
-            type="button"
-            onClick={onCloseAuth}
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </IconButton>
+      <Panel className={`relative w-full max-w-[440px] px-8 pb-8 pt-9 shadow-[var(--miva-shadow-lg)] ${desktopChrome ? "mt-8" : ""}`}>
+        <IconButton
+          aria-label="Close sign in"
+          className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full text-[var(--miva-text-soft)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+          type="button"
+          onClick={onCloseAuth}
+        >
+          <span className="material-symbols-outlined text-[20px]">close</span>
+        </IconButton>
+
+        <div className="mb-8 pr-10">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">MiVA Account</p>
+          <h1 className="mt-3 font-heading text-[30px] font-bold leading-9 tracking-[-0.02em] text-[var(--miva-text)]">Sign in</h1>
+          <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
+            MiVA Desktop opens web login in your system browser, then receives a desktop session from the API.
+          </p>
         </div>
 
         {authFlowState === "admin-web-only" ? (
