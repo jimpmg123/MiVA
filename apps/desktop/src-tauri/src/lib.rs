@@ -1927,8 +1927,12 @@ fn request_local_helper_json_once(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value, String> {
+    let timeout = match path {
+        "/voice/install-kokoro" => Duration::from_secs(12 * 60),
+        _ => Duration::from_secs(30),
+    };
     let client = Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())?;
 
