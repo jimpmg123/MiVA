@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -78,11 +78,43 @@ function installHelperDependencies() {
   }
 }
 
+function parseEnvFile(filePath) {
+  const values = {};
+
+  for (const line of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+      continue;
+    }
+
+    const [rawKey, ...rawValueParts] = trimmed.split("=");
+    const key = rawKey.trim();
+    const value = rawValueParts.join("=").trim().replace(/^['"]|['"]$/g, "");
+    if (key) {
+      values[key] = value;
+    }
+  }
+
+  return values;
+}
+
+function loadDesktopProductionEnv() {
+  const envPath = join(desktopRoot, ".env.production");
+  if (!existsSync(envPath)) {
+    return {};
+  }
+
+  return parseEnvFile(envPath);
+}
+
 function writeBundledHelperEnv() {
+  const productionEnv = loadDesktopProductionEnv();
   const cloudApiUrl = process.env.VITE_MIVA_API_URL?.trim()
+    || productionEnv.VITE_MIVA_API_URL?.trim()
     || process.env.MIVA_CLOUD_API_URL?.trim()
     || "http://127.0.0.1:4000";
   const webOrigins = process.env.MIVA_WEB_ORIGINS?.trim()
+    || productionEnv.MIVA_WEB_ORIGINS?.trim()
     || process.env.MIVA_CORS_ORIGINS?.trim()
     || "";
   const lines = [
