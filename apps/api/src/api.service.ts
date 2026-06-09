@@ -7,6 +7,7 @@ import { CredentialsService } from "./credentials.service.js";
 import { DevicesService } from "./devices.service.js";
 import { GOOGLE_OAUTH_CLIENT_ID, RequestLike } from "./api.shared.js";
 import { SeedService } from "./seed.service.js";
+import { StudioService } from "./studio.service.js";
 import { UsageService } from "./usage.service.js";
 import { WorkspaceService } from "./workspace.service.js";
 
@@ -21,6 +22,7 @@ export class MivaApiService {
     @Inject(AssistantProfilesService) private readonly assistantProfiles: AssistantProfilesService,
     @Inject(UsageService) private readonly usage: UsageService,
     @Inject(AdminService) private readonly admin: AdminService,
+    @Inject(StudioService) private readonly studio: StudioService,
     @Inject(WorkspaceService) private readonly workspace: WorkspaceService,
   ) {}
 
@@ -63,6 +65,10 @@ export class MivaApiService {
 
   getCatalogModels() {
     return this.catalog.getCatalogModels();
+  }
+
+  getPersonaPresets() {
+    return this.catalog.getPersonaPresets();
   }
 
   getDevices(req: RequestLike) {
@@ -147,5 +153,21 @@ export class MivaApiService {
 
   runGoogleWorkspaceAction(req: RequestLike, payload: any) {
     return this.workspace.runAction(req, payload);
+  }
+
+  generateStudioQuestions(payload: any) {
+    return this.studio.generateQuestions(payload);
+  }
+
+  generateStudioPreview(payload: any) {
+    return this.studio.generatePreview(payload);
+  }
+
+  refineStudioRules(payload: any) {
+    return this.studio.refineRules(payload);
+  }
+
+  finalizeStudioPrompt(payload: any) {
+    return this.studio.finalizePrompt(payload);
   }
 }

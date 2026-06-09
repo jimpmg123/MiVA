@@ -92,6 +92,7 @@ export const defaultPromptSettings = {
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
     "Before changing calendars, files, or email, explain the planned action and wait for user confirmation.",
   ],
+  generatedFinalSystemPrompt: "",
 };
 
 export const deviceAuthRequests = new Map<string, any>();
@@ -316,6 +317,9 @@ export function normalizePromptSettings(value: any) {
     },
     coding: normalizeCodingPolicy(source.coding),
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
+    generatedFinalSystemPrompt: typeof source.generatedFinalSystemPrompt === "string"
+      ? source.generatedFinalSystemPrompt.trim()
+      : defaultPromptSettings.generatedFinalSystemPrompt,
   };
 }
 

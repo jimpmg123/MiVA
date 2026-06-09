@@ -26,11 +26,22 @@ const allowedOrigins = new Set([
   ...configuredCorsOrigins,
 ]);
 
+function isLocalDevOrigin(origin: string) {
+  try {
+    const url = new URL(origin);
+    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+    const localPorts = new Set(["1420", "1421", "5173", "5174", "5175", "5176", String(PORT)]);
+    return localHosts.has(url.hostname) && localPorts.has(url.port);
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     cors: {
       origin(origin, callback) {
-        if (!origin || allowedOrigins.has(origin)) {
+        if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin)) {
           callback(null, true);
           return;
         }

@@ -9,6 +9,7 @@ import { CredentialsService } from "./credentials.service.js";
 import { DevicesService } from "./devices.service.js";
 import { PrismaService } from "./prisma.service.js";
 import { SeedService } from "./seed.service.js";
+import { StudioService } from "./studio.service.js";
 import { UsageService } from "./usage.service.js";
 import { WorkspaceService } from "./workspace.service.js";
 
@@ -25,6 +26,7 @@ import { WorkspaceService } from "./workspace.service.js";
     AssistantProfilesService,
     UsageService,
     AdminService,
+    StudioService,
     WorkspaceService,
   ],
 })

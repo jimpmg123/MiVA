@@ -47,6 +47,11 @@ export class ApiController {
     return this.api.getCatalogModels();
   }
 
+  @Get("catalog/persona-presets")
+  getPersonaPresets() {
+    return this.api.getPersonaPresets();
+  }
+
   @Get("devices")
   getDevices(@Req() req: Request) {
     return this.api.getDevices(req);
@@ -154,5 +159,25 @@ export class ApiController {
   @Post("workspace/actions")
   runGoogleWorkspaceAction(@Req() req: Request, @Body() body: unknown) {
     return this.api.runGoogleWorkspaceAction(req, body);
+  }
+
+  @Post("studio/generate-questions")
+  generateStudioQuestions(@Body() body: unknown) {
+    return this.api.generateStudioQuestions(body);
+  }
+
+  @Post("studio/generate-preview")
+  generateStudioPreview(@Body() body: unknown) {
+    return this.api.generateStudioPreview(body);
+  }
+
+  @Post("studio/refine-rules")
+  refineStudioRules(@Body() body: unknown) {
+    return this.api.refineStudioRules(body);
+  }
+
+  @Post("studio/finalize-prompt")
+  finalizeStudioPrompt(@Body() body: unknown) {
+    return this.api.finalizeStudioPrompt(body);
   }
 }
