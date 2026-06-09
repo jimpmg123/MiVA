@@ -62,6 +62,7 @@ Role: Full-stack developer / solo implementation lead
 
 - Most development was done by one person, so independent feature verification was not completed.
 - Implementation started late, and several broad features were added near the integration phase.
+- Because MiVA combines local runtime setup, cloud sync, assistant customization, and optional voice/character features, keeping a narrow solo-project scope was difficult. The final release plan now treats the setup/runtime path as the required scope and the broader features as beta unless verified.
 - Feature breadth is now larger than the original scope, so final release risk is mostly QA, polish, and bug fixing rather than missing prototype code.
 - Workspace actions, provider key storage, local-helper security, and voice/character polish need careful final-release review.
 
@@ -108,6 +109,19 @@ Reasoning: the project started late and peer verification is incomplete, but the
 - Desktop installer path: https://mi-va.vercel.app/downloads/MiVA-Desktop-setup.exe
 - Repository: https://github.com/jimpmg123/MiVA
 
+## Verification Evidence
+
+The following checks were used as the current Milestone 4 verification record:
+
+| Area | Verification | Result |
+| --- | --- | --- |
+| Local Helper | `npm run check --prefix apps/local-helper` | Passed. Validates Node syntax for server, chat, documents, voice, Workspace, Daiso, and prompt modules. |
+| Desktop release build path | `npm run check --prefix apps/desktop` | Passed. Builds the desktop React/Tauri frontend bundle used by release packaging. |
+| Desktop Rust/Tauri backend | `cargo check` in `apps/desktop/src-tauri` | Passed with existing non-blocking warnings only. |
+| Web beta | `GET https://mi-va.vercel.app` | Returned HTTP 200. |
+| Cloud API health | `GET https://miva-production.up.railway.app/health` | Returned HTTP 200 with `ok: true`. |
+| Desktop installer artifact | `HEAD https://mi-va.vercel.app/downloads/MiVA-Desktop-setup.exe` | Returned HTTP 200, `application/x-msdos-program`, 33,547,794 bytes. |
+
 ## Milestone 4 Requirement Checklist
 
 | Requirement | Status |
@@ -121,5 +135,4 @@ Reasoning: the project started late and peer verification is incomplete, but the
 | Beta deployment link prepared | Completed |
 | Individual progress update | Completed |
 | Group progress update | Completed |
-| Commit to GitHub repository | To be completed after documentation verification |
-
+| Commit to GitHub repository | Completed in final milestone documentation push |

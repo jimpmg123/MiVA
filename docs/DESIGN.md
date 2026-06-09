@@ -271,3 +271,60 @@ Before considering a screen complete:
 - Should the Tailwind design tokens move from app CSS into a shared package later?
 - Should the Phase 1 desktop app add dark/system theme support after the light theme stabilizes?
 - What visual style should the future virtual character mode use?
+
+## 9. Developer Tool Shell Direction
+
+MiVA's desktop shell and Runtime chat use a calm developer-tool interface inspired by modern coding assistants. The UI should be structural, quiet, and content-first rather than card-heavy.
+
+Design dials:
+
+- Design variance: 5
+- Motion intensity: 3
+- Visual density: 5
+
+### Shell
+
+- The left navigation and top bar use a pale blue-gray surface.
+- The application canvas stays neutral and nearly white.
+- Navigation width is stable across Setup, Studio, Runtime, History, and Settings.
+- Dividers and selected-row fills communicate hierarchy.
+- Window controls remain in the top bar.
+- Mode switching stays visible but uses a compact segmented control.
+
+### Runtime Chat
+
+- The conversation column is anchored toward the upper-right of the content canvas.
+- The conversation must not resize or move when the Live2D character opens.
+- Assistant responses render as plain document content with a small author label.
+- Only user messages render inside a filled bubble.
+- Introductory information uses spacing and dividers instead of a large card.
+- The composer stays aligned with the conversation column.
+- Metrics are secondary and visually quiet.
+
+### Live2D
+
+- The in-app character stage is a transparent overlay positioned above the Runtime canvas.
+- It must not reserve grid or flex width.
+- Opening or minimizing the character must not change chat line length or horizontal position.
+- The separate Tauri transparent character window remains available.
+- Controls may receive pointer input; the character canvas should not block chat interaction.
+
+### Shape And Content
+
+- Containers use a 10-12px radius.
+- The message composer uses a 16px radius.
+- User chat bubbles use a 16px radius with a tighter bottom-right corner.
+- Icon-only controls may be circular.
+- Prefer headings, dividers, and whitespace over cards.
+- Cards are reserved for user-owned objects, explicit selection, modal surfaces, or warnings.
+- Loading, empty, and error states stay inline with the surface they affect.
+
+### Rollout
+
+1. Runtime chat
+2. Shared shell, navigation, and top bar
+3. Studio
+4. Settings and Setup
+5. History
+
+Every later screen should reuse these tokens and layout rules rather than introducing a separate visual language.

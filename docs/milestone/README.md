@@ -299,7 +299,7 @@ Outstanding bugs are tracked through GitHub Issues:
 - Issue list: https://github.com/jimpmg123/MiVA/issues
 - New bug report: https://github.com/jimpmg123/MiVA/issues/new
 
-When reporting a bug, include the environment, steps to reproduce, expected result, actual result, screenshots or logs if available, and severity. Serious bugs should be assigned to an owner, linked to a verification plan, and accounted for in the project schedule. The Milestone 4 bug tracking summary is in [BUG_TRACKING.md](BUG_TRACKING.md).
+When reporting a bug, include the environment, steps to reproduce, expected result, actual result, screenshots or logs if available, and severity. Because MiVA is currently a solo project, serious bugs are owned by Jinu Hong by default and should be linked to a verification plan and schedule slot. The Milestone 4 bug tracking summary is in [BUG_TRACKING.md](BUG_TRACKING.md).
 
 ## Additional Documentation
 

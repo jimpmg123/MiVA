@@ -50,6 +50,8 @@ A bug is serious if it is Critical severity or Major severity with user-facing i
 - Verification plan.
 - Schedule slot in `SCHEDULE_UPDATE.md`.
 
+MiVA is currently a solo project, so all bug candidates are implicitly owned by Jinu Hong. The table does not repeat an owner column because there is no separate assignee to distinguish, but serious bug fixing time is reserved in the remaining schedule.
+
 ## GitHub Issue Template
 
 ```md

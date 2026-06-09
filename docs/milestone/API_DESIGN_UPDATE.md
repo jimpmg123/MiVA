@@ -126,6 +126,210 @@ This flow is implemented but should be treated as beta because validation, QA, a
 - Google Workspace slash/context/action path.
 - Claw Code routing when enabled by profile or forced command.
 
+## Endpoint Schemas and Examples
+
+The examples below document the main request/response shapes expected for Milestone 4 grading. IDs and timestamps are examples.
+
+### Auth: `POST /auth/google`
+
+Request:
+
+```json
+{
+  "idToken": "google-id-token-from-web-client"
+}
+```
+
+Response:
+
+```json
+{
+  "session": {
+    "token": "miva-session-token",
+    "user": {
+      "id": "user_123",
+      "email": "student@example.com",
+      "displayName": "Jinu Hong",
+      "role": "USER",
+      "locale": "en"
+    }
+  }
+}
+```
+
+### Assistant Profiles: `POST /assistant-profiles`
+
+Request:
+
+```json
+{
+  "name": "Study Assistant",
+  "description": "Explains course material and helps with assignments.",
+  "provider": "ollama",
+  "model": "llama3.2:3b",
+  "answerStyle": "moderate",
+  "localMode": "hybrid",
+  "prompt": {
+    "systemPrompt": "You are MiVA...",
+    "settings": {
+      "persona": "Patient study assistant",
+      "roleGoal": "Help the user understand class material",
+      "responseRules": ["Use clear steps", "Ask when requirements are ambiguous"]
+    }
+  },
+  "capabilities": {
+    "voice": { "enabled": false },
+    "character": { "enabled": false },
+    "googleWorkspace": { "enabled": false },
+    "coding": { "capability": "chatOnly" }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "profile": {
+    "id": "profile_123",
+    "name": "Study Assistant",
+    "provider": "ollama",
+    "model": "llama3.2:3b",
+    "updatedAt": "2026-06-09T00:00:00.000Z"
+  }
+}
+```
+
+### Studio Prompt Generation: `POST /studio/generate-preview`
+
+Request:
+
+```json
+{
+  "assistantPurpose": "Study support",
+  "userProfile": {
+    "educationLevel": "College",
+    "majorOrField": "Computer Science",
+    "expertiseLevel": "Intermediate"
+  },
+  "answers": [
+    {
+      "question": "What should this assistant help with most?",
+      "answer": "Summarize lecture material and help draft assignment answers."
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "preview": {
+    "persona": "Patient CS study assistant",
+    "roleGoal": "Help the user understand course material and produce useful drafts.",
+    "responseRules": [
+      "Start with the direct answer.",
+      "Use steps when explaining technical concepts.",
+      "End with a sentence the user can reuse when appropriate."
+    ],
+    "systemPrompt": "You are MiVA..."
+  }
+}
+```
+
+### Workspace Context: `POST /workspace/context`
+
+Request:
+
+```json
+{
+  "services": ["gmail", "calendar", "drive"],
+  "prompt": "What should I prepare for tomorrow?",
+  "maxResults": 5
+}
+```
+
+Response:
+
+```json
+{
+  "context": "Recent Gmail messages: ...\nUpcoming Calendar events: ...",
+  "sources": [
+    { "service": "gmail", "count": 5 },
+    { "service": "calendar", "count": 3 }
+  ]
+}
+```
+
+### Workspace Actions: `POST /workspace/actions`
+
+Request:
+
+```json
+{
+  "action": "calendar.createEvent",
+  "confirmed": true,
+  "payload": {
+    "title": "Study session",
+    "start": "2026-06-10T19:00:00+09:00",
+    "end": "2026-06-10T20:00:00+09:00"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "service": "calendar",
+  "action": "calendar.createEvent",
+  "result": {
+    "id": "calendar_event_123",
+    "status": "created"
+  }
+}
+```
+
+### Local Helper Chat: `POST /chat`
+
+Request:
+
+```json
+{
+  "provider": "ollama",
+  "model": "llama3.2:3b",
+  "prompt": "Summarize this project status.",
+  "locale": "en",
+  "stream": true,
+  "profile": {
+    "name": "Study Assistant",
+    "answerStyle": "moderate",
+    "prompt": {
+      "settings": {
+        "persona": "Patient study assistant",
+        "responseRules": ["Use Markdown when helpful"]
+      }
+    }
+  },
+  "messages": [
+    { "role": "user", "content": "Previous question" },
+    { "role": "assistant", "content": "Previous answer" }
+  ],
+  "memorySummary": "The user is working on MiVA Milestone 4.",
+  "toolContext": "Connected local tool context, if any."
+}
+```
+
+Streaming response uses newline-delimited JSON:
+
+```json
+{"message":{"role":"assistant","content":"## Summary\n"}}
+{"message":{"role":"assistant","content":"MiVA is ready for beta review."}}
+{"done":true,"answer":"## Summary\nMiVA is ready for beta review."}
+```
+
 ## Security and Privacy Boundaries
 
 - Local chat content remains local by default.
@@ -146,4 +350,3 @@ This flow is implemented but should be treated as beta because validation, QA, a
 | Studio prompt-generation QA and validation | In progress |
 | Workspace action permission and audit hardening | In progress |
 | Voice STT support | Planned |
-

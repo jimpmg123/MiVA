@@ -19,6 +19,7 @@ pids
 tmp/
 temp/
 *.tmp
+tmp-*.json
 *.bak
 
 # Dependency directories
@@ -82,12 +83,26 @@ vtuberllm/
 
 # Local AI-coding planning docs
 AGENTS.md
+CLAUDE.md
+GEMINI.md
+CURSOR.md
+QWEN.md
+WARP.md
+llms.txt
+llms-full.txt
 .claw/
 .codex/
 .continue/
 .roo/
 .aider*
 .claude/
+.gemini/
+.windsurf/
+.augment/
+.kiro/
+.openai/
+.agents/
+.github/copilot-instructions.md
 docs/CODING_GUIDELINES.md
 docs/PRD.md
 docs/RULES.md

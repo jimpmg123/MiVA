@@ -53,6 +53,5 @@ Progress started later than planned and was mostly completed by one developer, s
 
 - The schedule changed from a narrow local-helper deliverable to a broader assistant platform beta.
 - The broadened scope increased feature surface area but left less time for peer verification and test coverage.
-- Serious bugs will be handled through GitHub Issues and must be assigned to Jinu Hong with a verification plan.
+- Serious bugs will be handled by Jinu Hong through GitHub Issues with a verification plan and schedule slot.
 - Voice, character, Persona Hub sharing, and Workspace actions should be presented as beta/partial features unless final QA verifies them before release.
-
