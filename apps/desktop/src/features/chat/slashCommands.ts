@@ -9,6 +9,7 @@ export type BuiltinChatSlashCommandId =
   | "google-sheets"
   | "daiso"
   | "code"
+  | "fix"
   | "image";
 
 export type ChatSlashCommand = {
@@ -79,6 +80,13 @@ export const CHAT_SLASH_COMMANDS: ChatSlashCommand[] = [
     label: "Daiso CLI",
     description: "Run approved local Daiso CLI workflows",
     icon: "terminal",
+  },
+  {
+    id: "fix",
+    aliases: ["fix", "prompt-fix", "rule"],
+    label: "Fix prompt",
+    description: "Save this feedback as a durable assistant prompt rule",
+    icon: "rule_settings",
   },
   {
     id: "image",
@@ -198,6 +206,10 @@ const slashHelpExamples: Record<BuiltinChatSlashCommandId, { en: string; ko: str
   code: {
     en: "fix the login bug in App.tsx",
     ko: "App.tsx 로그인 버그 고쳐줘",
+  },
+  fix: {
+    en: "always answer travel plans with a day-by-day checklist",
+    ko: "응답 규칙을 영구 반영해줘",
   },
   daiso: {
     en: "list available workflows",
@@ -388,6 +400,10 @@ export function applySlashCommandProfile(
 
   if (commandId === "image") {
     return enableImageGeneration(profile);
+  }
+
+  if (commandId === "fix") {
+    return profile;
   }
 
   const settings = profile.prompt.settings;

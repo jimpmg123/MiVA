@@ -1,9 +1,11 @@
 ﻿import type { AssistantProfileSyncState, LocalAssistantProfile, ProfileDetailsDraft } from "../types";
 import { Badge, IconTile, InfoTile, Input, Panel, Textarea } from "../components/ui";
+import type { StudioSection } from "../types";
 
 type PlaceholderCard = [string, string, string];
 
 type StudioOverviewPanelProps = {
+  configuredNewAssistantSections: Partial<Record<StudioSection, boolean>>;
   profile: LocalAssistantProfile;
   profileDetailsDraft: ProfileDetailsDraft;
   syncBadgeTone: "neutral" | "success" | "action";
@@ -12,6 +14,7 @@ type StudioOverviewPanelProps = {
   syncMessage: string | null;
   providerLabel: string;
   codingLabel: string;
+  isNewAssistantDraft: boolean;
   placeholderCards: PlaceholderCard[];
   assistantProfileError: string | null;
   duplicateNameMessage: string | null;
@@ -19,6 +22,7 @@ type StudioOverviewPanelProps = {
 };
 
 export function StudioOverviewPanel({
+  configuredNewAssistantSections,
   profile,
   profileDetailsDraft,
   syncBadgeTone,
@@ -27,6 +31,7 @@ export function StudioOverviewPanel({
   syncMessage,
   providerLabel,
   codingLabel,
+  isNewAssistantDraft,
   placeholderCards,
   assistantProfileError,
   duplicateNameMessage,
@@ -34,10 +39,23 @@ export function StudioOverviewPanel({
 }: StudioOverviewPanelProps) {
   const nameValidationMessage = duplicateNameMessage
     ?? (assistantProfileError === "An assistant with this name already exists." ? assistantProfileError : null);
+  const summaryCards: Array<[string, string]> = [];
+
+  if (!isNewAssistantDraft || configuredNewAssistantSections.prompts) {
+    summaryCards.push(["Prompts", "Complete"]);
+  }
+
+  if (!isNewAssistantDraft || configuredNewAssistantSections.models) {
+    summaryCards.push(["Provider", providerLabel], ["Model", profile.modelLabel || profile.model]);
+  }
+
+  if (!isNewAssistantDraft || configuredNewAssistantSections.code) {
+    summaryCards.push(["Coding", codingLabel]);
+  }
 
   return (
     <div className="grid gap-6 md:grid-cols-3">
-      <Panel className="relative min-h-[260px] pb-28 md:col-span-2">
+      <Panel className="relative min-h-[260px] md:col-span-2">
         <div className="flex items-start justify-between gap-4">
           <IconTile>
             <span className="material-symbols-outlined text-[22px]">account_circle</span>
@@ -72,15 +90,13 @@ export function StudioOverviewPanel({
           </label>
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[
-            ["Provider", providerLabel],
-            ["Model", profile.modelLabel || profile.model],
-            ["Coding", codingLabel],
-          ].map(([label, value]) => (
-            <InfoTile key={label} label={label} value={value} />
-          ))}
-        </div>
+        {summaryCards.length > 0 && (
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryCards.map(([label, value]) => (
+              <InfoTile key={label} label={label} value={value} />
+            ))}
+          </div>
+        )}
 
         {profile.sync.lastSyncedAt && (
           <p className="mt-4 text-xs leading-5 text-[var(--miva-text-muted)]">

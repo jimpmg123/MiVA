@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { PromptSettings } from "../../types";
+import type { CharacterEmotion, PromptSettings } from "../../types";
 import {
   getLive2DRuntimeStatus,
   resolveInstalledLive2DCoreUrl,
   resolveInstalledLive2DModelUrl,
   type Live2DRuntimeStatus,
 } from "./live2dRuntime";
+import { getExpressionMap } from "./expressionCatalog";
 
 type Live2DStageProps = {
   character: PromptSettings["character"];
   activity: "Idle" | "Thinking" | "Speaking";
+  emotion?: CharacterEmotion;
   fallback?: ReactNode;
   bottomReservePx?: number;
   topReservePx?: number;
@@ -26,29 +28,70 @@ type Live2DDisplayModel = {
   x: number;
   y: number;
   rotation: number;
+  expression?: (id?: string | number) => Promise<boolean> | boolean;
+  internalModel?: { settings?: unknown };
 };
+
+type Live2DExpressionSettings = { expressions?: Array<{ Name?: string }> };
+
+/** How long an emotion expression is held before idle cycling resumes. */
+const EMOTION_HOLD_MS = 6000;
+/** Random idle expression cadence bounds. */
+const CASUAL_MIN_MS = 6000;
+const CASUAL_MAX_MS = 14000;
+
+function nextCasualDelay() {
+  return CASUAL_MIN_MS + Math.random() * (CASUAL_MAX_MS - CASUAL_MIN_MS);
+}
 
 let cubismCoreScriptPromise: Promise<void> | null = null;
 
+function isCubismCoreReady() {
+  return Boolean((window as typeof window & { Live2DCubismCore?: unknown }).Live2DCubismCore);
+}
+
+function waitForCubismCore(timeoutMs = 5000) {
+  return new Promise<void>((resolve, reject) => {
+    const startedAt = performance.now();
+    const check = () => {
+      if (isCubismCoreReady()) {
+        resolve();
+        return;
+      }
+      if (performance.now() - startedAt >= timeoutMs) {
+        reject(new Error("Cubism Core script loaded, but the runtime did not initialize."));
+        return;
+      }
+      window.setTimeout(check, 25);
+    };
+    check();
+  });
+}
+
 function loadScriptOnce(src: string) {
+  if (isCubismCoreReady()) {
+    return Promise.resolve();
+  }
   if (cubismCoreScriptPromise) {
     return cubismCoreScriptPromise;
   }
 
-  cubismCoreScriptPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(`script[data-miva-live2d-core="${src}"]`);
-    if (existing) {
-      resolve();
-      return;
-    }
+  cubismCoreScriptPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-miva-live2d-core]");
+    existing?.remove();
 
     const script = document.createElement("script");
     script.src = src;
-    script.async = true;
+    script.async = false;
     script.dataset.mivaLive2dCore = src;
-    script.onload = () => resolve();
+    script.onload = () => {
+      void waitForCubismCore().then(resolve, reject);
+    };
     script.onerror = () => reject(new Error("Cubism Core script failed to load."));
     document.head.appendChild(script);
+  }).catch((error) => {
+    cubismCoreScriptPromise = null;
+    throw error;
   });
 
   return cubismCoreScriptPromise;
@@ -56,6 +99,7 @@ function loadScriptOnce(src: string) {
 
 export function Live2DStage({
   activity,
+  emotion = "neutral",
   blockPointerEvents = false,
   character,
   fallback,
@@ -66,6 +110,8 @@ export function Live2DStage({
   const modelRef = useRef<Live2DDisplayModel | null>(null);
   const basePoseRef = useRef({ x: 0, y: 0, scale: 1 });
   const activityRef = useRef(activity);
+  const emotionRef = useRef(emotion);
+  const applyEmotionRef = useRef<((emotion: CharacterEmotion) => void) | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<Live2DRuntimeStatus | null>(null);
   const [stageState, setStageState] = useState<StageState>("loading");
   const [stageMessage, setStageMessage] = useState("Preparing Live2D runtime...");
@@ -73,6 +119,13 @@ export function Live2DStage({
   useEffect(() => {
     activityRef.current = activity;
   }, [activity]);
+
+  useEffect(() => {
+    emotionRef.current = emotion;
+    if (emotion && emotion !== "neutral") {
+      applyEmotionRef.current?.(emotion);
+    }
+  }, [emotion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +212,42 @@ export function Live2DStage({
         const naturalWidth = Math.max(1, model.width);
         const naturalHeight = Math.max(1, model.height);
 
+        // --- Expression engine -------------------------------------------
+        const expressionMap = getExpressionMap(character.characterId);
+        const expressionSettings = model.internalModel?.settings as Live2DExpressionSettings | undefined;
+        const availableExpressions = new Set<string>(
+          (expressionSettings?.expressions ?? [])
+            .map((entry) => entry.Name)
+            .filter((name): name is string => Boolean(name)),
+        );
+        const hasExpressions = Boolean(expressionMap) && availableExpressions.size > 0;
+        const casualPool = (expressionMap?.casual ?? []).filter((name) => availableExpressions.has(name));
+
+        const applyExpression = (name: string | undefined) => {
+          if (name && availableExpressions.has(name)) {
+            void modelRef.current?.expression?.(name);
+          }
+        };
+
+        let emotionHoldUntil = 0;
+        let nextCasualAt = performance.now() + nextCasualDelay();
+
+        applyEmotionRef.current = (nextEmotion) => {
+          if (!hasExpressions || !expressionMap) {
+            return;
+          }
+          const name = expressionMap.emotions[nextEmotion];
+          if (name && availableExpressions.has(name)) {
+            applyExpression(name);
+            emotionHoldUntil = performance.now() + EMOTION_HOLD_MS;
+          }
+        };
+
+        // Apply an emotion that arrived before the model finished loading.
+        if (emotionRef.current && emotionRef.current !== "neutral") {
+          applyEmotionRef.current(emotionRef.current);
+        }
+
         const fitModel = () => {
           if (!containerRef.current) {
             return;
@@ -208,6 +297,18 @@ export function Live2DStage({
             liveModel.x = pose.x + sway;
             liveModel.y = pose.y - lift;
             liveModel.rotation = tilt;
+
+            // Cycle a random everyday expression while idle and not holding an emotion.
+            if (
+              hasExpressions
+              && casualPool.length > 0
+              && currentActivity === "Idle"
+              && now >= emotionHoldUntil
+              && now >= nextCasualAt
+            ) {
+              applyExpression(casualPool[Math.floor(Math.random() * casualPool.length)]);
+              nextCasualAt = now + nextCasualDelay();
+            }
           }
 
           animationFrame = requestAnimationFrame(animateReaction);
@@ -217,6 +318,7 @@ export function Live2DStage({
         cleanup = () => {
           cancelAnimationFrame(animationFrame);
           resizeObserver.disconnect();
+          applyEmotionRef.current = null;
           modelRef.current = null;
           model.destroy();
           app.destroy(true, true);

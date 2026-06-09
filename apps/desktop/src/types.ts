@@ -2,6 +2,7 @@ import type { Locale } from "./i18n";
 
 export type StepId =
   | "welcome"
+  | "userProfile"
   | "survey"
   | "hardware"
   | "recommendation"
@@ -19,8 +20,8 @@ export type LanguageUse = "korean" | "english" | "both";
 export type LocalMode = "localOnly" | "cloudOnly" | "hybrid";
 export type FutureFeature = "voice" | "character" | "googleWorkspace" | "files" | "tools" | "unsure";
 export type MemorySyncMode = "profileOnly" | "summaryMemory";
-export type AppMode = "setup" | "studio" | "runtime" | "history" | "auth";
-export type SettingsSection = "general" | "aiModels" | "clawCode" | "security" | "logs";
+export type AppMode = "setup" | "studio" | "runtime" | "history" | "library" | "auth";
+export type SettingsSection = "general" | "personalization" | "aiModels" | "clawCode" | "logs";
 export type StudioSection =
   | "myAssistants"
   | "overview"
@@ -46,9 +47,31 @@ export type TtsProviderId = "disabled" | "browser" | "localVoice" | "cloud";
 export type VoiceRecordingMode = "toggleRecording";
 export type CharacterRendererId = "placeholder" | "live2d";
 export type CharacterReactionMode = "statusOnly" | "aiCues";
+export type CharacterEmotion =
+  | "neutral"
+  | "happy"
+  | "angry"
+  | "sad"
+  | "surprised"
+  | "shy"
+  | "playful";
 export type AuthRole = "user" | "admin";
 export type PromptEditorMode = "simple" | "developer";
 export type AuthFlowState = "idle" | "opening" | "waiting" | "connected" | "error" | "admin-web-only";
+export type PersonalizationBaseStyle = "default" | "concise" | "balanced" | "detailed" | "professional";
+export type PersonalizationWarmth = "default" | "warmer" | "neutral" | "direct";
+export type PersonalizationEnthusiasm = "default" | "more" | "balanced" | "less";
+export type PersonalizationStructure = "default" | "more" | "balanced" | "minimal";
+export type PersonalizationEmojiUse = "default" | "none" | "sparse" | "expressive";
+
+export type PersonalizationSettings = {
+  baseStyle: PersonalizationBaseStyle;
+  warmth: PersonalizationWarmth;
+  enthusiasm: PersonalizationEnthusiasm;
+  headingsAndLists: PersonalizationStructure;
+  emojiUse: PersonalizationEmojiUse;
+  customInstructions: string;
+};
 
 export type AuthUser = {
   id: string;
@@ -161,6 +184,7 @@ export type PromptSettings = {
     characterId: string;
     displayName: string;
     personality: string;
+    personalityTraits: string[];
     userAddress: string;
     speakingStyle: string;
     reactionMode: CharacterReactionMode;
@@ -168,6 +192,7 @@ export type PromptSettings = {
     showInRuntime: boolean;
   };
   safetyRules: string[];
+  generatedFinalSystemPrompt?: string;
 };
 
 export type OllamaStatus = {
@@ -305,6 +330,29 @@ export type SurveyState = {
   memorySyncMode: MemorySyncMode;
 };
 
+export type UserProfile = {
+  ageGroup: string;
+  currentStatus: string;
+  educationLevel: string;
+  majorOrField: string;
+  jobSeekingField: string;
+  industryOrRole: string;
+  teachingAudience: string;
+  householdContext: string;
+  expertiseLevel: string;
+  preferredLanguage: string;
+  additionalBackground: string;
+  profileSummary: string;
+};
+
+export type UserProfileAnswer = {
+  questionId: string;
+  questionTitle: string;
+  answerValue: string;
+  answerLabel: string;
+  customText?: string;
+};
+
 export type ChatUiAction = "claw-pick-workspace";
 
 export type ChatGeneratedImage = {
@@ -395,8 +443,27 @@ export type ImageAttachmentPayload = {
   data: string;
 };
 
+export type LibraryItemType = "image" | "file";
+
+export type LibraryItem = {
+  id: string;
+  type: LibraryItemType;
+  name: string;
+  path: string;
+  extension: string;
+  mimeType?: string;
+  sizeBytes: number;
+  addedAt: string;
+  updatedAt: string;
+  source: "runtime";
+  previewUrl?: string;
+};
+
 export type RuntimeMemorySummary = {
   content: string;
+  pinnedMemory?: string;
+  sessionSummary?: string;
+  compactedMessageCount?: number;
   updatedAt: string;
   provider: ProviderId;
   model: string;
@@ -511,6 +578,9 @@ export type LocalAssistantProfile = {
       syncMode: MemorySyncMode;
       rollingSummary: {
         content: string | null;
+        pinnedMemory?: string | null;
+        sessionSummary?: string | null;
+        compactedMessageCount?: number;
         updatedAt: string | null;
         provider: ProviderId | null;
         model: string | null;
@@ -535,6 +605,7 @@ export type LocalAssistantProfile = {
     appVersion: string;
     hardwareSnapshot: HardwareInfo | null;
   };
+  personalization?: PersonalizationSettings;
 };
 
 export type LocalAssistantProfileStore = {

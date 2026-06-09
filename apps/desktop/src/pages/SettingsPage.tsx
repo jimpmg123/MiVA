@@ -6,16 +6,83 @@ import type {
   CloudModelInfo,
   LocalAssistantProfile,
   OllamaStatus,
+  PersonalizationSettings,
   ProviderId,
   ProviderKeyState,
   SettingsSection,
 } from "../types";
 import { getProviderKeySource } from "../features/auth/providerKeyMerge";
-import { Badge, Button, IconTile, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select } from "../components/ui";
+import { Badge, Button, IconTile, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select, Textarea } from "../components/ui";
 import { ThemeSelector } from "../components/ThemeSelector";
 import { ActivityLogPanel } from "../features/logs/ActivityLogPanel";
 import type { UiThemeId } from "../features/theme/themes";
 import { cloudProviderManifests, providerManifestList } from "../features/extensions/registry";
+
+type PersonalizationField = Exclude<keyof PersonalizationSettings, "customInstructions">;
+
+const personalizationSelects: Array<{
+  field: PersonalizationField;
+  label: string;
+  description: string;
+  options: Array<{ value: PersonalizationSettings[PersonalizationField]; label: string }>;
+}> = [
+  {
+    field: "baseStyle",
+    label: "Base style and tone",
+    description: "Sets the overall answer style for every assistant request.",
+    options: [
+      { value: "default", label: "Default" },
+      { value: "concise", label: "Concise" },
+      { value: "balanced", label: "Balanced" },
+      { value: "detailed", label: "Detailed" },
+      { value: "professional", label: "Professional" },
+    ],
+  },
+  {
+    field: "warmth",
+    label: "Warmth",
+    description: "Controls how warm or direct MiVA sounds.",
+    options: [
+      { value: "default", label: "Default" },
+      { value: "warmer", label: "Warmer" },
+      { value: "neutral", label: "Neutral" },
+      { value: "direct", label: "Direct" },
+    ],
+  },
+  {
+    field: "enthusiasm",
+    label: "Enthusiasm",
+    description: "Controls how energetic the response feels.",
+    options: [
+      { value: "default", label: "Default" },
+      { value: "more", label: "More" },
+      { value: "balanced", label: "Balanced" },
+      { value: "less", label: "Less" },
+    ],
+  },
+  {
+    field: "headingsAndLists",
+    label: "Headers and lists",
+    description: "Controls how often MiVA uses headings, bullets, and numbered steps.",
+    options: [
+      { value: "default", label: "Default" },
+      { value: "more", label: "Use more" },
+      { value: "balanced", label: "Balanced" },
+      { value: "minimal", label: "Minimal" },
+    ],
+  },
+  {
+    field: "emojiUse",
+    label: "Emoji use",
+    description: "Controls whether emoji appear in normal answers.",
+    options: [
+      { value: "default", label: "Default" },
+      { value: "none", label: "None" },
+      { value: "sparse", label: "Sparse" },
+      { value: "expressive", label: "Expressive" },
+    ],
+  },
+];
 
 type SettingsPageProps = {
   activeLocalProfile: LocalAssistantProfile | null;
@@ -30,6 +97,7 @@ type SettingsPageProps = {
   cloudModelCatalog: CloudModelInfo[];
   locale: string;
   logs: string[];
+  personalizationSettings: PersonalizationSettings;
   authSession: AuthSession | null;
   cloudProviderKeys: ProviderKeyState;
   providerKeys: ProviderKeyState;
@@ -50,6 +118,7 @@ type SettingsPageProps = {
   onExitSettings: () => void;
   onInstallClawCode: (workspaceRoot: string | null) => Promise<void> | void;
   onOpenInitialSetup: () => void;
+  onPersonalizationSettingsChange: (settings: PersonalizationSettings) => void;
   onRefreshClawCodeStatus: () => Promise<void> | void;
   onSaveProviderKeys: () => void;
   onSelectedCloudModelChange: (modelId: string) => void;
@@ -73,6 +142,7 @@ export function SettingsPage({
   cloudModelCatalog,
   locale,
   logs,
+  personalizationSettings,
   authSession,
   cloudProviderKeys,
   providerKeys,
@@ -93,6 +163,7 @@ export function SettingsPage({
   onExitSettings,
   onInstallClawCode,
   onOpenInitialSetup,
+  onPersonalizationSettingsChange,
   onRefreshClawCodeStatus,
   onSaveProviderKeys,
   onSelectedCloudModelChange,
@@ -103,6 +174,13 @@ export function SettingsPage({
   onThemeChange,
 }: SettingsPageProps) {
   const activeSettingsSection = settingsSections.find((section) => section.id === settingsSection) ?? settingsSections[0];
+
+  function updatePersonalization<K extends keyof PersonalizationSettings>(key: K, value: PersonalizationSettings[K]) {
+    onPersonalizationSettingsChange({
+      ...personalizationSettings,
+      [key]: value,
+    });
+  }
 
   const generalPanel = (
     <>
@@ -159,6 +237,56 @@ export function SettingsPage({
           </Badge>
         </div>
         {assistantProfileError && <p className="mt-3 text-xs leading-5 text-[var(--miva-danger-hover)]">{assistantProfileError}</p>}
+      </Panel>
+    </>
+  );
+
+  const personalizationPanel = (
+    <>
+      <Panel className="mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Personalization</h3>
+            <p className="mt-2 max-w-[620px] text-sm leading-6 text-[var(--miva-text-muted)]">
+              These settings are saved globally and added to every MiVA conversation prompt, across all assistants and new chats.
+            </p>
+          </div>
+          <Badge tone="action">Global prompt</Badge>
+        </div>
+
+        <div className="mt-6 grid gap-5">
+          {personalizationSelects.map((item) => (
+            <label className="grid gap-2 md:grid-cols-[1fr_240px] md:items-start md:gap-5" key={item.field}>
+              <span>
+                <span className="block text-sm font-semibold text-[var(--miva-text)]">{item.label}</span>
+                <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">{item.description}</span>
+              </span>
+              <Select
+                value={personalizationSettings[item.field]}
+                onChange={(event) => updatePersonalization(item.field, event.target.value as PersonalizationSettings[typeof item.field])}
+              >
+                {item.options.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+            </label>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel>
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-[var(--miva-text)]">Custom instructions</span>
+          <Textarea
+            className="min-h-[132px] resize-y"
+            placeholder="Add extra behavior, style, or tone instructions..."
+            value={personalizationSettings.customInstructions}
+            onChange={(event) => updatePersonalization("customInstructions", event.target.value)}
+          />
+          <span className="text-xs leading-5 text-[var(--miva-text-muted)]">
+            This text is treated as durable user preference context, not as a one-off message.
+          </span>
+        </label>
       </Panel>
     </>
   );
@@ -302,19 +430,6 @@ export function SettingsPage({
     </Panel>
   );
 
-  const securityPanel = (
-    <Panel>
-      <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Security</h3>
-      <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-        Phase 1 keeps assistant profiles and runtime chat history on this device. Cloud sync and account security will be added later.
-      </p>
-      <div className="mt-6 grid gap-3">
-        <InfoTile label="API key policy" value="Local override keys stay in this app storage for development testing." className="p-4" />
-        <InfoTile label="Runtime chat" value="Saved locally. Server sync is disabled until account features exist." className="p-4" />
-      </div>
-    </Panel>
-  );
-
   const clawCodePanel = (
     <ClawCodeInstallPanel
       busyAction={busyAction}
@@ -349,9 +464,9 @@ export function SettingsPage({
       />
 
       {settingsSection === "general" && generalPanel}
+      {settingsSection === "personalization" && personalizationPanel}
       {settingsSection === "aiModels" && aiModelsPanel}
       {settingsSection === "clawCode" && clawCodePanel}
-      {settingsSection === "security" && securityPanel}
       {settingsSection === "logs" && logsPanel}
     </div>
   );

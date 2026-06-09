@@ -3,7 +3,7 @@ import type { AppMode } from "../../types";
 
 const APP_PREFERENCES_STORAGE_KEY = "miva.appPreferences.v1";
 
-export type PersistedAppMode = Extract<AppMode, "studio" | "runtime" | "history">;
+export type PersistedAppMode = Extract<AppMode, "studio" | "runtime" | "history" | "library">;
 
 export type AppPreferences = {
   setupCompleted: boolean;
@@ -25,7 +25,7 @@ function normalizeAppPreferences(value: unknown): AppPreferences {
   const prefs = value as Partial<AppPreferences>;
   const lastAppMode = prefs.lastAppMode;
   const normalizedLastAppMode: PersistedAppMode =
-    lastAppMode === "runtime" || lastAppMode === "history" ? lastAppMode : "studio";
+    lastAppMode === "runtime" || lastAppMode === "history" || lastAppMode === "library" ? lastAppMode : "studio";
 
   return {
     setupCompleted: prefs.setupCompleted === true,

@@ -1,666 +1,1077 @@
-﻿import type {
-  CalendarActionMode,
-  LocalAssistantProfile,
-  PromptEditorMode,
-  PromptSettings,
-  SummaryModelPolicy,
-  WorkspaceToolPolicy,
-} from "../types";
-import { useState } from "react";
-import { Badge, Button, IconButton, IconTile, InfoTile, Input, ModalBackdrop, ModalPanel, Panel, PrimaryButton, SecondaryButton, Select, Switch, Textarea } from "../components/ui";
-import { defaultPromptSettings } from "../features/assistants/profile";
-import { toolManifestList } from "../features/extensions/registry";
-import type { ToolConnectionKey } from "../features/extensions/registry";
+import { flushSync } from "react-dom";
+import { useEffect, useMemo, useState } from "react";
+import type { LocalAssistantProfile, ProfileDetailsDraft, PromptSettings, UserProfile } from "../types";
+import { Badge, IconTile, Input, Panel, PrimaryButton, ProgressBar, SecondaryButton, StatusAlert, Textarea } from "../components/ui";
+import { loadUserProfile } from "../features/profile/storage";
+import {
+  finalizeStudioPrompt,
+  generateStudioPreview,
+  generateStudioQuestions,
+  refineStudioPromptRules,
+  saveStudioAssistantRecipe,
+  type AssistantRecipeDraft,
+  type FinalizePromptResponse,
+  type StudioAnswer,
+  type StudioOption,
+  type StudioPreview,
+  type StudioQuestion,
+} from "../features/studio/promptBuilder";
 
 type PromptStudioPanelProps = {
   profile: LocalAssistantProfile;
-  promptEditorMode: PromptEditorMode;
-  scheduleModeCopy: Record<CalendarActionMode, string>;
+  profileDetailsDraft: ProfileDetailsDraft;
   settings: PromptSettings;
-  toolsForAiOpen: boolean;
-  workspacePolicyCopy: Record<WorkspaceToolPolicy, string>;
-  onPromptEditorModeChange: (mode: PromptEditorMode) => void;
+  onProfileDetailsChange: (draft: ProfileDetailsDraft | ((current: ProfileDetailsDraft) => ProfileDetailsDraft)) => void;
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
-  onResetDefaults: () => void;
-  onSaveLocal: () => void;
-  onToolsForAiOpenChange: (open: boolean) => void;
+  onSaveLocal: () => Promise<unknown> | unknown;
 };
+
+type PromptBuilderStage = "starter" | "generated" | "preview" | "final" | "manage";
+type LoadingAction = "questions" | "preview" | "refine" | "finalize" | "save";
+type AnswerTarget = "starter" | "studio";
+
+const STUDY = "Study & Learning";
+const WRITING = "Writing & Communication";
+const WORK = "Work & Productivity";
+const CODING = "Coding & Developer Workflow";
+const PLANNING = "Planning & Life";
+const CREATIVE = "Creative & Ideas";
+const FUN = "Fun & Companion";
+const SOMETHING_ELSE = "Something else";
+
+// Fixed first question. Category selection drives which follow-up questions appear next.
+const categoryQuestion: StudioQuestion = {
+  id: "assistant-kind",
+  title: "What kind of assistant do you want to create?",
+  description: "Choose the closest category. MIVA will use this to generate better setup questions.",
+  type: "single_choice",
+  options: [
+    { id: "study", label: STUDY, value: STUDY },
+    { id: "writing", label: WRITING, value: WRITING },
+    { id: "work", label: WORK, value: WORK },
+    { id: "coding", label: CODING, value: CODING },
+    { id: "planning", label: PLANNING, value: PLANNING },
+    { id: "creative", label: CREATIVE, value: CREATIVE },
+    { id: "fun", label: FUN, value: FUN },
+    { id: "custom", label: SOMETHING_ELSE, value: "", requiresText: true },
+  ],
+};
+
+// Kept from the original survey. Always shown after the category-specific questions.
+const briefQuestion: StudioQuestion = {
+  id: "assistant-purpose",
+  title: "Briefly describe what this assistant should help with.",
+  description: "One or two sentences are enough. Keep it specific to the assistant you are building now.",
+  type: "text",
+  placeholder: "Example: Help me turn assignment requirements into a plan, checklist, and draft outline.",
+};
+
+// Builds a single-choice question whose final option is always a free-text "Something else".
+function choiceQuestion(id: string, title: string, labels: string[]): StudioQuestion {
+  return {
+    id,
+    title,
+    type: "single_choice",
+    options: [
+      ...labels.map((label, index) => ({ id: `${id}-o${index + 1}`, label, value: label })),
+      { id: `${id}-other`, label: SOMETHING_ELSE, value: "", requiresText: true },
+    ],
+  };
+}
+
+const categoryFollowups: Record<string, StudioQuestion[]> = {
+  [STUDY]: [
+    choiceQuestion("study-q1", "What should this study assistant mainly help with?", [
+      "Summarizing class materials",
+      "Explaining difficult concepts",
+      "Solving homework or practice problems",
+      "Preparing for exams",
+    ]),
+    choiceQuestion("study-q2", "What kind of material will you usually give this assistant?", [
+      "Lecture notes",
+      "Textbook sections",
+      "Research papers",
+      "Problem sets",
+    ]),
+    choiceQuestion("study-q3", "How should this assistant explain things?", [
+      "Step-by-step",
+      "Short and simple",
+      "Detailed with examples",
+      "Like a tutor asking questions",
+    ]),
+  ],
+  [WRITING]: [
+    choiceQuestion("writing-q1", "What kind of writing should this assistant help with?", [
+      "Emails or messages",
+      "Essays or academic writing",
+      "Professional documents",
+      "Translation or rewriting",
+    ]),
+    choiceQuestion("writing-q2", "What should the assistant focus on most?", [
+      "Making writing clearer",
+      "Making writing more natural",
+      "Changing the tone",
+      "Fixing grammar and structure",
+    ]),
+    choiceQuestion("writing-q3", "What tone should this assistant usually use?", [
+      "Casual and friendly",
+      "Polite and professional",
+      "Academic",
+      "Short and direct",
+    ]),
+  ],
+  [WORK]: [
+    choiceQuestion("work-q1", "What work task should this assistant mainly help with?", [
+      "Organizing tasks",
+      "Writing reports or documents",
+      "Summarizing meetings or notes",
+      "Planning projects",
+    ]),
+    choiceQuestion("work-q2", "What kind of output would be most useful?", [
+      "Checklist",
+      "Action plan",
+      "Summary",
+      "Table or structured format",
+    ]),
+    choiceQuestion("work-q3", "How should this assistant handle information?", [
+      "Prioritize the most urgent tasks",
+      "Break work into steps",
+      "Keep everything concise",
+      "Explain reasoning before recommendations",
+    ]),
+  ],
+  [CODING]: [
+    choiceQuestion("coding-q1", "What developer workflow should this assistant help with?", [
+      "Turning rough ideas into Codex/Cursor-ready prompts",
+      "Breaking features into implementation tasks",
+      "Writing technical documentation",
+      "Reviewing code or PRs",
+    ]),
+    choiceQuestion("coding-q2", "What should the assistant produce most often?", [
+      "Implementation prompts",
+      "Task breakdowns",
+      "README or documentation drafts",
+      "Architecture decision notes",
+    ]),
+    choiceQuestion("coding-q3", "How detailed should the assistant be?", [
+      "Short task brief",
+      "Step-by-step implementation plan",
+      "Include acceptance criteria",
+      "Include risks and edge cases",
+    ]),
+  ],
+  [PLANNING]: [
+    choiceQuestion("planning-q1", "What kind of planning should this assistant help with?", [
+      "Travel planning",
+      "Daily or weekly schedule",
+      "Meal, fitness, or routine planning",
+      "Shopping or comparison decisions",
+    ]),
+    choiceQuestion("planning-q2", "What should this assistant optimize for?", [
+      "Saving time",
+      "Saving money",
+      "Reducing stress",
+      "Making the plan realistic",
+    ]),
+    choiceQuestion("planning-q3", "What format should the assistant use?", [
+      "Timeline",
+      "Checklist",
+      "Day-by-day plan",
+      "Table format",
+    ]),
+  ],
+  [CREATIVE]: [
+    choiceQuestion("creative-q1", "What creative task should this assistant help with?", [
+      "Brainstorming ideas",
+      "Branding or naming",
+      "Content planning",
+      "Image or design prompt creation",
+    ]),
+    choiceQuestion("creative-q2", "What kind of style should the assistant aim for?", [
+      "Minimal and modern",
+      "Fun and playful",
+      "Professional and polished",
+      "Unique and experimental",
+    ]),
+    choiceQuestion("creative-q3", "How should the assistant develop ideas?", [
+      "Give many quick options",
+      "Explain the reasoning behind each idea",
+      "Refine one idea deeply",
+      "Compare multiple directions",
+    ]),
+  ],
+  [FUN]: [
+    choiceQuestion("fun-q1", "What kind of fun assistant do you want to create?", [
+      "2D Live character chat",
+      "Casual conversation companion",
+      "Roleplay character",
+      "Game-like assistant",
+    ]),
+    choiceQuestion("fun-q2", "How should this assistant interact with the user?", [
+      "Short casual replies",
+      "Character-style reactions",
+      "Ask questions back often",
+      "Use playful expressions",
+    ]),
+  ],
+};
+
+function buildStarterQuestions(category: string): StudioQuestion[] {
+  return [categoryQuestion, ...(categoryFollowups[category] ?? []), briefQuestion];
+}
+
+function optionKey(question: StudioQuestion, option: StudioOption) {
+  return option.requiresText ? `custom:${question.id}` : option.value || option.id;
+}
+
+function upsertAnswer(answers: StudioAnswer[], answer: StudioAnswer) {
+  return [...answers.filter((item) => item.questionId !== answer.questionId), answer];
+}
+
+function getAnswerText(answer: StudioAnswer | undefined) {
+  if (!answer) {
+    return "";
+  }
+
+  if (Array.isArray(answer.answerLabel)) {
+    return answer.answerLabel.filter(Boolean).join(", ");
+  }
+
+  return answer.answerLabel || answer.customText || "";
+}
+
+function isAnswerComplete(question: StudioQuestion, answer: StudioAnswer | undefined) {
+  if (!answer) {
+    return false;
+  }
+
+  if (question.type === "multi_choice") {
+    return Array.isArray(answer.answerValue)
+      && answer.answerValue.length > 0
+      && Array.isArray(answer.answerLabel)
+      && answer.answerLabel.every((label) => label.trim().length > 0);
+  }
+
+  return getAnswerText(answer).trim().length > 0;
+}
+
+function profileItems(profile: UserProfile) {
+  return [
+    ["Age group", profile.ageGroup],
+    ["Status", profile.currentStatus],
+    ["Education", profile.educationLevel],
+    ["Field", profile.majorOrField || profile.jobSeekingField || profile.industryOrRole],
+    ["Audience", profile.teachingAudience],
+    ["Expertise", profile.expertiseLevel],
+  ].filter((item): item is [string, string] => Boolean(item[1]));
+}
+
+function buildPromptSettingsFromRecipe(
+  current: PromptSettings,
+  recipe: AssistantRecipeDraft,
+  finalSystemPrompt: string,
+  starterAnswers: StudioAnswer[],
+): PromptSettings {
+  const avoidances = recipe.rules.find((rule) => /avoid|do not|never|must not/i.test(rule)) ?? current.simple.avoidances;
+  const assistantKind = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-kind"));
+  const assistantBrief = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-purpose"));
+
+  return {
+    ...current,
+    simple: {
+      ...current.simple,
+      assistantPurpose: assistantKind || recipe.purpose || current.simple.assistantPurpose,
+      desiredTasks: assistantBrief || recipe.workflowSteps.join("\n") || current.simple.desiredTasks,
+      preferredTone: recipe.rules.slice(0, 2).join(" ") || current.simple.preferredTone,
+      avoidances,
+    },
+    persona: recipe.name ? `A custom assistant named ${recipe.name}.` : current.persona,
+    roleGoal: recipe.purpose || current.roleGoal,
+    responseRules: recipe.rules.length ? recipe.rules : current.responseRules,
+    generatedFinalSystemPrompt: finalSystemPrompt,
+  };
+}
+
+function sourceMessage(source?: "openai" | "fallback", fallbackReason?: string) {
+  if (source === "openai") {
+    return "Generated with OpenAI in English.";
+  }
+
+  if (source === "fallback") {
+    return fallbackReason ? `Using English fallback output. ${fallbackReason}` : "Using English fallback output.";
+  }
+
+  return null;
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function rewritePromptRulesInSystemPrompt(systemPrompt: string | undefined, rules: string[]) {
+  const base = systemPrompt?.trim();
+  const ruleBlock = rules.map((rule) => `- ${rule}`).join("\n");
+  if (!base) {
+    return ruleBlock ? `# Runtime fixes\n${ruleBlock}` : "";
+  }
+
+  if (!ruleBlock) {
+    return base.replace(/\n\n# Runtime fixes\n(?:- .*(?:\n|$))+/i, "").trim();
+  }
+
+  const runtimeFixesPattern = /(^|\n)# Runtime fixes\n[\s\S]*?(?=\n# |\s*$)/i;
+  if (runtimeFixesPattern.test(base)) {
+    return base.replace(runtimeFixesPattern, `$1# Runtime fixes\n${ruleBlock}`).trim();
+  }
+
+  const styleRulesPattern = /(^|\n)# Style rules\n[\s\S]*?(?=\n# |\s*$)/i;
+  if (styleRulesPattern.test(base)) {
+    return base.replace(styleRulesPattern, `$1# Style rules\n${ruleBlock}`).trim();
+  }
+
+  return `${base}\n\n# Runtime fixes\n${ruleBlock}`;
+}
+
+function isLocalAssistantProfile(value: unknown): value is LocalAssistantProfile {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && typeof (value as Partial<LocalAssistantProfile>).id === "string"
+      && typeof (value as Partial<LocalAssistantProfile>).prompt === "object",
+  );
+}
 
 export function PromptStudioPanel({
   profile,
-  promptEditorMode,
-  scheduleModeCopy,
+  profileDetailsDraft,
   settings,
-  toolsForAiOpen,
-  workspacePolicyCopy,
-  onPromptEditorModeChange,
+  onProfileDetailsChange,
   onPromptSettingsChange,
-  onResetDefaults,
   onSaveLocal,
-  onToolsForAiOpenChange,
 }: PromptStudioPanelProps) {
-  const [focusedSimplePromptKey, setFocusedSimplePromptKey] = useState<keyof PromptSettings["simple"] | null>(null);
-  const [focusedDeveloperPromptKey, setFocusedDeveloperPromptKey] = useState<string | null>(null);
-  const updateSimplePrompt = (key: keyof PromptSettings["simple"], value: string) => {
-    onPromptSettingsChange((current) => ({
-      ...current,
-      simple: {
-        ...current.simple,
-        [key]: value,
-      },
-    }));
-  };
-  const simplePromptInputClass = (key: keyof PromptSettings["simple"], className: string) => (
-    `${className} ${settings.simple[key] === defaultPromptSettings.simple[key] ? "text-[var(--miva-text-soft)]" : "text-[var(--miva-text)]"}`
-  );
-  const getSimplePromptInputValue = (key: keyof PromptSettings["simple"]) => {
-    if (focusedSimplePromptKey === key && settings.simple[key] === defaultPromptSettings.simple[key]) {
-      return "";
-    }
+  const [savedUserProfile] = useState<UserProfile>(() => loadUserProfile());
+  const [stage, setStage] = useState<PromptBuilderStage>(() => settings.generatedFinalSystemPrompt?.trim() ? "manage" : "starter");
+  const [starterIndex, setStarterIndex] = useState(0);
+  const [studioIndex, setStudioIndex] = useState(0);
+  const [starterAnswers, setStarterAnswers] = useState<StudioAnswer[]>([]);
+  const [studioAnswers, setStudioAnswers] = useState<StudioAnswer[]>([]);
+  const [generatedQuestions, setGeneratedQuestions] = useState<StudioQuestion[]>([]);
+  const [textDrafts, setTextDrafts] = useState<Record<string, string>>({});
+  const [customDrafts, setCustomDrafts] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<StudioPreview | null>(null);
+  const [promptRules, setPromptRules] = useState<string[]>([]);
+  const [feedback, setFeedback] = useState("");
+  const [finalResult, setFinalResult] = useState<FinalizePromptResponse | null>(null);
+  const [ruleDrafts, setRuleDrafts] = useState<string[]>(() => settings.responseRules.length ? settings.responseRules : [""]);
+  const [loadingAction, setLoadingAction] = useState<LoadingAction | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    return settings.simple[key];
+  const visibleProfileItems = useMemo(() => profileItems(savedUserProfile), [savedUserProfile]);
+  const selectedCategory = useMemo(() => {
+    const answer = starterAnswers.find((item) => item.questionId === "assistant-kind");
+    return typeof answer?.answerValue === "string" ? answer.answerValue : "";
+  }, [starterAnswers]);
+  const starterQuestions = useMemo(() => buildStarterQuestions(selectedCategory), [selectedCategory]);
+  const assistantPurpose = useMemo(() => {
+    const kind = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-kind"));
+    const purpose = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-purpose"));
+    return [kind, purpose].filter(Boolean).join(" - ") || settings.simple.assistantPurpose;
+  }, [settings.simple.assistantPurpose, starterAnswers]);
+  const totalQuestionCount = starterQuestions.length + generatedQuestions.length;
+  const progressTotal = Math.max(starterQuestions.length + 5, totalQuestionCount + 2);
+  const progressStep = stage === "starter"
+    ? starterIndex + 1
+    : stage === "generated"
+      ? starterQuestions.length + studioIndex + 1
+      : stage === "manage"
+        ? progressTotal
+        : totalQuestionCount + (stage === "preview" ? 1 : 2);
+  const progressValue = Math.min(100, Math.round((progressStep / progressTotal) * 100));
+  const activeQuestion = stage === "starter"
+    ? starterQuestions[starterIndex]
+    : stage === "generated"
+      ? generatedQuestions[studioIndex]
+      : null;
+
+  const getAnswers = (target: AnswerTarget) => target === "starter" ? starterAnswers : studioAnswers;
+  const setAnswers = (target: AnswerTarget, updater: (answers: StudioAnswer[]) => StudioAnswer[]) => {
+    if (target === "starter") {
+      setStarterAnswers(updater);
+    } else {
+      setStudioAnswers(updater);
+    }
   };
-  const focusSimplePromptInput = (key: keyof PromptSettings["simple"]) => {
-    setFocusedSimplePromptKey(key);
+  const currentAnswerFor = (question: StudioQuestion, target: AnswerTarget) => (
+    getAnswers(target).find((answer) => answer.questionId === question.id)
+  );
+  const writeAnswer = (target: AnswerTarget, answer: StudioAnswer) => {
+    setAnswers(target, (current) => upsertAnswer(current, answer));
   };
-  const changeSimplePromptInput = (key: keyof PromptSettings["simple"], value: string) => {
-    const defaultValue = defaultPromptSettings.simple[key];
-    if (settings.simple[key] === defaultValue && value.startsWith(defaultValue)) {
-      updateSimplePrompt(key, value.slice(defaultValue.length));
+  const setGeneratedStatus = (source?: "openai" | "fallback", fallbackReason?: string) => {
+    const message = sourceMessage(source, fallbackReason);
+    if (message) {
+      setStatusMessage(message);
+    }
+  };
+
+  useEffect(() => {
+    setRuleDrafts(settings.responseRules.length ? settings.responseRules : [""]);
+  }, [settings.responseRules]);
+
+  // When the category changes, drop answers that belong to a different category's follow-ups.
+  useEffect(() => {
+    const validIds = new Set(starterQuestions.map((question) => question.id));
+    setStarterAnswers((current) => {
+      const next = current.filter((answer) => validIds.has(answer.questionId));
+      return next.length === current.length ? current : next;
+    });
+  }, [starterQuestions]);
+
+  const handleTextAnswer = (question: StudioQuestion, target: AnswerTarget, value: string) => {
+    setTextDrafts((current) => ({ ...current, [question.id]: value }));
+    writeAnswer(target, {
+      questionId: question.id,
+      questionTitle: question.title,
+      answerValue: value,
+      answerLabel: value,
+    });
+  };
+
+  const handleSingleOption = (question: StudioQuestion, target: AnswerTarget, option: StudioOption) => {
+    const customText = option.requiresText ? customDrafts[question.id] ?? "" : "";
+    writeAnswer(target, {
+      questionId: question.id,
+      questionTitle: question.title,
+      answerValue: optionKey(question, option),
+      answerLabel: option.requiresText ? customText : option.label,
+      customText: option.requiresText ? customText : undefined,
+    });
+  };
+
+  const handleMultiOption = (question: StudioQuestion, target: AnswerTarget, option: StudioOption) => {
+    const key = optionKey(question, option);
+    const customText = option.requiresText ? customDrafts[question.id] ?? "" : "";
+    const currentAnswer = currentAnswerFor(question, target);
+    const currentValues = Array.isArray(currentAnswer?.answerValue) ? currentAnswer.answerValue : [];
+    const currentLabels = Array.isArray(currentAnswer?.answerLabel) ? currentAnswer.answerLabel : [];
+    const existingIndex = currentValues.indexOf(key);
+    const nextValues = existingIndex >= 0
+      ? currentValues.filter((_, index) => index !== existingIndex)
+      : [...currentValues, key];
+    const nextLabels = existingIndex >= 0
+      ? currentLabels.filter((_, index) => index !== existingIndex)
+      : [...currentLabels, option.requiresText ? customText : option.label];
+
+    writeAnswer(target, {
+      questionId: question.id,
+      questionTitle: question.title,
+      answerValue: nextValues,
+      answerLabel: nextLabels,
+      customText: customText || undefined,
+    });
+  };
+
+  const handleCustomText = (question: StudioQuestion, target: AnswerTarget, value: string) => {
+    const customOption = question.options?.find((option) => option.requiresText);
+    if (!customOption) {
       return;
     }
 
-    updateSimplePrompt(key, value);
-  };
-  const blurSimplePromptInput = (key: keyof PromptSettings["simple"], value: string) => {
-    setFocusedSimplePromptKey(null);
-    if (!value.trim()) {
-      updateSimplePrompt(key, defaultPromptSettings.simple[key]);
-    }
-  };
-  const defaultAwareInputClass = (currentValue: string, defaultValue: string, className: string) => (
-    `${className} ${currentValue === defaultValue ? "text-[var(--miva-text-soft)]" : "text-[var(--miva-text)]"}`
-  );
-  const getDefaultAwareInputValue = (focusKey: string, currentValue: string, defaultValue: string) => {
-    if (focusedDeveloperPromptKey === focusKey && currentValue === defaultValue) {
-      return "";
+    setCustomDrafts((current) => ({ ...current, [question.id]: value }));
+    const currentAnswer = currentAnswerFor(question, target);
+    const key = optionKey(question, customOption);
+    if (question.type === "single_choice" && currentAnswer?.answerValue === key) {
+      writeAnswer(target, {
+        questionId: question.id,
+        questionTitle: question.title,
+        answerValue: key,
+        answerLabel: value,
+        customText: value,
+      });
     }
 
-    return currentValue;
+    if (question.type === "multi_choice" && Array.isArray(currentAnswer?.answerValue) && currentAnswer.answerValue.includes(key)) {
+      const labels = Array.isArray(currentAnswer.answerLabel) ? currentAnswer.answerLabel : [];
+      writeAnswer(target, {
+        questionId: question.id,
+        questionTitle: question.title,
+        answerValue: currentAnswer.answerValue,
+        answerLabel: currentAnswer.answerValue.map((item, index) => item === key ? value : labels[index] ?? item),
+        customText: value,
+      });
+    }
   };
-  const changeDefaultAwareInput = (
-    currentValue: string,
-    defaultValue: string,
-    nextValue: string,
-    updateValue: (value: string) => void,
-  ) => {
-    if (currentValue === defaultValue && nextValue.startsWith(defaultValue)) {
-      updateValue(nextValue.slice(defaultValue.length));
+
+  const isOptionSelected = (question: StudioQuestion, target: AnswerTarget, option: StudioOption) => {
+    const answer = currentAnswerFor(question, target);
+    const key = optionKey(question, option);
+
+    if (question.type === "multi_choice") {
+      return Array.isArray(answer?.answerValue) && answer.answerValue.includes(key);
+    }
+
+    return answer?.answerValue === key;
+  };
+
+  const handleGenerateQuestions = async () => {
+    setLoadingAction("questions");
+    setErrorMessage(null);
+    try {
+      const result = await generateStudioQuestions({
+        userProfile: savedUserProfile,
+        assistantPurpose,
+        starterAnswers,
+        existingAnswers: studioAnswers,
+      });
+      setGeneratedQuestions(result.questions);
+      setStudioAnswers([]);
+      setStudioIndex(0);
+      setStage("generated");
+      setGeneratedStatus(result.source, result.fallbackReason);
+    } catch (error) {
+      setErrorMessage(`Could not generate Studio questions: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleGeneratePreview = async (rules = promptRules) => {
+    setLoadingAction("preview");
+    setErrorMessage(null);
+    try {
+      const result = await generateStudioPreview({
+        userProfile: savedUserProfile,
+        assistantPurpose,
+        starterAnswers,
+        studioAnswers,
+        currentPromptRules: rules,
+      });
+      setPreview(result);
+      setPromptRules(result.draftPromptRules);
+      setStage("preview");
+      setGeneratedStatus(result.source, result.fallbackReason);
+    } catch (error) {
+      setErrorMessage(`Could not generate the preview: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleRefineRules = async () => {
+    if (!preview || !feedback.trim()) {
       return;
     }
 
-    updateValue(nextValue);
-  };
-  const blurDefaultAwareInput = (defaultValue: string, value: string, updateValue: (nextValue: string) => void) => {
-    setFocusedDeveloperPromptKey(null);
-    if (!value.trim()) {
-      updateValue(defaultValue);
+    setLoadingAction("refine");
+    setErrorMessage(null);
+    try {
+      const result = await refineStudioPromptRules({
+        userProfile: savedUserProfile,
+        assistantPurpose,
+        starterAnswers,
+        studioAnswers,
+        currentPromptRules: promptRules,
+        sampleUserMessage: preview.sampleUserMessage,
+        sampleAssistantResponse: preview.sampleAssistantResponse,
+        userFeedback: feedback,
+      });
+      setPromptRules(result.updatedPromptRules);
+      setFeedback("");
+      setGeneratedStatus(result.source, result.fallbackReason);
+      setStatusMessage(result.changeSummary);
+
+      if (result.shouldRegeneratePreview) {
+        await handleGeneratePreview(result.updatedPromptRules);
+      }
+    } catch (error) {
+      setErrorMessage(`Could not refine the prompt rules: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
     }
   };
-  const updateToolConnection = (key: ToolConnectionKey, enabled: boolean) => {
-    onPromptSettingsChange((current) => ({
-      ...current,
-      toolConnections: {
-        ...current.toolConnections,
-        [key]: enabled,
-      },
-    }));
-  };
-  const updateListItem = (key: "responseRules" | "safetyRules", index: number, value: string) => {
-    onPromptSettingsChange((current) => ({
-      ...current,
-      [key]: current[key].map((item, itemIndex) => itemIndex === index ? value : item),
-    }));
-  };
-  const addListItem = (key: "responseRules" | "safetyRules", value: string) => {
-    onPromptSettingsChange((current) => ({
-      ...current,
-      [key]: [...current[key], value],
-    }));
-  };
-  const removeListItem = (key: "responseRules" | "safetyRules", index: number) => {
-    onPromptSettingsChange((current) => ({
-      ...current,
-      [key]: current[key].filter((_, itemIndex) => itemIndex !== index),
-    }));
-  };
-  const toolOptions = toolManifestList;
 
-  const renderPromptPreview = () => (
-    <Panel>
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">System prompt preview</h3>
-          <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-            This is the assembled prompt sent to the local helper with each chat request.
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <SecondaryButton onClick={onResetDefaults}>Reset defaults</SecondaryButton>
-          <PrimaryButton onClick={onSaveLocal}>Save locally</PrimaryButton>
-        </div>
+  const handleFinalizePrompt = async () => {
+    setLoadingAction("finalize");
+    setErrorMessage(null);
+    try {
+      const result = await finalizeStudioPrompt({
+        userProfile: savedUserProfile,
+        assistantPurpose,
+        starterAnswers,
+        studioAnswers,
+        finalPromptRules: promptRules,
+        latestPreview: preview,
+      });
+      setFinalResult(result);
+      setStage("final");
+      setGeneratedStatus(result.source, result.fallbackReason);
+    } catch (error) {
+      setErrorMessage(`Could not finalize the prompt: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleSaveAssistant = async () => {
+    if (!finalResult) {
+      return;
+    }
+
+    const recipe = finalResult.assistantRecipe;
+    const nextProfileDetails: ProfileDetailsDraft = {
+      name: finalResult.assistantName || recipe.name || profileDetailsDraft.name,
+      description: recipe.purpose || profileDetailsDraft.description,
+    };
+    const nextPromptSettings = buildPromptSettingsFromRecipe(settings, recipe, finalResult.finalSystemPrompt, starterAnswers);
+
+    setLoadingAction("save");
+    setErrorMessage(null);
+    try {
+      flushSync(() => {
+        onProfileDetailsChange(nextProfileDetails);
+        onPromptSettingsChange(() => nextPromptSettings);
+      });
+      const savedProfile = await onSaveLocal();
+      const profileForCloud = isLocalAssistantProfile(savedProfile) ? savedProfile : profile;
+
+      try {
+        await saveStudioAssistantRecipe({
+          profile: profileForCloud,
+          profileDetails: nextProfileDetails,
+          promptSettings: nextPromptSettings,
+          finalSystemPrompt: finalResult.finalSystemPrompt,
+          assistantRecipe: recipe,
+        });
+        setStatusMessage("Saved locally and sent to the web assistant profile store.");
+      } catch (cloudError) {
+        setStatusMessage(`Saved locally. Web save was skipped or failed: ${errorText(cloudError)}`);
+      }
+    } catch (error) {
+      setErrorMessage(`Could not save this assistant: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleSaveManagedPrompt = async () => {
+    const nextRules = ruleDrafts.map((rule) => rule.trim()).filter(Boolean);
+    setLoadingAction("save");
+    setErrorMessage(null);
+    try {
+      flushSync(() => {
+        onPromptSettingsChange((current) => ({
+          ...current,
+          responseRules: nextRules,
+          generatedFinalSystemPrompt: rewritePromptRulesInSystemPrompt(
+            current.generatedFinalSystemPrompt || profile.prompt.systemPrompt,
+            nextRules,
+          ),
+        }));
+      });
+      await onSaveLocal();
+      setStatusMessage("Prompt rules saved.");
+    } catch (error) {
+      setErrorMessage(`Could not save prompt rules: ${errorText(error)}`);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const updateRuleDraft = (index: number, value: string) => {
+    setRuleDrafts((current) => current.map((rule, ruleIndex) => ruleIndex === index ? value : rule));
+  };
+
+  const addRuleDraft = () => {
+    setRuleDrafts((current) => [...current, ""]);
+  };
+
+  const removeRuleDraft = (index: number) => {
+    setRuleDrafts((current) => current.filter((_, ruleIndex) => ruleIndex !== index));
+  };
+
+  const goBack = (target: AnswerTarget) => {
+    if (target === "starter" && starterIndex > 0) {
+      setStarterIndex((current) => current - 1);
+      return;
+    }
+
+    if (target === "studio") {
+      if (studioIndex > 0) {
+        setStudioIndex((current) => current - 1);
+      } else {
+        setStage("starter");
+        setStarterIndex(starterQuestions.length - 1);
+      }
+    }
+  };
+
+  const goNext = (question: StudioQuestion, target: AnswerTarget) => {
+    if (!isAnswerComplete(question, currentAnswerFor(question, target))) {
+      return;
+    }
+
+    if (target === "starter") {
+      if (starterIndex < starterQuestions.length - 1) {
+        setStarterIndex((current) => current + 1);
+      } else {
+        void handleGenerateQuestions();
+      }
+      return;
+    }
+
+    if (studioIndex < generatedQuestions.length - 1) {
+      setStudioIndex((current) => current + 1);
+    } else {
+      void handleGeneratePreview();
+    }
+  };
+
+  const renderOption = (question: StudioQuestion, target: AnswerTarget, option: StudioOption) => {
+    const selected = isOptionSelected(question, target, option);
+    const customValue = customDrafts[question.id] ?? "";
+
+    return (
+      <div className="grid gap-2" key={option.id}>
+        <button
+          className={`flex min-h-14 w-full items-center justify-between gap-4 rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+            selected
+              ? "border-[var(--miva-primary)] bg-[var(--miva-primary-surface)] text-[var(--miva-primary)] ring-2 ring-[var(--miva-primary-soft)]"
+              : "border-[var(--miva-border)] bg-[var(--miva-bg-soft)] text-[var(--miva-text)] hover:border-[var(--miva-primary)] hover:bg-[var(--miva-primary-surface)]/40"
+          }`}
+          onClick={() => question.type === "multi_choice" ? handleMultiOption(question, target, option) : handleSingleOption(question, target, option)}
+          type="button"
+        >
+          <span className="min-w-0 break-words">{option.label}</span>
+          {selected ? (
+            <span className="flex shrink-0 items-center gap-2">
+              <Badge tone="action">Selected</Badge>
+              <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+            </span>
+          ) : null}
+        </button>
+        {selected && option.requiresText ? (
+          <Input
+            placeholder="Write your own answer in English."
+            value={customValue}
+            onChange={(event) => handleCustomText(question, target, event.target.value)}
+          />
+        ) : null}
       </div>
-      <pre className="mt-5 max-h-[360px] w-full max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
-        {profile.prompt.systemPrompt}
-      </pre>
-    </Panel>
-  );
+    );
+  };
 
-  const renderSimplePrompt = () => (
-    <Panel>
-      <div className="grid gap-6 xl:grid-cols-2">
-        <div className="min-w-0">
-          <IconTile className="h-12 w-12">
-            <span className="material-symbols-outlined text-[24px]">edit_note</span>
-          </IconTile>
-          <h3 className="mt-5 font-heading text-xl font-bold text-[var(--miva-text)]">Simple prompt builder</h3>
-          <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-            Write what normal users actually want this assistant to do. MiVA turns these fields into structured prompt instructions.
-          </p>
-          <div className="mt-5 grid gap-3">
-            {[
-              ["Purpose", "What this assistant is for."],
-              ["Tasks", "The work the user wants to ask for often."],
-              ["Tone", "How the assistant should sound."],
-              ["Limits", "What the assistant should avoid."],
-            ].map(([title, body]) => (
-              <InfoTile key={title} label={title} value={body} />
-            ))}
-          </div>
+  const renderQuestion = (question: StudioQuestion, target: AnswerTarget, index: number, total: number) => {
+    const answer = currentAnswerFor(question, target);
+    const complete = isAnswerComplete(question, answer);
+    const canGoBack = target === "starter" ? starterIndex > 0 : true;
+    const nextLabel = target === "starter" && starterIndex === starterQuestions.length - 1
+      ? "Generate AI Questions"
+      : target === "studio" && studioIndex === generatedQuestions.length - 1
+        ? "Generate Preview"
+        : "Next";
+
+    return (
+      <Panel className="p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-[var(--miva-text-muted)]">Question {index + 1} of {total}</p>
+          <Badge tone={target === "starter" ? "neutral" : "action"}>
+            {target === "starter" ? "Starter" : "OpenAI generated"}
+          </Badge>
+        </div>
+        <ProgressBar className="mt-4" size="sm" value={Math.round(((index + 1) / Math.max(total, 1)) * 100)} />
+
+        <div className="mt-8">
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">{question.id}</p>
+          <h3 className="mt-2 font-heading text-[22px] font-bold leading-8 text-[var(--miva-text)]">{question.title}</h3>
+          {question.description ? (
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{question.description}</p>
+          ) : null}
         </div>
 
-        <div className="grid min-w-0 gap-4">
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Assistant purpose</span>
+        <div className="mt-6 grid gap-3">
+          {question.type === "text" ? (
             <Textarea
-              className={simplePromptInputClass("assistantPurpose", "min-h-[96px] resize-none")}
-              value={getSimplePromptInputValue("assistantPurpose")}
-              onFocus={() => focusSimplePromptInput("assistantPurpose")}
-              onBlur={(event) => blurSimplePromptInput("assistantPurpose", event.target.value)}
-              onChange={(event) => changeSimplePromptInput("assistantPurpose", event.target.value)}
+              className="min-h-[132px] resize-none"
+              placeholder={question.placeholder ?? "Write your answer in English."}
+              value={textDrafts[question.id] ?? ""}
+              onChange={(event) => handleTextAnswer(question, target, event.target.value)}
             />
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">What should this assistant do?</span>
-            <Textarea
-              className={simplePromptInputClass("desiredTasks", "min-h-[140px] resize-none")}
-              value={getSimplePromptInputValue("desiredTasks")}
-              onFocus={() => focusSimplePromptInput("desiredTasks")}
-              onBlur={(event) => blurSimplePromptInput("desiredTasks", event.target.value)}
-              onChange={(event) => changeSimplePromptInput("desiredTasks", event.target.value)}
-            />
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Preferred tone</span>
-            <Input
-              className={simplePromptInputClass("preferredTone", "")}
-              value={getSimplePromptInputValue("preferredTone")}
-              onFocus={() => focusSimplePromptInput("preferredTone")}
-              onBlur={(event) => blurSimplePromptInput("preferredTone", event.target.value)}
-              onChange={(event) => changeSimplePromptInput("preferredTone", event.target.value)}
-            />
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Things to avoid</span>
-            <Textarea
-              className={simplePromptInputClass("avoidances", "min-h-[92px] resize-none")}
-              value={getSimplePromptInputValue("avoidances")}
-              onFocus={() => focusSimplePromptInput("avoidances")}
-              onBlur={(event) => blurSimplePromptInput("avoidances", event.target.value)}
-              onChange={(event) => changeSimplePromptInput("avoidances", event.target.value)}
-            />
-          </label>
+          ) : (
+            question.options?.map((option) => renderOption(question, target, option))
+          )}
         </div>
-      </div>
-    </Panel>
-  );
 
-  const renderToolsForAiCard = () => (
-    <Panel>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">Tools for AI</p>
-          <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Connected tool permissions</h3>
-          <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-            Choose which external tools this assistant is allowed to prepare for. These toggles shape the prompt; real actions still require a connected tool and confirmation.
-          </p>
+        {question.reason ? (
+          <StatusAlert className="mt-5" tone="neutral">{question.reason}</StatusAlert>
+        ) : null}
+
+        <div className="mt-8 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+          <SecondaryButton disabled={!canGoBack || loadingAction !== null} onClick={() => goBack(target)}>
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Back
+          </SecondaryButton>
+          <PrimaryButton disabled={!complete || loadingAction !== null} onClick={() => goNext(question, target)}>
+            {loadingAction === "questions" || loadingAction === "preview" ? "Working..." : nextLabel}
+            <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+          </PrimaryButton>
         </div>
-        <SecondaryButton onClick={() => onToolsForAiOpenChange(true)}>Manage tools</SecondaryButton>
-      </div>
+      </Panel>
+    );
+  };
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        {toolOptions.map((tool) => {
-          const enabled = settings.toolConnections[tool.id];
-
-          return (
-            <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4" key={tool.id}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <IconTile className="h-10 w-10">
-                    <span className="material-symbols-outlined text-[20px]">{tool.icon}</span>
-                  </IconTile>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-[var(--miva-text)]">{tool.title}</p>
-                    <p className="mt-1 text-xs text-[var(--miva-text-muted)]">{tool.label}</p>
-                  </div>
-                </div>
-                <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "On" : "Off"}</Badge>
-              </div>
-              <p className="mt-3 text-xs leading-5 text-[var(--miva-text-muted)]">{tool.description}</p>
-            </div>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-
-  const renderToolsForAiModal = () => {
-    if (!toolsForAiOpen) {
+  const renderPreview = () => {
+    if (!preview) {
       return null;
     }
 
     return (
-      <ModalBackdrop className="z-[90]">
-        <ModalPanel className="max-h-[86vh] max-w-[720px] overflow-y-auto">
-          <div className="flex items-start justify-between gap-4">
+      <div className="grid gap-6">
+        <Panel>
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">Tools for AI</p>
-              <h3 className="mt-2 font-heading text-2xl font-bold text-[var(--miva-text)]">Tool access settings</h3>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Preview</p>
+              <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Test conversation</h3>
               <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-                Turn tools on when this assistant should prepare actions for that integration. Turning a tool on does not mean the action is already connected or completed.
+                Review the response pattern before MIVA turns it into a durable system prompt.
               </p>
             </div>
-            <IconButton
-              aria-label="Close tools settings"
-              className="shrink-0 rounded-full text-[var(--miva-text-muted)] hover:bg-[var(--miva-surface-muted)]"
-              onClick={() => onToolsForAiOpenChange(false)}
-            >
-              <span className="material-symbols-outlined">close</span>
-            </IconButton>
+            {preview.source === "openai" ? <Badge tone="success">openai</Badge> : null}
           </div>
 
           <div className="mt-6 grid gap-4">
-            {toolOptions.map((tool) => {
-              const enabled = settings.toolConnections[tool.id];
-
-              return (
-                <article className="rounded-lg border border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-5" key={tool.id}>
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex min-w-0 items-start gap-4">
-                      <IconTile className="h-12 w-12">
-                        <span className="material-symbols-outlined text-[24px]">{tool.icon}</span>
-                      </IconTile>
-                      <div className="min-w-0">
-                        <h4 className="font-heading text-lg font-bold text-[var(--miva-text)]">{tool.title}</h4>
-                        <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{tool.description}</p>
-                      </div>
-                    </div>
-                    <Switch
-                      aria-label={`${enabled ? "Disable" : "Enable"} ${tool.title}`}
-                      checked={enabled}
-                      className="h-9 w-[76px] shrink-0"
-                      onCheckedChange={(checked) => updateToolConnection(tool.id, checked)}
-                    />
-                  </div>
-
-                  <div className="mt-4 rounded-lg bg-[var(--miva-surface)] p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">What this gives the assistant</p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">{tool.role}</p>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {tool.features.map((feature) => (
-                      <Badge key={feature}>{feature}</Badge>
-                    ))}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-
-          <div className="mt-6 flex justify-end">
-            <PrimaryButton onClick={() => onToolsForAiOpenChange(false)}>Done</PrimaryButton>
-          </div>
-        </ModalPanel>
-      </ModalBackdrop>
-    );
-  };
-
-  const renderDeveloperPrompt = () => (
-    <>
-      <Panel>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Developer prompt controls</h3>
-            <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              Edit detailed prompt pieces used by local and cloud providers. These settings are stored in the active assistant profile.
-            </p>
-          </div>
-          <Badge tone="action">Advanced</Badge>
-        </div>
-
-        <div className="mt-6 grid gap-4 xl:grid-cols-2">
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Persona</span>
-            <Textarea
-              className={defaultAwareInputClass(settings.persona, defaultPromptSettings.persona, "min-h-[128px] resize-none")}
-              value={getDefaultAwareInputValue("persona", settings.persona, defaultPromptSettings.persona)}
-              onFocus={() => setFocusedDeveloperPromptKey("persona")}
-              onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.persona, event.target.value, (persona) => onPromptSettingsChange((current) => ({ ...current, persona })))}
-              onChange={(event) => changeDefaultAwareInput(settings.persona, defaultPromptSettings.persona, event.target.value, (persona) => onPromptSettingsChange((current) => ({ ...current, persona })))}
-            />
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Role goal</span>
-            <Textarea
-              className={defaultAwareInputClass(settings.roleGoal, defaultPromptSettings.roleGoal, "min-h-[128px] resize-none")}
-              value={getDefaultAwareInputValue("roleGoal", settings.roleGoal, defaultPromptSettings.roleGoal)}
-              onFocus={() => setFocusedDeveloperPromptKey("roleGoal")}
-              onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.roleGoal, event.target.value, (roleGoal) => onPromptSettingsChange((current) => ({ ...current, roleGoal })))}
-              onChange={(event) => changeDefaultAwareInput(settings.roleGoal, defaultPromptSettings.roleGoal, event.target.value, (roleGoal) => onPromptSettingsChange((current) => ({ ...current, roleGoal })))}
-            />
-          </label>
-        </div>
-      </Panel>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Panel>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Response rules</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">General behavior rules that apply to every provider.</p>
+            <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Sample user message</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-[var(--miva-text)]">{preview.sampleUserMessage}</p>
             </div>
-            <SecondaryButton className="px-3 py-2 text-xs" onClick={() => addListItem("responseRules", "Add a clear response rule.")}>
-              Add rule
-            </SecondaryButton>
-          </div>
-          <div className="mt-5 grid gap-3">
-            {settings.responseRules.map((rule, index) => (
-              <div className="flex gap-2" key={`response-${index}`}>
-                <Input
-                  className={defaultAwareInputClass(rule, defaultPromptSettings.responseRules[index] ?? "", "min-w-0 flex-1")}
-                  value={getDefaultAwareInputValue(`responseRules:${index}`, rule, defaultPromptSettings.responseRules[index] ?? "")}
-                  onFocus={() => setFocusedDeveloperPromptKey(`responseRules:${index}`)}
-                  onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.responseRules[index] ?? "", event.target.value, (value) => updateListItem("responseRules", index, value))}
-                  onChange={(event) => changeDefaultAwareInput(rule, defaultPromptSettings.responseRules[index] ?? "", event.target.value, (value) => updateListItem("responseRules", index, value))}
-                />
-                <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("responseRules", index)}>
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                </SecondaryButton>
-              </div>
-            ))}
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-sm leading-6 text-[var(--miva-surface-muted)]">
+              {preview.sampleAssistantResponse}
+            </pre>
           </div>
         </Panel>
 
         <Panel>
-          <div className="flex items-start justify-between gap-4">
+          <div className="grid gap-6 xl:grid-cols-[1fr_1.1fr]">
             <div>
-              <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Safety rules</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Boundaries for tools, private data, and actions.</p>
-            </div>
-            <SecondaryButton className="px-3 py-2 text-xs" onClick={() => addListItem("safetyRules", "Add a clear safety rule.")}>
-              Add rule
-            </SecondaryButton>
-          </div>
-          <div className="mt-5 grid gap-3">
-            {settings.safetyRules.map((rule, index) => (
-              <div className="flex gap-2" key={`safety-${index}`}>
-                <Input
-                  className={defaultAwareInputClass(rule, defaultPromptSettings.safetyRules[index] ?? "", "min-w-0 flex-1")}
-                  value={getDefaultAwareInputValue(`safetyRules:${index}`, rule, defaultPromptSettings.safetyRules[index] ?? "")}
-                  onFocus={() => setFocusedDeveloperPromptKey(`safetyRules:${index}`)}
-                  onBlur={(event) => blurDefaultAwareInput(defaultPromptSettings.safetyRules[index] ?? "", event.target.value, (value) => updateListItem("safetyRules", index, value))}
-                  onChange={(event) => changeDefaultAwareInput(rule, defaultPromptSettings.safetyRules[index] ?? "", event.target.value, (value) => updateListItem("safetyRules", index, value))}
-                />
-                <SecondaryButton className="px-3 py-2" onClick={() => removeListItem("safetyRules", index)}>
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                </SecondaryButton>
+              <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Prompt rules</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
+                Feedback is converted into reusable rules, not stored as a one-off chat instruction.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                {preview.detectedResponseFormat.map((format) => (
+                  <Badge key={format} tone="action">{format}</Badge>
+                ))}
               </div>
-            ))}
+            </div>
+
+            <div className="grid gap-3">
+              {promptRules.map((rule, index) => (
+                <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4 text-sm leading-6 text-[var(--miva-text)]" key={`${rule}-${index}`}>
+                  {rule}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <label className="mt-6 grid gap-2">
+            <span className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Preview feedback</span>
+            <Textarea
+              className="min-h-[120px] resize-none"
+              placeholder="Example: Make this more direct, use shorter steps, and include a checklist at the end."
+              value={feedback}
+              onChange={(event) => setFeedback(event.target.value)}
+            />
+          </label>
+
+          <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <SecondaryButton onClick={() => {
+              setStage("generated");
+              setStudioIndex(Math.max(0, generatedQuestions.length - 1));
+            }}>
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+              Back to questions
+            </SecondaryButton>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <SecondaryButton disabled={!feedback.trim() || loadingAction !== null} onClick={() => void handleRefineRules()}>
+                {loadingAction === "refine" ? "Refining..." : "Refine Again"}
+              </SecondaryButton>
+              <PrimaryButton disabled={loadingAction !== null} onClick={() => void handleFinalizePrompt()}>
+                {loadingAction === "finalize" ? "Finalizing..." : "Finalize Assistant"}
+                <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              </PrimaryButton>
+            </div>
           </div>
         </Panel>
       </div>
+    );
+  };
 
+  const renderFinal = () => {
+    if (!finalResult) {
+      return null;
+    }
+
+    return (
       <Panel>
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Memory compaction</h3>
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Final prompt</p>
+            <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">{finalResult.assistantName}</h3>
             <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              By default, MiVA stores only details the user explicitly asks it to remember. If memory grows past the budget, it is compacted into a shorter summary.
+              This English system prompt will become the runtime prompt through the assistant profile settings.
             </p>
           </div>
-          <Badge tone={settings.summaryMemory.rollingSummary ? "action" : "neutral"}>
-            {settings.summaryMemory.rollingSummary ? "Enabled" : "Off"}
-          </Badge>
+          {finalResult.source === "openai" ? <Badge tone="success">openai</Badge> : null}
         </div>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-4">
-          <label className="grid gap-2 rounded-lg bg-[var(--miva-bg-soft)] p-3">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Memory updates</span>
-            <Switch
-              checked={settings.summaryMemory.rollingSummary}
-              className="h-11 w-24"
-              onCheckedChange={() => onPromptSettingsChange((current) => ({
-                ...current,
-                summaryMemory: {
-                  ...current.summaryMemory,
-                  rollingSummary: !current.summaryMemory.rollingSummary,
-                },
-              }))}
-            />
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Summary model</span>
-            <Select
-              value={settings.summaryMemory.modelPolicy}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                summaryMemory: {
-                  ...current.summaryMemory,
-                  modelPolicy: event.target.value as SummaryModelPolicy,
-                },
-              }))}
-            >
-              <option value="sameModel">Same as assistant model</option>
-              <option value="localModel">Specific local model</option>
-              <option value="cloudModel">Specific cloud model</option>
-            </Select>
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Provider</span>
-            <Select
-              className="disabled:opacity-55"
-              disabled={settings.summaryMemory.modelPolicy !== "cloudModel"}
-              value={settings.summaryMemory.provider}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                summaryMemory: {
-                  ...current.summaryMemory,
-                  provider: event.target.value as PromptSettings["summaryMemory"]["provider"],
-                },
-              }))}
-            >
-              <option value="gemini">Gemini</option>
-              <option value="openai">OpenAI</option>
-              <option value="groq">Groq</option>
-              <option value="ollama">Ollama</option>
-            </Select>
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Compaction budget</span>
-            <Input
-              min={1000}
-              step={500}
-              type="number"
-              value={settings.summaryMemory.triggerTokenBudget}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                summaryMemory: {
-                  ...current.summaryMemory,
-                  triggerTokenBudget: Number(event.target.value),
-                },
-              }))}
-            />
-          </label>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Purpose</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text)]">{finalResult.assistantRecipe.purpose}</p>
+          </div>
+          <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Target user</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text)]">{finalResult.assistantRecipe.targetUser}</p>
+          </div>
         </div>
 
-        {settings.summaryMemory.modelPolicy !== "sameModel" ? (
-          <label className="mt-4 grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Summary model name</span>
-            <Input
-              placeholder={settings.summaryMemory.modelPolicy === "localModel" ? "Example: qwen3:4b" : "Example: gemini-2.5-flash"}
-              value={settings.summaryMemory.model}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                summaryMemory: {
-                  ...current.summaryMemory,
-                  model: event.target.value,
-                },
-              }))}
-            />
-          </label>
-        ) : null}
+        <pre className="mt-6 max-h-[440px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
+          {finalResult.finalSystemPrompt}
+        </pre>
+
+        <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+          <SecondaryButton disabled={loadingAction !== null} onClick={() => setStage("preview")}>
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Back to preview
+          </SecondaryButton>
+          <PrimaryButton disabled={loadingAction !== null} onClick={() => void handleSaveAssistant()}>
+            {loadingAction === "save" ? "Saving..." : "Save Assistant"}
+            <span className="material-symbols-outlined text-[18px]">save</span>
+          </PrimaryButton>
+        </div>
+      </Panel>
+    );
+  };
+
+  const renderManage = () => (
+    <div className="grid gap-6">
+      <Panel>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Current prompt</p>
+            <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Saved system prompt</h3>
+            <p className="mt-2 max-w-[720px] text-sm leading-6 text-[var(--miva-text-muted)]">
+              This assistant already has a completed Studio prompt. Runtime fixes from /fix are reflected in the rules below.
+            </p>
+          </div>
+          <SecondaryButton onClick={() => {
+            setStage("starter");
+            setStarterIndex(0);
+            setGeneratedQuestions([]);
+            setStudioAnswers([]);
+            setPreview(null);
+            setFinalResult(null);
+          }}>
+            Rebuild from questions
+          </SecondaryButton>
+        </div>
+
+        <pre className="mt-6 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
+          {settings.generatedFinalSystemPrompt?.trim() || profile.prompt.systemPrompt}
+        </pre>
       </Panel>
 
       <Panel>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Schedule and Workspace policy</h3>
-            <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              Schedule drafting works with prompt rules only. Creating, editing, or deleting real calendar events requires a connected Google Workspace tool later.
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Prompt rules</h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
+              Edit durable behavior rules here. Rules saved from Runtime /fix appear in this list.
             </p>
           </div>
-          <Badge tone={settings.workspaceRules.googleWorkspace === "disabled" ? "neutral" : "action"}>
-            Google Workspace {workspacePolicyCopy[settings.workspaceRules.googleWorkspace]}
-          </Badge>
+          <SecondaryButton onClick={addRuleDraft}>
+            <span className="material-symbols-outlined text-[18px]">add</span>
+            Add rule
+          </SecondaryButton>
         </div>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-3">
-          <label className="grid gap-2 xl:col-span-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Schedule mode</span>
-            <Select
-              value={settings.scheduleRules.mode}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                scheduleRules: {
-                  ...current.scheduleRules,
-                  mode: event.target.value as CalendarActionMode,
-                },
-              }))}
-            >
-              <option value="draftOnly">Draft only</option>
-              <option value="confirmBeforeAction">Confirm before action</option>
-              <option value="connectedActions">Connected actions after OAuth</option>
-            </Select>
-            <span className="text-xs leading-5 text-[var(--miva-text-muted)]">{scheduleModeCopy[settings.scheduleRules.mode]}</span>
-          </label>
-          <label className="grid gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Timezone</span>
-            <Input
-              value={settings.scheduleRules.timezone}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                scheduleRules: {
-                  ...current.scheduleRules,
-                  timezone: event.target.value,
-                },
-              }))}
-            />
-          </label>
-          <label className="grid gap-2 xl:col-span-3">
-            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Reminder preference</span>
-            <Input
-              value={settings.scheduleRules.reminderPreference}
-              onChange={(event) => onPromptSettingsChange((current) => ({
-                ...current,
-                scheduleRules: {
-                  ...current.scheduleRules,
-                  reminderPreference: event.target.value,
-                },
-              }))}
-            />
-          </label>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {(["googleWorkspace", "calendar", "gmail", "drive"] as Array<keyof PromptSettings["workspaceRules"]>).map((key) => (
-            <label className="grid gap-2 rounded-lg bg-[var(--miva-bg-soft)] p-3" key={key}>
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">{key}</span>
-              <Select
-                className="px-3 py-2"
-                value={settings.workspaceRules[key]}
-                onChange={(event) => onPromptSettingsChange((current) => ({
-                  ...current,
-                  workspaceRules: {
-                    ...current.workspaceRules,
-                    [key]: event.target.value as WorkspaceToolPolicy,
-                  },
-                }))}
-              >
-                <option value="disabled">Disabled</option>
-                <option value="askFirst">Ask first</option>
-                <option value="connectedOnly">Connected only</option>
-              </Select>
-            </label>
+        <div className="mt-6 grid gap-3">
+          {ruleDrafts.map((rule, index) => (
+            <div className="flex gap-2" key={`managed-rule-${index}`}>
+              <Textarea
+                className="min-h-[72px] resize-none"
+                placeholder="Write a durable response rule in English."
+                value={rule}
+                onChange={(event) => updateRuleDraft(index, event.target.value)}
+              />
+              <SecondaryButton className="h-[72px] px-3" onClick={() => removeRuleDraft(index)}>
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+              </SecondaryButton>
+            </div>
           ))}
         </div>
+
+        <div className="mt-6 flex justify-end border-t border-[var(--miva-border)] pt-5">
+          <PrimaryButton disabled={loadingAction !== null} onClick={() => void handleSaveManagedPrompt()}>
+            {loadingAction === "save" ? "Saving..." : "Save prompt rules"}
+            <span className="material-symbols-outlined text-[18px]">save</span>
+          </PrimaryButton>
+        </div>
       </Panel>
-    </>
+    </div>
   );
 
   return (
     <div className="grid gap-6">
       <Panel>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Prompt profile</h3>
-            <p className="mt-2 max-w-[680px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              Simple mode is for normal users. Developer mode exposes detailed prompt policy and tool behavior.
-            </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-4">
+            <IconTile className="h-12 w-12">
+              <span className="material-symbols-outlined text-[24px]">psychology</span>
+            </IconTile>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Prompt Studio</p>
+              <h3 className="mt-2 font-heading text-[24px] font-bold leading-8 text-[var(--miva-text)]">Studio Assistant Builder</h3>
+              <p className="mt-2 max-w-[720px] text-sm leading-6 text-[var(--miva-text-muted)]">
+                MIVA uses the saved initial profile as context, then asks assistant-specific questions in English.
+              </p>
+            </div>
           </div>
-          <Badge tone="action">Local profile</Badge>
+          <Badge tone="action">English prompt flow</Badge>
         </div>
 
-        <div className="mt-6 inline-flex rounded-full border border-[var(--miva-border)] bg-[var(--miva-surface-muted)] p-1">
-          {([
-            ["simple", "Simple"],
-            ["developer", "Developer"],
-          ] as Array<[PromptEditorMode, string]>).map(([mode, label]) => (
-            <Button
-              className={`rounded-xl px-5 py-2.5 text-sm font-bold transition ${
-                promptEditorMode === mode
-                  ? "bg-[var(--miva-control-active-bg)] text-[var(--miva-control-active-text)] shadow-sm"
-                  : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
-              }`}
-              key={mode}
-              onClick={() => onPromptEditorModeChange(mode)}
-              size="sm"
-              variant="ghost"
-            >
-              {label}
-            </Button>
-          ))}
+        <div className="mt-6">
+          <div className="flex items-center justify-between gap-4 text-xs font-bold text-[var(--miva-text-soft)]">
+            <span>{activeQuestion ? activeQuestion.title : stage === "preview" ? "Preview and refine" : stage === "manage" ? "Manage saved prompt" : "Finalize and save"}</span>
+            <span>{progressValue}% Complete</span>
+          </div>
+          <ProgressBar className="mt-3" value={progressValue} />
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {visibleProfileItems.length ? (
+            visibleProfileItems.map(([label, value]) => (
+              <div className="rounded-lg bg-[var(--miva-bg-soft)] p-3" key={label}>
+                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">{label}</p>
+                <p className="mt-1 truncate text-sm font-semibold text-[var(--miva-text)]">{value}</p>
+              </div>
+            ))
+          ) : (
+            <StatusAlert className="sm:col-span-2 xl:col-span-3" tone="warning">
+              No saved initial profile was found. Studio can still continue, but generated questions will be less personalized.
+            </StatusAlert>
+          )}
         </div>
       </Panel>
 
-      {promptEditorMode === "simple" ? (
-        <>
-          {renderSimplePrompt()}
-          {renderToolsForAiCard()}
-        </>
-      ) : renderDeveloperPrompt()}
-      {renderPromptPreview()}
-      {renderToolsForAiModal()}
+      {statusMessage ? <StatusAlert tone="success">{statusMessage}</StatusAlert> : null}
+      {errorMessage ? <StatusAlert tone="danger">{errorMessage}</StatusAlert> : null}
+
+      {stage === "starter" && activeQuestion ? renderQuestion(activeQuestion, "starter", starterIndex, starterQuestions.length) : null}
+      {stage === "generated" && activeQuestion ? renderQuestion(activeQuestion, "studio", studioIndex, generatedQuestions.length) : null}
+      {stage === "preview" ? renderPreview() : null}
+      {stage === "final" ? renderFinal() : null}
+      {stage === "manage" ? renderManage() : null}
     </div>
   );
 }

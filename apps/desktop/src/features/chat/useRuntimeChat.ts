@@ -10,6 +10,7 @@ import {
 import { analyzeDocument, chooseDocumentPaths, isAttachmentImagePath, openDocument } from "../documents/documentRuntime";
 import { runDaisoRequest } from "../daiso/daisoRuntime";
 import { generateImageRequest, toImageDataUrl } from "../imageGen/imageGenRuntime";
+import { createLibraryItemFromDocument, createLibraryItemFromImageAttachment } from "../library/storage";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { streamChatOnce } from "./chatStream";
 import {
@@ -19,6 +20,13 @@ import {
 import { resolveClawCodeBusyLabel } from "../claw/clawCodeBusyLabel";
 import { resolveWorkspaceBusyLabel } from "./workspaceBusyLabel";
 import { synthesizeVoice } from "../voice/voiceRuntime";
+import { loadUserProfile } from "../profile/storage";
+import {
+  detectEmotionFromText,
+  parseMoodTag,
+  stripMoodTag,
+  MOOD_TAG_INSTRUCTION,
+} from "../characters/emotion";
 import {
   applySlashCommandProfile,
   buildSlashCommandsForProfile,
@@ -36,25 +44,33 @@ import {
   saveRuntimeMemorySummary,
 } from "./storage";
 import {
+  buildProfileMemory,
+  buildRuntimeMemoryContent,
   cleanSpeechText,
   estimateChatTokens,
   estimateTokensFromText,
   buildImageAnalysisMemoryPrompt,
+  getCompactedSessionMemory,
+  getPinnedRuntimeMemory,
   getRuntimeSummaryModel,
   hasExplicitMemoryRequest,
   MEMORY_COMPACTION_FALLBACK_BUDGET,
+  OPENAI_COMPACTION_MODEL,
   RECENT_CONTEXT_MESSAGE_LIMIT,
 } from "./runtimeMemory";
 import type { RuntimeConversationNavItem } from "../../app/AppNavigation";
 import type {
   AppMode,
   AuthSession,
+  CharacterEmotion,
   ChatMessage,
   ChatMetrics,
   ChatUiAction,
   DocumentAttachment,
   ImageAttachment,
+  LibraryItem,
   LocalAssistantProfile,
+  PersonalizationSettings,
   PromptSettings,
   ProviderId,
   ProviderKeyState,
@@ -82,6 +98,7 @@ type UseRuntimeChatOptions = {
   authSession: AuthSession | null;
   activeLocalProfile: LocalAssistantProfile | null;
   promptProfileId: string;
+  personalizationSettings: PersonalizationSettings;
   selectedProvider: ProviderId;
   selectedModel: string;
   selectedCloudModel: string;
@@ -98,6 +115,10 @@ type UseRuntimeChatOptions = {
   buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
   applyLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
   updateAssistantProfileRollingSummary: (profileId: string, summary: RuntimeMemorySummary) => Promise<void>;
+  updateAssistantPromptSettings: (
+    profileId: string,
+    updateSettings: (settings: PromptSettings) => PromptSettings,
+  ) => Promise<LocalAssistantProfile | null>;
   setActiveLocalProfileId: (id: string) => void;
   setAppMode: Dispatch<SetStateAction<AppMode>>;
   setBusyAction: Dispatch<SetStateAction<string | null>>;
@@ -110,6 +131,7 @@ type UseRuntimeChatOptions = {
   applyClawCodeWorkspace: (workspaceRoot: string) => Promise<void> | void;
   chooseClawCodeWorkspace: () => Promise<string | null> | string | null;
   clawCodeStatus: ClawCodeRuntimeInfo | null;
+  onLibraryItemsAdd: (items: LibraryItem[]) => Promise<void> | void;
   onLog: (message: string) => void;
 };
 
@@ -120,6 +142,7 @@ export function useRuntimeChat({
   authSession,
   activeLocalProfile,
   promptProfileId,
+  personalizationSettings,
   selectedProvider,
   selectedModel,
   selectedCloudModel,
@@ -136,6 +159,7 @@ export function useRuntimeChat({
   buildCurrentLocalAssistantProfile,
   applyLocalAssistantProfile,
   updateAssistantProfileRollingSummary,
+  updateAssistantPromptSettings,
   setActiveLocalProfileId,
   setAppMode,
   setBusyAction,
@@ -148,6 +172,7 @@ export function useRuntimeChat({
   applyClawCodeWorkspace,
   chooseClawCodeWorkspace,
   clawCodeStatus,
+  onLibraryItemsAdd,
   onLog,
 }: UseRuntimeChatOptions) {
   const [chatInput, setChatInput] = useState("");
@@ -163,6 +188,8 @@ export function useRuntimeChat({
   const [ttsPlaybackState, setTtsPlaybackState] = useState<TtsPlaybackState>("idle");
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [chatBusyLabel, setChatBusyLabel] = useState<string | null>(null);
+  const [characterEmotion, setCharacterEmotion] = useState<CharacterEmotion>("neutral");
+  const emotionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -176,6 +203,30 @@ export function useRuntimeChat({
     setChatInput("");
     setSelectedSlashCommand(null);
   }
+
+  // Emit a momentary emotion the Live2D overlay holds for a few seconds, then
+  // settle back to neutral so the next identical emotion still re-triggers.
+  function pulseEmotion(emotion: CharacterEmotion) {
+    if (emotion === "neutral") {
+      return;
+    }
+    if (emotionResetTimerRef.current) {
+      clearTimeout(emotionResetTimerRef.current);
+    }
+    setCharacterEmotion(emotion);
+    emotionResetTimerRef.current = setTimeout(() => {
+      setCharacterEmotion("neutral");
+      emotionResetTimerRef.current = null;
+    }, 1500);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (emotionResetTimerRef.current) {
+        clearTimeout(emotionResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const slashCommands = useMemo(() => {
     const profile = activeLocalProfile ?? buildCurrentLocalAssistantProfile();
@@ -244,43 +295,13 @@ export function useRuntimeChat({
     };
   });
 
-  useEffect(() => {
-    if (!runtimeChatStoreLoadedRef.current) {
-      return;
-    }
-
-    if (visibleAssistantIds.size === 0) {
-      return;
-    }
-
-    const nextConversations = Object.fromEntries(
-      Object.entries(runtimeChatStoreRef.current.conversations).filter(([, conversation]) => visibleAssistantIds.has(conversation.assistantId)),
-    );
-    const nextActiveConversationIds = Object.fromEntries(
-      Object.entries(runtimeChatStoreRef.current.activeConversationIds).filter(([assistantId]) => visibleAssistantIds.has(assistantId)),
-    );
-    const nextSummaries = Object.fromEntries(
-      Object.entries(runtimeChatStoreRef.current.summaries).filter(([assistantId]) => visibleAssistantIds.has(assistantId)),
-    );
-    const changed =
-      Object.keys(nextConversations).length !== Object.keys(runtimeChatStoreRef.current.conversations).length ||
-      Object.keys(nextActiveConversationIds).length !== Object.keys(runtimeChatStoreRef.current.activeConversationIds).length ||
-      Object.keys(nextSummaries).length !== Object.keys(runtimeChatStoreRef.current.summaries).length;
-
-    if (!changed) {
-      return;
-    }
-
-    const nextStore = {
-      ...runtimeChatStoreRef.current,
-      conversations: nextConversations,
-      activeConversationIds: nextActiveConversationIds,
-      summaries: nextSummaries,
-      updatedAt: new Date().toISOString(),
-    };
-    runtimeChatStoreRef.current = nextStore;
-    setRuntimeChatStore(nextStore);
-  }, [visibleAssistantProfiles, visibleAssistantIds]);
+  // NOTE: We intentionally do NOT prune the in-memory chat store down to the
+  // currently-visible assistants. `visibleAssistantProfiles` hides cloud (non-Ollama)
+  // assistants while signed out, so pruning here — combined with the autosave effect
+  // below — used to permanently delete those conversations from disk on every launch.
+  // Visibility is already handled at display time (historyConversations in App and
+  // assistantConversationGroups above), and real profile deletion is handled by
+  // deleteRuntimeChatMessagesForAssistant, so no destructive cleanup is needed here.
 
   function updateChatMessages(mode: AppMode, updater: (current: ChatMessage[]) => ChatMessage[]) {
     if (mode === "runtime") {
@@ -387,6 +408,7 @@ export function useRuntimeChat({
       }));
 
       setImageAttachments((current) => [...current, ...loaded]);
+      void onLibraryItemsAdd(loaded.map(createLibraryItemFromImageAttachment));
     } catch (error) {
       onLog(`Image attach failed: ${String(error)}`);
     }
@@ -415,6 +437,7 @@ export function useRuntimeChat({
           return createImageAttachment(path, payload);
         }));
         setImageAttachments((current) => [...current, ...loaded]);
+        void onLibraryItemsAdd(loaded.map(createLibraryItemFromImageAttachment));
         availableSlots -= loaded.length;
       }
 
@@ -463,6 +486,14 @@ export function useRuntimeChat({
                 }
               : item
           )));
+          void onLibraryItemsAdd([
+            createLibraryItemFromDocument({
+              name: result.name,
+              path: attachment.path,
+              extension: result.extension,
+              sizeBytes: result.sizeBytes,
+            }),
+          ]);
           onLog(`Document ready: ${result.name}.`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -510,6 +541,39 @@ export function useRuntimeChat({
     }
 
     return "";
+  }
+
+  function normalizePromptFixRule(value: string) {
+    const trimmed = value.trim().replace(/^[-*]\s*/, "");
+    if (!trimmed) {
+      return "";
+    }
+
+    return trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
+  }
+
+  function applyFixRuleToSystemPrompt(systemPrompt: string | undefined, rule: string) {
+    const base = systemPrompt?.trim();
+    const nextRule = `- ${rule}`;
+    if (!base) {
+      return [
+        "# Role",
+        "You are MIVA, the user's personal AI assistant.",
+        "",
+        "# Style rules",
+        nextRule,
+      ].join("\n");
+    }
+
+    if (base.includes(nextRule)) {
+      return base;
+    }
+
+    if (/(^|\n)# Runtime fixes\b/i.test(base)) {
+      return `${base}\n${nextRule}`;
+    }
+
+    return `${base}\n\n# Runtime fixes\n${nextRule}`;
   }
 
   function stopRuntimeTts() {
@@ -606,6 +670,162 @@ export function useRuntimeChat({
     }
   }
 
+  function buildMemoryContentForStorage(input: {
+    pinnedMemory: string;
+    sessionSummary: string;
+  }) {
+    return buildRuntimeMemoryContent({
+      pinnedMemory: input.pinnedMemory,
+      sessionSummary: input.sessionSummary,
+    });
+  }
+
+  function buildMemoryContextForRequest(profile: LocalAssistantProfile, summary: RuntimeMemorySummary | null | undefined) {
+    return buildRuntimeMemoryContent({
+      profileMemory: buildProfileMemory(profile, loadUserProfile()),
+      pinnedMemory: getPinnedRuntimeMemory(summary),
+      sessionSummary: getCompactedSessionMemory(summary),
+    });
+  }
+
+  function getMemoryGenerationModel(input: {
+    assistantProfile: LocalAssistantProfile;
+    fallbackProvider: ProviderId;
+    fallbackModel: string;
+    preferOpenAi?: boolean;
+  }) {
+    const openAiKey = providerKeys.openai.trim();
+    if (input.preferOpenAi && openAiKey) {
+      return {
+        provider: "openai" as ProviderId,
+        model: selectedProvider === "openai" && selectedCloudModel ? selectedCloudModel : OPENAI_COMPACTION_MODEL,
+        apiKey: openAiKey,
+      };
+    }
+
+    const summaryModel = getRuntimeSummaryModel({
+      profile: input.assistantProfile,
+      fallbackProvider: input.fallbackProvider,
+      fallbackModel: input.fallbackModel,
+      selectedModel,
+      selectedCloudModel,
+    });
+
+    return {
+      ...summaryModel,
+      apiKey: getApiKeyForProvider(summaryModel.provider) || null,
+    };
+  }
+
+  async function persistRuntimeMemorySummary(summary: RuntimeMemorySummary, logMessage: string) {
+    const savedStore = await saveRuntimeMemorySummary(runtimeChatStoreRef.current, promptProfileId, summary);
+    runtimeChatStoreRef.current = savedStore;
+    setRuntimeChatStore(savedStore);
+    await updateAssistantProfileRollingSummary(promptProfileId, summary);
+    onLog(logMessage);
+    return summary;
+  }
+
+  async function compactRuntimeContextIfNeeded(input: {
+    assistantProfile: LocalAssistantProfile;
+    currentMessages: ChatMessage[];
+    latestUserMessage: string;
+    provider: ProviderId;
+    model: string;
+  }) {
+    const settings = input.assistantProfile.prompt?.settings.summaryMemory;
+    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId] ?? null;
+    if (appMode !== "runtime" || !settings?.rollingSummary) {
+      return currentSummary;
+    }
+
+    const compactTargetCount = Math.max(0, input.currentMessages.length - RECENT_CONTEXT_MESSAGE_LIMIT);
+    if (compactTargetCount <= 0) {
+      return currentSummary;
+    }
+
+    const alreadyCompactedCount = Math.min(currentSummary?.compactedMessageCount ?? 0, compactTargetCount);
+    const messagesToCompact = input.currentMessages.slice(alreadyCompactedCount, compactTargetCount);
+    if (messagesToCompact.length === 0) {
+      return currentSummary;
+    }
+
+    const triggerTokenBudget = settings.triggerTokenBudget || MEMORY_COMPACTION_FALLBACK_BUDGET;
+    const estimatedConversationTokens = estimateChatTokens([
+      ...input.currentMessages,
+      { content: input.latestUserMessage },
+    ]);
+    const estimatedMemoryTokens =
+      estimateTokensFromText(getPinnedRuntimeMemory(currentSummary)) +
+      estimateTokensFromText(getCompactedSessionMemory(currentSummary));
+    const shouldCompact =
+      estimatedConversationTokens + estimatedMemoryTokens >= triggerTokenBudget ||
+      messagesToCompact.length >= RECENT_CONTEXT_MESSAGE_LIMIT;
+
+    if (!shouldCompact) {
+      return currentSummary;
+    }
+
+    const existingPinnedMemory = getPinnedRuntimeMemory(currentSummary);
+    const existingSessionSummary = getCompactedSessionMemory(currentSummary);
+    const generationModel = getMemoryGenerationModel({
+      assistantProfile: input.assistantProfile,
+      fallbackProvider: input.provider,
+      fallbackModel: input.model,
+      preferOpenAi: true,
+    });
+    if (generationModel.provider !== "openai") {
+      onLog("OpenAI key is not configured for compaction. Using the configured summary model instead.");
+    }
+
+    const summaryPrompt = [
+      "Compact the current MiVA conversation context.",
+      "This is session memory, not long-term user memory.",
+      "Keep active tasks, decisions, constraints, named files, unresolved questions, and details needed to continue this conversation.",
+      "Do not store stable user identity, preferences, or how to address the user here unless directly needed for this active thread.",
+      "Merge the new messages into the existing compacted session context. Remove repetition and temporary filler.",
+      "Output only the updated compacted session context. Do not answer the user.",
+      existingSessionSummary ? `Existing compacted session context:\n${existingSessionSummary}` : "Existing compacted session context: none.",
+      "New messages to compact:",
+      messagesToCompact.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join("\n\n"),
+    ].join("\n\n");
+
+    try {
+      const sessionSummary = (await runChatOnce({
+        provider: generationModel.provider,
+        model: generationModel.model,
+        prompt: summaryPrompt,
+        locale: activeLocale,
+        apiKey: generationModel.apiKey,
+        authToken: authSession?.token ?? null,
+        profile: input.assistantProfile,
+      })).trim();
+      const content = buildMemoryContentForStorage({
+        pinnedMemory: existingPinnedMemory,
+        sessionSummary,
+      });
+      const nextSummary: RuntimeMemorySummary = {
+        content,
+        pinnedMemory: existingPinnedMemory || undefined,
+        sessionSummary,
+        compactedMessageCount: compactTargetCount,
+        updatedAt: new Date().toISOString(),
+        provider: generationModel.provider,
+        model: generationModel.model,
+        sourceMessageCount: input.currentMessages.length,
+        estimatedTokens: estimateTokensFromText(content),
+      };
+
+      return await persistRuntimeMemorySummary(
+        nextSummary,
+        `Compacted runtime conversation context through ${compactTargetCount} message(s).`,
+      );
+    } catch (error) {
+      onLog(`Runtime context compaction failed: ${String(error)}`);
+      return currentSummary;
+    }
+  }
+
   async function updateRollingSummaryIfNeeded(input: {
     assistantProfile: LocalAssistantProfile;
     messages: ChatMessage[];
@@ -618,64 +838,68 @@ export function useRuntimeChat({
       return;
     }
 
-    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? "";
+    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId] ?? null;
+    const currentPinnedMemory = getPinnedRuntimeMemory(currentSummary);
+    const currentSessionSummary = getCompactedSessionMemory(currentSummary);
     const triggerTokenBudget = settings.triggerTokenBudget || MEMORY_COMPACTION_FALLBACK_BUDGET;
-    const currentSummaryTokens = estimateTokensFromText(currentSummary);
+    const currentPinnedMemoryTokens = estimateTokensFromText(currentPinnedMemory);
     const memoryRequested = hasExplicitMemoryRequest(input.latestUserMessage);
-    const needsCompaction = currentSummaryTokens >= triggerTokenBudget;
-    if (!memoryRequested && !needsCompaction) {
+    const needsPinnedMemoryCompaction = currentPinnedMemoryTokens >= triggerTokenBudget;
+    if (!memoryRequested && !needsPinnedMemoryCompaction) {
       return;
     }
 
     const messagesForMemory = memoryRequested
       ? input.messages.slice(-RECENT_CONTEXT_MESSAGE_LIMIT)
       : [];
-    const estimatedTokens = estimateChatTokens(messagesForMemory) + currentSummaryTokens;
-    const summaryModel = getRuntimeSummaryModel({
-      profile: input.assistantProfile,
+    const estimatedTokens = estimateChatTokens(messagesForMemory) + currentPinnedMemoryTokens;
+    const summaryModel = getMemoryGenerationModel({
+      assistantProfile: input.assistantProfile,
       fallbackProvider: input.provider,
       fallbackModel: input.model,
-      selectedModel,
-      selectedCloudModel,
     });
     const summaryPrompt = [
-      "Update this assistant memory for MiVA.",
-      "Default policy: only store information the user explicitly asked the assistant to remember.",
-      "If the existing memory is getting long, compact it by merging duplicates and removing temporary details.",
-      "Keep stable user preferences, active projects, important facts, and unresolved tasks.",
-      "Use two short sections: Pinned memory and Working memory.",
-      "Output only the updated memory summary. Do not explain the process.",
-      currentSummary ? `Existing summary:\n${currentSummary}` : "Existing summary: none.",
+      "Update this assistant's pinned long-term memory for MiVA.",
+      "Store only information the user explicitly asked the assistant to remember, plus stable preferences, active long-term projects, important facts, and unresolved long-term tasks.",
+      "Do not store temporary details from the active conversation unless the user explicitly asked to remember them.",
+      "Do not include session progress here; current conversation context is compacted separately.",
+      "If the existing pinned memory is getting long, compact it by merging duplicates and removing stale temporary details.",
+      "Use concise bullets grouped under stable headings when helpful.",
+      "Output only the updated pinned long-term memory. Do not explain the process.",
+      currentPinnedMemory ? `Existing pinned memory:\n${currentPinnedMemory}` : "Existing pinned memory: none.",
       memoryRequested
         ? "Recent conversation with the explicit memory request:"
-        : "No new memory request. Compact the existing summary only.",
+        : "No new memory request. Compact the existing pinned memory only.",
       memoryRequested
         ? messagesForMemory.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join("\n\n")
         : "",
     ].join("\n\n");
 
-    const summary = await runChatOnce({
+    const pinnedMemory = (await runChatOnce({
       provider: summaryModel.provider,
       model: summaryModel.model,
       prompt: summaryPrompt,
       locale: activeLocale,
-      apiKey: getApiKeyForProvider(summaryModel.provider) || null,
+      apiKey: summaryModel.apiKey,
       authToken: authSession?.token ?? null,
       profile: input.assistantProfile,
+    })).trim();
+    const content = buildMemoryContentForStorage({
+      pinnedMemory,
+      sessionSummary: currentSessionSummary,
     });
     const nextSummary: RuntimeMemorySummary = {
-      content: summary.trim(),
+      content,
+      pinnedMemory,
+      sessionSummary: currentSessionSummary || undefined,
+      compactedMessageCount: currentSummary?.compactedMessageCount ?? 0,
       updatedAt: new Date().toISOString(),
       provider: summaryModel.provider,
       model: summaryModel.model,
       sourceMessageCount: input.messages.length,
-      estimatedTokens,
+      estimatedTokens: estimatedTokens + estimateTokensFromText(content),
     };
-    const savedStore = await saveRuntimeMemorySummary(runtimeChatStoreRef.current, promptProfileId, nextSummary);
-    runtimeChatStoreRef.current = savedStore;
-    setRuntimeChatStore(savedStore);
-    await updateAssistantProfileRollingSummary(promptProfileId, nextSummary);
-    onLog(`Updated rolling summary memory for ${input.assistantProfile.name}.`);
+    await persistRuntimeMemorySummary(nextSummary, `Updated pinned memory for ${input.assistantProfile.name}.`);
   }
 
   async function updateMemoryFromImageAnalysis(input: {
@@ -690,45 +914,48 @@ export function useRuntimeChat({
       return;
     }
 
-    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? "";
+    const currentSummary = runtimeChatStoreRef.current.summaries[promptProfileId] ?? null;
+    const currentPinnedMemory = getPinnedRuntimeMemory(currentSummary);
+    const currentSessionSummary = getCompactedSessionMemory(currentSummary);
     const mivaProvider = selectedProvider;
     const mivaModel = selectedProvider === "ollama" ? selectedModel : selectedCloudModel;
-    const summaryModel = getRuntimeSummaryModel({
-      profile: input.assistantProfile,
+    const summaryModel = getMemoryGenerationModel({
+      assistantProfile: input.assistantProfile,
       fallbackProvider: mivaProvider,
       fallbackModel: mivaModel,
-      selectedModel,
-      selectedCloudModel,
     });
     const summaryPrompt = buildImageAnalysisMemoryPrompt({
-      currentSummary,
+      currentSummary: currentPinnedMemory,
       userMessage: input.userMessage,
       imageNames: input.imageNames,
       visionAnswer: input.visionAnswer,
     });
 
-    const summary = await runChatOnce({
+    const pinnedMemory = (await runChatOnce({
       provider: summaryModel.provider,
       model: summaryModel.model,
       prompt: summaryPrompt,
       locale: activeLocale,
-      apiKey: getApiKeyForProvider(summaryModel.provider) || null,
+      apiKey: summaryModel.apiKey,
       authToken: authSession?.token ?? null,
       profile: input.assistantProfile,
+    })).trim();
+    const content = buildMemoryContentForStorage({
+      pinnedMemory,
+      sessionSummary: currentSessionSummary,
     });
     const nextSummary: RuntimeMemorySummary = {
-      content: summary.trim(),
+      content,
+      pinnedMemory,
+      sessionSummary: currentSessionSummary || undefined,
+      compactedMessageCount: currentSummary?.compactedMessageCount ?? 0,
       updatedAt: new Date().toISOString(),
       provider: summaryModel.provider,
       model: summaryModel.model,
       sourceMessageCount: input.messageCount,
-      estimatedTokens: estimateTokensFromText(summary) + estimateTokensFromText(input.visionAnswer),
+      estimatedTokens: estimateTokensFromText(content) + estimateTokensFromText(input.visionAnswer),
     };
-    const savedStore = await saveRuntimeMemorySummary(runtimeChatStoreRef.current, promptProfileId, nextSummary);
-    runtimeChatStoreRef.current = savedStore;
-    setRuntimeChatStore(savedStore);
-    await updateAssistantProfileRollingSummary(promptProfileId, nextSummary);
-    onLog(`Stored image analysis in assistant memory for ${input.assistantProfile.name}.`);
+    await persistRuntimeMemorySummary(nextSummary, `Stored image analysis in pinned memory for ${input.assistantProfile.name}.`);
   }
 
   async function completeClawCodeWorkspaceFromChat(messageCreatedAt: string, workspaceRoot: string) {
@@ -744,7 +971,7 @@ export function useRuntimeChat({
     )));
   }
 
-  async function sendMessage() {
+  async function sendMessage(options?: { promptFixQuote?: string }) {
     const rawInput = chatInput.trim();
     const readyAttachments = documentAttachments.filter((attachment) => attachment.status === "ready");
     const readyImageAttachments = imageAttachments;
@@ -758,14 +985,19 @@ export function useRuntimeChat({
         : ""));
     const isDaisoSlashCommand = parsed?.command.id === "daiso";
     const isCodeSlashCommand = parsed?.command.id === "code";
+    const isPromptFixSlashCommand = parsed?.command.id === "fix";
     const isImageSlashCommand = parsed?.command.id === "image";
     const isWorkspaceSlashCommand = Boolean(parsed?.command.workspaceService);
     const isImportedSkillSlashCommand = Boolean(parsed?.command.importedSkillId);
     const baseDisplayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput || (usesImageVision ? "Analyze the attached image(s)." : "Analyze the attached document data.");
+    const promptFixQuote = isPromptFixSlashCommand ? options?.promptFixQuote?.trim() : "";
     const attachmentLabel = readyAttachments.length > 0
       ? `\n\nAttached: ${readyAttachments.map((attachment) => attachment.name).join(", ")}`
       : "";
-    const displayContent = `${baseDisplayContent}${attachmentLabel}`;
+    const promptFixQuoteLabel = promptFixQuote
+      ? `\n\nSelected assistant answer:\n> ${promptFixQuote.replace(/\n/g, "\n> ")}`
+      : "";
+    const displayContent = `${baseDisplayContent}${promptFixQuoteLabel}${attachmentLabel}`;
     const messageImages = readyImageAttachments.length > 0
       ? readyImageAttachments.map((attachment) => ({
           dataUrl: attachment.previewUrl,
@@ -776,6 +1008,10 @@ export function useRuntimeChat({
     if (parsed) {
       assistantProfile = applySlashCommandProfile(assistantProfile, parsed.command.id, slashCommands);
     }
+    assistantProfile = {
+      ...assistantProfile,
+      personalization: personalizationSettings,
+    };
     const chatMode = appMode;
     const activeProvider = usesImageVision ? IMAGE_VISION_PROVIDER : selectedProvider;
     const activeModel = usesImageVision ? IMAGE_VISION_MODEL : (selectedProvider === "ollama" ? selectedModel : selectedCloudModel);
@@ -783,12 +1019,6 @@ export function useRuntimeChat({
     const apiKey = getApiKeyForProvider(activeProvider);
     const localUnavailable = !usesImageVision && selectedProvider === "ollama" && !statusInstalled;
     const currentMessages = chatMode === "runtime" ? runtimeChatMessages : testChatMessages;
-    const recentContextMessages = currentMessages
-      .slice(-RECENT_CONTEXT_MESSAGE_LIMIT)
-      .map((message) => ({ role: message.role, content: message.content }));
-    const memorySummary = chatMode === "runtime"
-      ? runtimeChatStoreRef.current.summaries[promptProfileId]?.content ?? null
-      : null;
 
     if (
       attachmentsAnalyzing ||
@@ -847,11 +1077,64 @@ export function useRuntimeChat({
       return;
     }
 
+    if (isPromptFixSlashCommand) {
+      const requestedAt = new Date().toISOString();
+      const fixRule = normalizePromptFixRule(prompt);
+      if (!fixRule) {
+        return;
+      }
+
+      resetChatComposer();
+      shouldAutoScrollChatRef.current = true;
+      setShowJumpToLatest(false);
+      updateChatMessages(chatMode, (current) => [
+        ...current,
+        { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
+      ]);
+
+      try {
+        const updatedProfile = await updateAssistantPromptSettings(assistantProfile.id, (settings) => ({
+          ...settings,
+          responseRules: settings.responseRules.includes(fixRule)
+            ? settings.responseRules
+            : [...settings.responseRules, fixRule],
+          generatedFinalSystemPrompt: applyFixRuleToSystemPrompt(settings.generatedFinalSystemPrompt, fixRule),
+        }));
+        updateChatMessages(chatMode, (current) => [
+          ...current,
+          {
+            role: "assistant",
+            content: updatedProfile
+              ? `Saved this as a prompt rule:\n\n- ${fixRule}\n\nYou can review it in Studio > Prompts.`
+              : "I could not find the active assistant profile to update.",
+            createdAt: new Date().toISOString(),
+            provider: activeProvider,
+            model: providerModel,
+          },
+        ]);
+        onLog(`Prompt rule updated from /fix: ${fixRule}`);
+      } catch (error) {
+        const message = `Prompt rule update failed: ${String(error)}`;
+        updateChatMessages(chatMode, (current) => [
+          ...current,
+          {
+            role: "assistant",
+            content: message,
+            createdAt: new Date().toISOString(),
+            provider: activeProvider,
+            model: providerModel,
+          },
+        ]);
+        onLog(message);
+      }
+      return;
+    }
+
     const latestUserMessage = displayContent;
 
     const workspaceEnabled = isWorkspaceSlashCommand && assistantProfile.prompt.settings.toolConnections.googleWorkspace;
     const workspaceServices = assistantProfile.prompt.settings.toolConnections.googleWorkspaceServices;
-    if (!isDaisoSlashCommand && !isCodeSlashCommand && !isImageSlashCommand && !isImportedSkillSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
+    if (!isDaisoSlashCommand && !isCodeSlashCommand && !isPromptFixSlashCommand && !isImageSlashCommand && !isImportedSkillSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
       const workspaceStatus = await refreshGoogleWorkspaceStatus();
       if (!workspaceStatus?.connected) {
         await onWorkspaceAuthRequired();
@@ -910,6 +1193,22 @@ export function useRuntimeChat({
       }
     }
 
+    const runtimeSummaryForRequest = chatMode === "runtime"
+      ? await compactRuntimeContextIfNeeded({
+          assistantProfile,
+          currentMessages,
+          latestUserMessage: displayContent,
+          provider: activeProvider,
+          model: providerModel,
+        })
+      : null;
+    const recentContextMessages = currentMessages
+      .slice(-RECENT_CONTEXT_MESSAGE_LIMIT)
+      .map((message) => ({ role: message.role, content: message.content }));
+    const memorySummary = chatMode === "runtime"
+      ? buildMemoryContextForRequest(assistantProfile, runtimeSummaryForRequest)
+      : null;
+
     resetChatComposer();
     setDocumentAttachments([]);
     setImageAttachments([]);
@@ -921,6 +1220,13 @@ export function useRuntimeChat({
       ...current,
       { role: "user", content: displayContent, images: messageImages, createdAt: requestedAt, provider: activeProvider, model: providerModel },
     ]);
+
+    if (chatMode === "runtime" && assistantProfile.prompt.settings.character.enabled) {
+      const userEmotion = detectEmotionFromText(rawInput || prompt);
+      if (userEmotion) {
+        pulseEmotion(userEmotion);
+      }
+    }
 
     try {
       if (isImageSlashCommand) {
@@ -1034,6 +1340,13 @@ export function useRuntimeChat({
         ].join("\n"));
         onLog(`Daiso CLI completed: ${daisoResult.commandLine || "unknown command"}`);
       }
+      if (
+        chatMode === "runtime"
+        && assistantProfile.prompt.settings.character.enabled
+        && assistantProfile.prompt.settings.character.reactionMode === "aiCues"
+      ) {
+        toolContexts.push(MOOD_TAG_INSTRUCTION);
+      }
       const toolContext = toolContexts.length > 0 ? toolContexts.join("\n\n") : null;
 
       chatAbortControllerRef.current?.abort();
@@ -1110,6 +1423,16 @@ export function useRuntimeChat({
         )));
       }
       const latencyMs = Math.round(performance.now() - startedAt);
+      // Honor an AI mood cue if present, then strip it so it never reaches the
+      // user's screen or TTS. The cleaned answer is what we display and store.
+      const moodFromTag = parseMoodTag(answer);
+      const cleanAnswer = stripMoodTag(answer);
+      if (chatMode === "runtime" && assistantProfile.prompt.settings.character.enabled) {
+        const replyEmotion = moodFromTag ?? detectEmotionFromText(cleanAnswer);
+        if (replyEmotion) {
+          pulseEmotion(replyEmotion);
+        }
+      }
       setChatMetrics({
         provider: activeProvider,
         model: providerModel,
@@ -1120,7 +1443,7 @@ export function useRuntimeChat({
         message.role === "assistant" && message.createdAt === assistantCreatedAt
           ? {
               ...message,
-              content: answer || message.content,
+              content: cleanAnswer || message.content,
               latencyMs,
               uiAction: chatUiAction,
             }
@@ -1144,7 +1467,7 @@ export function useRuntimeChat({
             { role: "user", content: displayContent, createdAt: requestedAt, provider: activeProvider, model: providerModel },
             {
               role: "assistant",
-              content: answer,
+              content: cleanAnswer,
               createdAt: new Date().toISOString(),
               provider: activeProvider,
               model: providerModel,
@@ -1160,7 +1483,7 @@ export function useRuntimeChat({
       }
       onLog(usesImageVision ? "Image analysis response received." : "Chat response received.");
       if (chatMode === "runtime") {
-        void speakAssistantAnswer(answer);
+        void speakAssistantAnswer(cleanAnswer);
       }
       if (chatMode === "runtime" && authSession) {
         void recordRuntimeUsageEvent({
@@ -1333,6 +1656,7 @@ export function useRuntimeChat({
     activeChatMessages,
     activeConversationId: currentConversationId,
     assistantConversationGroups,
+    characterEmotion,
     chatBusyLabel,
     chatEndRef,
     chatInput,

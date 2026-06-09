@@ -1,22 +1,38 @@
 import type { AuthSession } from "../types";
 import { BrandLogo } from "./BrandLogo";
+import { SidebarToggleIcon } from "./SidebarToggleIcon";
 import { UserNavButton } from "./UserNavButton";
 
 type HistoryNavigationProps = {
   authSession: AuthSession | null;
   t: Record<string, string>;
+  onEnterPersonalization: () => void;
+  onEnterSettings: () => void;
   onOpenAuth: () => void;
+  onOpenBilling: () => void;
+  onOpenWebConsole: () => void;
+  onSignOut: () => void;
+  onToggleSidebar: () => void;
 };
 
-export function HistoryNavigation({ authSession, t, onOpenAuth }: HistoryNavigationProps) {
+export function HistoryNavigation({ authSession, t, onEnterPersonalization, onEnterSettings, onOpenAuth, onOpenBilling, onOpenWebConsole, onSignOut, onToggleSidebar }: HistoryNavigationProps) {
   return (
     <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
       <div className="miva-sidebar-header">
         <BrandLogo className="h-7 w-7 rounded-lg" />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
           <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.historyConversationHistory}</p>
         </div>
+        <button
+          aria-label="Close navigation"
+          className="miva-sidebar-toggle"
+          onClick={onToggleSidebar}
+          title="Close navigation"
+          type="button"
+        >
+          <SidebarToggleIcon className="h-[16px] w-[16px]" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 py-3">
@@ -33,7 +49,7 @@ export function HistoryNavigation({ authSession, t, onOpenAuth }: HistoryNavigat
         </section>
       </div>
 
-      <UserNavButton authSession={authSession} onOpenAuth={onOpenAuth} />
+      <UserNavButton authSession={authSession} onEnterPersonalization={onEnterPersonalization} onEnterSettings={onEnterSettings} onOpenAuth={onOpenAuth} onOpenBilling={onOpenBilling} onOpenWebConsole={onOpenWebConsole} onSignOut={onSignOut} />
     </aside>
   );
 }

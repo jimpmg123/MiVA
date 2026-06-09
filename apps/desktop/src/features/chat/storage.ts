@@ -119,12 +119,30 @@ function normalizeSummary(value: unknown): RuntimeMemorySummary | null {
   }
 
   const summary = value as Partial<RuntimeMemorySummary>;
-  if (typeof summary.content !== "string" || !summary.content.trim()) {
+  const pinnedMemory = typeof summary.pinnedMemory === "string" && summary.pinnedMemory.trim()
+    ? summary.pinnedMemory.trim()
+    : null;
+  const sessionSummary = typeof summary.sessionSummary === "string" && summary.sessionSummary.trim()
+    ? summary.sessionSummary.trim()
+    : null;
+  const content = typeof summary.content === "string" && summary.content.trim()
+    ? summary.content.trim()
+    : [
+        pinnedMemory ? `Pinned memory:\n${pinnedMemory}` : "",
+        sessionSummary ? `Compacted current conversation:\n${sessionSummary}` : "",
+      ].filter(Boolean).join("\n\n");
+
+  if (!content) {
     return null;
   }
 
   return {
-    content: summary.content.trim(),
+    content,
+    pinnedMemory: pinnedMemory ?? undefined,
+    sessionSummary: sessionSummary ?? undefined,
+    compactedMessageCount: Number.isFinite(Number(summary.compactedMessageCount))
+      ? Math.max(0, Math.round(Number(summary.compactedMessageCount)))
+      : 0,
     updatedAt: typeof summary.updatedAt === "string" ? summary.updatedAt : new Date().toISOString(),
     provider: summary.provider === "openai" || summary.provider === "gemini" || summary.provider === "groq" || summary.provider === "ollama"
       ? summary.provider

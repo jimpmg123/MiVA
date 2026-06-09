@@ -1,5 +1,5 @@
 import { PrimaryButton, SectionHeader } from "../components/ui";
-import { codingAccessModeCopy, codingCapabilityCopy, codingProviderPolicyCopy, defaultPromptSettings, normalizePromptSettings, scheduleModeCopy, workspacePolicyCopy } from "../features/assistants/profile";
+import { codingAccessModeCopy, codingCapabilityCopy, codingProviderPolicyCopy, normalizePromptSettings } from "../features/assistants/profile";
 import { providerMeta } from "../features/models/catalog";
 import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, ImportedSkill, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
 import { ModelsPanel } from "../studio/ModelsPage";
@@ -87,6 +87,7 @@ type StudioPageProps = {
   installedModels: string[];
   isNewAssistantDraft: boolean;
   modelCatalog: any[];
+  newAssistantConfiguredSections: Partial<Record<StudioSection, boolean>>;
   profileDetailsDraft: ProfileDetailsDraft;
   promptEditorMode: PromptEditorMode;
   promptSettingsDraft: PromptSettings;
@@ -125,6 +126,10 @@ type StudioPageProps = {
   onRefreshGoogleWorkspaceStatus: () => void;
   onAddAssistantStart: () => void;
   onConfirmDiscardStudioChanges: (action: () => void) => void;
+  onNewAssistantSectionConfigured: (section: StudioSection) => void;
+  onPromptSurveyRequired: () => void;
+  promptSurveyAlertVisible: boolean;
+  promptSurveyComplete: boolean;
   t: Record<string, string>;
   tauriRuntime: boolean;
   toolsForAiOpen: boolean;
@@ -149,8 +154,8 @@ export function StudioPage({
   installedModels,
   isNewAssistantDraft,
   modelCatalog,
+  newAssistantConfiguredSections,
   profileDetailsDraft,
-  promptEditorMode,
   promptSettingsDraft,
   providerText,
   selectedCloudModel,
@@ -175,27 +180,29 @@ export function StudioPage({
   saveCurrentLocalAssistantProfile,
   setActiveLocalProfileId,
   setAppMode,
-  setPromptEditorMode,
   setPromptSettingsDraft,
   setProfileDetailsDraft,
   setSelectedCloudModel,
   setSelectedModel,
   setSelectedProvider,
-  setToolsForAiOpen,
   onOpenWorkspaceConsent,
   onOpenPythonSetup,
   onRefreshGoogleWorkspaceStatus,
   onAddAssistantStart,
   onConfirmDiscardStudioChanges,
+  onNewAssistantSectionConfigured,
+  onPromptSurveyRequired,
+  promptSurveyAlertVisible,
+  promptSurveyComplete,
   t,
   tauriRuntime,
-  toolsForAiOpen,
 }: StudioPageProps) {
     const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
     const isAssistantEditorSection = studioSection !== "myAssistants";
     const currentEditorProfile = buildCurrentLocalAssistantProfile();
     const editingExistingAssistant = !isNewAssistantDraft
       && assistantProfileStore.profiles.some((profile) => profile.id === activeLocalProfileId);
+    const promptSurveyRequired = isNewAssistantDraft && !promptSurveyComplete;
     const saveActionLabel = editingExistingAssistant ? "Save changes" : "Add assistant";
     const normalizedEditorName = currentEditorProfile.name.trim().toLocaleLowerCase();
     const duplicateNameMessage = normalizedEditorName && assistantProfileStore.profiles.some((profile) => (
@@ -204,6 +211,11 @@ export function StudioPage({
       ? "An assistant with this name already exists."
       : null;
     const runEditorSave = () => {
+      if (promptSurveyRequired) {
+        onPromptSurveyRequired();
+        return;
+      }
+
       if (duplicateNameMessage) {
         return;
       }
@@ -281,8 +293,10 @@ export function StudioPage({
       return (
         <StudioOverviewPanel
           codingLabel={codingCapabilityCopy[profile.prompt.settings.coding.capability]}
+          configuredNewAssistantSections={newAssistantConfiguredSections}
           assistantProfileError={assistantProfileError}
           duplicateNameMessage={duplicateNameMessage}
+          isNewAssistantDraft={isNewAssistantDraft}
           onProfileDetailsChange={setProfileDetailsDraft}
           placeholderCards={placeholderCards.overview.slice(1)}
           profile={profile}
@@ -302,16 +316,11 @@ export function StudioPage({
       return (
         <PromptStudioPanel
           profile={profile}
-          promptEditorMode={promptEditorMode}
-          scheduleModeCopy={scheduleModeCopy}
+          profileDetailsDraft={profileDetailsDraft}
           settings={promptSettingsDraft}
-          toolsForAiOpen={toolsForAiOpen}
-          workspacePolicyCopy={workspacePolicyCopy}
-          onPromptEditorModeChange={setPromptEditorMode}
+          onProfileDetailsChange={setProfileDetailsDraft}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
-          onResetDefaults={() => setPromptSettingsDraft(defaultPromptSettings)}
-          onSaveLocal={() => void (editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile())}
-          onToolsForAiOpenChange={setToolsForAiOpen}
+          onSaveLocal={() => editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile()}
         />
       );
     };
@@ -330,9 +339,20 @@ export function StudioPage({
           selectedProvider={selectedProvider}
           onEnterAiModelSettings={enterAiModelSettings}
           onEnterClawCodeSettings={enterClawCodeSettings}
-          onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
-          onSaveLocal={() => void (editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile())}
+          onPromptSettingsChange={(updater) => {
+            onNewAssistantSectionConfigured("code");
+            setPromptSettingsDraft((current) => updater(current));
+          }}
+          onSaveLocal={() => {
+            if (promptSurveyRequired) {
+              onPromptSurveyRequired();
+              return;
+            }
+
+            void (editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile());
+          }}
           onSelectGeminiFlash={() => {
+            onNewAssistantSectionConfigured("models");
             setSelectedProvider("gemini");
             setSelectedCloudModel("gemini-2.5-flash");
           }}
@@ -401,10 +421,12 @@ export function StudioPage({
           if (!signedIn) {
             return;
           }
+          onNewAssistantSectionConfigured("models");
           setSelectedProvider(provider);
           setSelectedCloudModel(modelId);
         }}
         onSelectLocalModel={(modelName) => {
+          onNewAssistantSectionConfigured("models");
           setSelectedProvider("ollama");
           setSelectedModel(modelName);
         }}
@@ -467,6 +489,11 @@ export function StudioPage({
                 <p className="mt-1 truncate text-sm font-semibold text-[var(--miva-text)]">{currentEditorProfile.name}</p>
                 {assistantProfileError && (
                   <p className="mt-1 text-xs font-semibold text-[var(--miva-danger-hover)]">{assistantProfileError}</p>
+                )}
+                {promptSurveyAlertVisible && promptSurveyRequired && (
+                  <p className="mt-1 text-xs font-semibold text-[var(--miva-danger-hover)]">
+                    Complete Prompts before saving this assistant.
+                  </p>
                 )}
               </div>
               <PrimaryButton className="shrink-0" disabled={Boolean(duplicateNameMessage)} onClick={runEditorSave}>

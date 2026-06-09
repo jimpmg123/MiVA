@@ -64,7 +64,7 @@ export function ProfileStep({
                 Save assistant
               </PrimaryButton>
             )}
-            body="Survey choices, provider selection, and model recommendation are saved locally first."
+            body="Profile context, provider selection, and model recommendation are saved locally first."
             title="Assistant Setup"
             className="mb-0"
           />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { invokeCommand, isTauriRuntime } from "../../app/tauri";
-import type { PromptSettings } from "../../types";
+import type { CharacterEmotion, PromptSettings } from "../../types";
 
 export const CHARACTER_OVERLAY_EVENT = "character-overlay:update";
 export const CHARACTER_OVERLAY_CLOSED_EVENT = "character-overlay:closed";
@@ -10,6 +10,7 @@ export const CHARACTER_OVERLAY_READY_EVENT = "character-overlay:ready";
 export type CharacterOverlayState = {
   character: PromptSettings["character"];
   activity: "Idle" | "Thinking" | "Speaking";
+  emotion?: CharacterEmotion;
 };
 
 export async function showCharacterOverlay() {

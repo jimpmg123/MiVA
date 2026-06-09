@@ -6,19 +6,19 @@ type WelcomeStepProps = {
 };
 
 const features = [
-  { icon: "lock", tone: "action" as const, titleKey: "privacyTitle", bodyKey: "privacyBody" },
-  { icon: "bolt", tone: "success" as const, titleKey: "localModelTitle", bodyKey: "localModelBody" },
-  { icon: "cloud_off", tone: "neutral" as const, titleKey: "guidedTitle", bodyKey: "guidedBody" },
+  { icon: "shield_lock", tone: "action" as const, titleKey: "privacyTitle", bodyKey: "privacyBody" },
+  { icon: "tune", tone: "success" as const, titleKey: "localModelTitle", bodyKey: "localModelBody" },
+  { icon: "repeat", tone: "neutral" as const, titleKey: "guidedTitle", bodyKey: "guidedBody" },
 ];
 
 export function WelcomeStep({ t, onStart }: WelcomeStepProps) {
   return (
     <SetupStepShell className="items-center justify-center text-center" variant="hero">
       <div className="miva-welcome-reveal mb-10 space-y-4">
-        <h2 className="font-heading text-[42px] font-black leading-tight tracking-tight text-[var(--miva-text)]">
+        <h2 className="font-heading text-[42px] font-bold leading-tight tracking-tight text-[var(--miva-text)]">
           {t.welcomeTitle}
         </h2>
-        <p className="mx-auto max-w-xl text-base leading-6 text-[var(--miva-text-muted)]">{t.welcomeBody}</p>
+        <p className="mx-auto max-w-2xl whitespace-pre-line text-base leading-7 text-[var(--miva-text-muted)]">{t.welcomeBody}</p>
       </div>
 
       <div className="mb-12 grid w-full grid-cols-3 gap-6">
@@ -28,12 +28,12 @@ export function WelcomeStep({ t, onStart }: WelcomeStepProps) {
             key={feature.titleKey}
           >
             <IconTile className="mb-4 h-12 w-12 rounded-full" tone={feature.tone}>
-              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+              <span className="material-symbols-outlined text-[26px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                 {feature.icon}
               </span>
             </IconTile>
-            <h3 className="font-heading mb-1 text-base font-bold text-[var(--miva-text)]">{t[feature.titleKey]}</h3>
-            <p className="text-sm leading-5 text-[var(--miva-text-muted)]">{t[feature.bodyKey]}</p>
+            <h3 className="font-heading mb-2 text-base font-bold text-[var(--miva-text)]">{t[feature.titleKey]}</h3>
+            <p className="max-w-[19rem] text-sm leading-6 text-[var(--miva-text-muted)]">{t[feature.bodyKey]}</p>
           </Panel>
         ))}
       </div>

@@ -123,7 +123,7 @@ export function MyAssistantsPanel({
         )}
       </Panel>
 
-      <div className="grid items-start gap-3 lg:grid-cols-2">
+      <div className="grid items-start gap-3">
         {profiles.map((profile) => (
           <MyAssistantCard
             active={profile.id === activeProfileId}

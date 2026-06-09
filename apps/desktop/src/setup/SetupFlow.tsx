@@ -9,6 +9,7 @@ import { OllamaStep } from "./OllamaStep";
 import { ProfileStep } from "./ProfileStep";
 import { RecommendationStep } from "./RecommendationStep";
 import { SurveyStep } from "./SurveyStep";
+import { UserProfileStep } from "./UserProfileStep";
 import { WelcomeStep } from "./WelcomeStep";
 import type {
   ClawCodeRuntimeInfo,
@@ -268,6 +269,12 @@ export function SetupFlow({
           surveyQuestionIndex={surveyQuestionIndex}
           surveyQuestions={surveyQuestions}
           t={t}
+        />
+      )}
+      userProfileStep={(
+        <UserProfileStep
+          goToNextStep={goToNextStep}
+          goToPreviousStep={goToPreviousStep}
         />
       )}
       welcomeStep={<WelcomeStep t={t} onStart={goToNextStep} />}

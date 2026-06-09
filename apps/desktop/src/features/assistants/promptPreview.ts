@@ -12,12 +12,17 @@ export function buildSystemPromptPreview(
   profile: Pick<LocalAssistantProfile, "useCase" | "answerStyle" | "priority" | "languageUse" | "localMode" | "futureFeatures" | "provider" | "model">,
   promptSettings: PromptSettings,
 ) {
+  if (promptSettings.generatedFinalSystemPrompt?.trim()) {
+    return promptSettings.generatedFinalSystemPrompt.trim();
+  }
+
   const languageLine = "Use English for this development build. Other locale preferences are stored for later localization.";
 
   return [
     "You are MiVA, the user's personal AI assistant.",
     languageLine,
     "Be practical, concise, and direct. If unsure, say so instead of inventing facts.",
+    "Runtime answer format: use GitHub Flavored Markdown, with headings, lists, blockquotes, and fenced code blocks when they improve readability.",
     "User-friendly prompt setup:",
     `- Assistant purpose: ${promptSettings.simple.assistantPurpose}`,
     `- User-requested work: ${promptSettings.simple.desiredTasks}`,
@@ -48,7 +53,7 @@ export function buildSystemPromptPreview(
     `- User address style: ${promptSettings.character.userAddress}`,
     `- Character speaking style: ${promptSettings.character.speakingStyle}`,
     promptSettings.character.reactionMode === "aiCues"
-      ? "- Reaction cues may be written lightly for future Runtime mapping, but do not claim a Live2D motion was rendered unless the app confirms it."
+      ? "- At the very end of each reply you may append one mood tag on its own line: [[mood:X]] where X is neutral, happy, angry, sad, surprised, shy, or playful. The app strips it before display and uses it to drive the Live2D expression. Do not otherwise claim a Live2D motion was rendered."
       : "- Use app status only for character reactions. Do not invent expressions, motions, or visual actions.",
     `Persona: ${promptSettings.persona}`,
     `Role goal: ${promptSettings.roleGoal}`,

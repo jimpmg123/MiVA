@@ -12,6 +12,7 @@ type SetupPageProps = {
   recommendationStep: ReactNode;
   settingsStep: ReactNode;
   surveyStep: ReactNode;
+  userProfileStep: ReactNode;
   welcomeStep: ReactNode;
 };
 
@@ -26,11 +27,13 @@ export function SetupPage({
   recommendationStep,
   settingsStep,
   surveyStep,
+  userProfileStep,
   welcomeStep,
 }: SetupPageProps) {
   let content: ReactNode;
 
   if (activeStep === "welcome") content = welcomeStep;
+  else if (activeStep === "userProfile") content = userProfileStep;
   else if (activeStep === "survey") content = surveyStep;
   else if (activeStep === "hardware") content = hardwareStep;
   else if (activeStep === "recommendation") content = recommendationStep;

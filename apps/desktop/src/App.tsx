@@ -25,16 +25,21 @@ import { useRuntimeChat } from "./features/chat/useRuntimeChat";
 import { useCloudDevice } from "./features/cloud/useCloudDevice";
 import { getGoogleWorkspaceStatus } from "./features/cloud/client";
 import { HistoryHost } from "./hosts/HistoryHost";
+import { LibraryHost } from "./hosts/LibraryHost";
 import { RuntimeHost } from "./hosts/RuntimeHost";
 import { SettingsHost } from "./hosts/SettingsHost";
 import { StudioHost } from "./hosts/StudioHost";
 import { Button, IconTile, ModalBackdrop, ModalPanel, SecondaryButton } from "./components/ui";
+import { ChatSearchModal } from "./components/ChatSearchModal";
 import { updateLastAppMode } from "./features/app/storage";
 import { useClawCodeRuntime } from "./features/claw/useClawCodeRuntime";
+import { useLibraryItems } from "./features/library/useLibraryItems";
 import { useUiTheme } from "./features/theme/useUiTheme";
+import { loadPersonalizationSettings, savePersonalizationSettings } from "./features/profile/storage";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
   AppMode,
+  PersonalizationSettings,
   ProfileDetailsDraft,
   PromptEditorMode,
   PromptSettings,
@@ -63,12 +68,13 @@ function App() {
     settingsSection,
   } = useAppNavigation();
   const [studioSection, setStudioSection] = useState<StudioSection>("myAssistants");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [survey, setSurvey] = useState<SurveyState>({
-    useCase: null,
-    answerStyle: null,
-    priority: null,
-    languageUse: null,
-    localMode: null,
+    useCase: "fast",
+    answerStyle: "moderate",
+    priority: "balanced",
+    languageUse: "korean",
+    localMode: "hybrid",
     futureFeatures: [],
     memorySyncMode: "profileOnly",
   });
@@ -86,6 +92,10 @@ function App() {
   const [dismissedChatIntroKeys, setDismissedChatIntroKeys] = useState<string[]>([]);
   const [profileDetailsDraft, setProfileDetailsDraft] = useState<ProfileDetailsDraft>(() => defaultProfileDetails);
   const [promptSettingsDraft, setPromptSettingsDraft] = useState<PromptSettings>(() => defaultPromptSettings);
+  const [personalizationSettings, setPersonalizationSettingsState] = useState<PersonalizationSettings>(() => loadPersonalizationSettings());
+  const [promptSurveyAlertVisible, setPromptSurveyAlertVisible] = useState(false);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [newAssistantConfiguredSections, setNewAssistantConfiguredSections] = useState<Partial<Record<StudioSection, boolean>>>({});
   const [promptEditorMode, setPromptEditorMode] = useState<PromptEditorMode>("simple");
   const [toolsForAiOpen, setToolsForAiOpen] = useState(false);
   const [pendingUnsavedAction, setPendingUnsavedAction] = useState<(() => void) | null>(null);
@@ -94,6 +104,15 @@ function App() {
 
   const log = useCallback((message: string) => {
     setLogs((current) => [`${formatLogTime()} ${message}`, ...current].slice(0, 40));
+  }, []);
+  const {
+    addLibraryItems,
+    libraryItems,
+    libraryLoaded,
+  } = useLibraryItems(log);
+
+  const setPersonalizationSettings = useCallback((settings: PersonalizationSettings) => {
+    setPersonalizationSettingsState(savePersonalizationSettings(settings));
   }, []);
 
   const t = copy.en;
@@ -221,6 +240,7 @@ function App() {
   const activeProviderMode = activeProviderMeta.mode;
   const activeModelLabel = selectedProvider === "ollama" ? selectedModelInfo.label : selectedCloudModelInfo.label;
   const activeProviderLabel = activeProviderMeta.label;
+  const promptSurveyComplete = Boolean(promptSettingsDraft.generatedFinalSystemPrompt?.trim());
   const installedModels = status?.installedModels ?? [];
   const selectedModelInstalled = installedModels.includes(selectedModel);
   const recommendedModelInstalled = installedModels.includes(recommendedModel);
@@ -250,6 +270,7 @@ function App() {
     syncAllAssistantProfilesFromCloud,
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
+    updateAssistantPromptSettings,
     saveSetupAssistantProfile,
     hasUnsavedStudioDraftChanges,
     discardUnsavedStudioChanges,
@@ -281,6 +302,69 @@ function App() {
     setStudioSection,
     onLog: log,
   });
+
+  const promptSurveyRequiredForNewAssistant = isNewAssistantDraft && !promptSurveyComplete;
+  const promptSurveyAlertActive = promptSurveyAlertVisible && promptSurveyRequiredForNewAssistant && appMode === "studio";
+  const markNewAssistantSectionConfigured = useCallback((section: StudioSection) => {
+    setNewAssistantConfiguredSections((current) => (
+      current[section] ? current : { ...current, [section]: true }
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (!promptSurveyAlertVisible) {
+      return;
+    }
+
+    if (!promptSurveyRequiredForNewAssistant || appMode !== "studio") {
+      setPromptSurveyAlertVisible(false);
+    }
+  }, [appMode, promptSurveyAlertVisible, promptSurveyRequiredForNewAssistant]);
+
+  useEffect(() => {
+    if (!promptSurveyAlertVisible || studioSection !== "prompts") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPromptSurveyAlertVisible(false);
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [promptSurveyAlertVisible, studioSection]);
+
+  useEffect(() => {
+    if (!isNewAssistantDraft) {
+      setNewAssistantConfiguredSections({});
+    }
+  }, [isNewAssistantDraft]);
+
+  useEffect(() => {
+    if (isNewAssistantDraft && promptSurveyComplete) {
+      markNewAssistantSectionConfigured("prompts");
+    }
+  }, [isNewAssistantDraft, markNewAssistantSectionConfigured, promptSurveyComplete]);
+
+  const showPromptSurveyRequired = useCallback(() => {
+    setPromptSurveyAlertVisible(true);
+    setStudioSection("prompts");
+  }, []);
+
+  const startNewAssistantDraftWithUiReset = useCallback(() => {
+    setPromptSurveyAlertVisible(false);
+    setNewAssistantConfiguredSections({});
+    startNewAssistantDraft();
+  }, [startNewAssistantDraft]);
+
+  const saveStudioDraftWithPromptGuard = useCallback(() => {
+    if (isNewAssistantDraft && !promptSurveyComplete) {
+      showPromptSurveyRequired();
+      return;
+    }
+
+    saveStudioDraft();
+  }, [isNewAssistantDraft, promptSurveyComplete, saveStudioDraft, showPromptSurveyRequired]);
+
   const runtimeReady = !tauriRuntime || status !== null;
   const {
     bootProgress,
@@ -364,6 +448,7 @@ function App() {
     setChatInput,
     setSelectedSlashCommand,
     showJumpToLatest,
+    characterEmotion,
     stopRuntimeTts,
     stopChat,
     startRuntimeChatForAssistant,
@@ -381,6 +466,7 @@ function App() {
     authSession,
     activeLocalProfile,
     promptProfileId,
+    personalizationSettings,
     selectedProvider,
     selectedModel,
     selectedCloudModel,
@@ -397,6 +483,7 @@ function App() {
     buildCurrentLocalAssistantProfile,
     applyLocalAssistantProfile,
     updateAssistantProfileRollingSummary,
+    updateAssistantPromptSettings,
     setActiveLocalProfileId,
     setAppMode,
     setBusyAction,
@@ -412,6 +499,7 @@ function App() {
     applyClawCodeWorkspace,
     chooseClawCodeWorkspace,
     clawCodeStatus,
+    onLibraryItemsAdd: addLibraryItems,
     onLog: log,
   });
   const {
@@ -428,11 +516,12 @@ function App() {
   });
 
   const historyConversations = useMemo(() => {
-    const visibleAssistantIds = new Set(visibleAssistantProfileStore.profiles.map((profile) => profile.id));
     const assistantNames = new Map(visibleAssistantProfileStore.profiles.map((profile) => [profile.id, profile.name]));
 
+    // Show every stored conversation in History / chat search. We deliberately do not
+    // filter by currently-visible assistants — cloud assistants are hidden while signed
+    // out, and filtering here made the user's own local chat history look empty.
     return Object.values(runtimeChatStore.conversations)
-      .filter((conversation) => visibleAssistantIds.has(conversation.assistantId))
       .map((conversation): RuntimeStoredConversation => ({
         ...conversation,
         assistantName: conversation.assistantName || assistantNames.get(conversation.assistantId) || "Assistant",
@@ -440,15 +529,46 @@ function App() {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [runtimeChatStore.conversations, visibleAssistantProfileStore.profiles]);
 
+  // What the chat-search modal searches: every saved conversation plus the live
+  // in-progress chat (which may not be persisted to the store yet).
+  const searchableConversations = useMemo(() => {
+    const list = [...historyConversations];
+    const alreadyListed = activeConversationId
+      ? list.some((conversation) => conversation.id === activeConversationId)
+      : true;
+
+    if (!alreadyListed && activeChatMessages.length > 0) {
+      const activeProfile = visibleAssistantProfileStore.profiles.find((profile) => profile.id === promptProfileId);
+      const now = new Date().toISOString();
+      list.unshift({
+        id: activeConversationId as string,
+        assistantId: promptProfileId,
+        assistantName: activeProfile?.name || "Assistant",
+        title: activeChatMessages.find((message) => message.role === "user")?.content.trim().slice(0, 56) || "New chat",
+        messages: activeChatMessages,
+        createdAt: activeChatMessages[0]?.createdAt ?? now,
+        updatedAt: activeChatMessages[activeChatMessages.length - 1]?.createdAt ?? now,
+      });
+    }
+
+    return list;
+  }, [historyConversations, activeConversationId, activeChatMessages, promptProfileId, visibleAssistantProfileStore.profiles]);
+
   const renderNavigation = () => (
     <SetupNavigation
       activeIndex={activeIndex}
       activeStep={activeStep}
       authSession={authSession}
+      onEnterSettings={enterGeneralSettingsFromProfileMenu}
+      onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
       onAppModeChange={setAppMode}
       onOpenAuth={openAuth}
+      onOpenBilling={() => void openWebConsole("billing")}
+      onOpenWebConsole={() => void openWebConsole()}
+      onSignOut={clearAuthSession}
       onSettingsSectionChange={setSettingsSection}
       onStepChange={setActiveStep}
+      onToggleSidebar={() => setSidebarOpen(false)}
       settingsSection={settingsSection}
       settingsSections={settingsSections}
       steps={steps}
@@ -502,7 +622,12 @@ function App() {
     <StudioNavigation
       authSession={authSession}
       editorExpanded={studioSection !== "myAssistants"}
+      onEnterSettings={enterGeneralSettingsFromProfileMenu}
+      onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
       onOpenAuth={openAuth}
+      onOpenBilling={() => void openWebConsole("billing")}
+      onOpenWebConsole={() => void openWebConsole()}
+      onSignOut={clearAuthSession}
       onStudioSectionChange={(section) => {
         if (section === studioSection) {
           return;
@@ -515,10 +640,21 @@ function App() {
 
         setStudioSection(section);
       }}
+      onToggleSidebar={() => setSidebarOpen(false)}
+      promptSurveyAlertVisible={promptSurveyAlertActive}
       studioSection={studioSection}
       studioSections={studioSections}
     />
   );
+
+  const openChatSearch = () => runAfterUnsavedCheck(() => {
+    setChatSearchOpen(true);
+  });
+
+  const openAssistantLibrary = () => runAfterUnsavedCheck(() => {
+    setAppMode("library");
+    void updateLastAppMode("library");
+  });
 
   const renderRuntimeNavigation = () => (
     <RuntimeNavigation
@@ -528,8 +664,16 @@ function App() {
       authSession={authSession}
       onClearCurrentChat={clearCurrentChat}
       onConversationSelect={selectRuntimeConversation}
+      onEnterSettings={enterGeneralSettingsFromProfileMenu}
+      onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
+      onOpenChatSearch={openChatSearch}
+      onOpenLibrary={openAssistantLibrary}
       onNewChatForAssistant={startRuntimeChatForAssistant}
       onOpenAuth={openAuth}
+      onOpenBilling={() => void openWebConsole("billing")}
+      onOpenWebConsole={() => void openWebConsole()}
+      onSignOut={clearAuthSession}
+      onToggleSidebar={() => setSidebarOpen(false)}
       t={t}
     />
   );
@@ -537,7 +681,13 @@ function App() {
   const renderHistoryNavigation = () => (
     <HistoryNavigation
       authSession={authSession}
+      onEnterSettings={enterGeneralSettingsFromProfileMenu}
+      onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
       onOpenAuth={openAuth}
+      onOpenBilling={() => void openWebConsole("billing")}
+      onOpenWebConsole={() => void openWebConsole()}
+      onSignOut={clearAuthSession}
+      onToggleSidebar={() => setSidebarOpen(false)}
       t={t}
     />
   );
@@ -562,13 +712,14 @@ function App() {
 
     runAfterUnsavedCheck(() => {
       setAppMode(mode);
-      if (mode === "studio" || mode === "runtime" || mode === "history") {
+      if (mode === "studio" || mode === "runtime" || mode === "history" || mode === "library") {
         void updateLastAppMode(mode);
       }
     });
   };
 
-  const enterGeneralSettingsFromTopBar = () => runAfterUnsavedCheck(() => enterSettings("general"));
+  const enterGeneralSettingsFromProfileMenu = () => runAfterUnsavedCheck(() => enterSettings("general"));
+  const enterPersonalizationSettingsFromProfileMenu = () => runAfterUnsavedCheck(() => enterSettings("personalization"));
 
   const renderTopBar = () => (
     <AppTopBar
@@ -577,13 +728,13 @@ function App() {
       activeProviderLabel={activeProviderLabel}
       activeProviderMode={activeProviderMode}
       appMode={appMode}
-      centerHidden={appMode === "studio" || appMode === "history" || appMode === "setup"}
-      onEnterSettings={enterGeneralSettingsFromTopBar}
+      centerHidden={appMode === "studio" || appMode === "history" || appMode === "library" || appMode === "setup"}
       onModeChange={changeAppMode}
-      onOpenWebConsole={() => void openWebConsole()}
-      onStudioSave={saveStudioDraft}
+      onStudioSave={saveStudioDraftWithPromptGuard}
+      onToggleSidebar={() => setSidebarOpen(true)}
       providerText={providerText}
       settingsOpen={appMode === "setup" && activeStep === "settings"}
+      sidebarOpen={sidebarOpen}
       studioSaveLabel="Save changes"
       studioSaveVisible={false}
       t={t}
@@ -594,6 +745,15 @@ function App() {
       conversations={historyConversations}
       onContinueInRuntime={continueHistoryInRuntime}
       t={t}
+    />
+  );
+
+  const renderLibrary = () => (
+    <LibraryHost
+      items={libraryItems}
+      loaded={libraryLoaded}
+      onAddFiles={chooseAndAttachDocuments}
+      onLog={log}
     />
   );
 
@@ -629,6 +789,7 @@ function App() {
       t={t}
       ttsError={ttsError}
       ttsPlaybackState={ttsPlaybackState}
+      characterEmotion={characterEmotion}
       chooseAndAttachDocuments={chooseAndAttachDocuments}
       chooseAndAttachImages={chooseAndAttachImages}
       chooseClawCodeWorkspace={chooseClawCodeWorkspace}
@@ -730,8 +891,13 @@ function App() {
         void refreshRuntimeRequirements();
       }}
       onRefreshGoogleWorkspaceStatus={() => void refreshGoogleWorkspaceStatus()}
-      onAddAssistantStart={() => runAfterUnsavedCheck(startNewAssistantDraft)}
+      newAssistantConfiguredSections={newAssistantConfiguredSections}
+      onAddAssistantStart={() => runAfterUnsavedCheck(startNewAssistantDraftWithUiReset)}
       onConfirmDiscardStudioChanges={runAfterUnsavedCheck}
+      onNewAssistantSectionConfigured={markNewAssistantSectionConfigured}
+      onPromptSurveyRequired={showPromptSurveyRequired}
+      promptSurveyAlertVisible={promptSurveyAlertActive}
+      promptSurveyComplete={promptSurveyComplete}
       status={status}
       studioSection={studioSection}
       studioSections={studioSections}
@@ -757,6 +923,7 @@ function App() {
       cloudModelCatalog={cloudModelCatalog}
       locale={ACTIVE_LOCALE}
       logs={logs}
+      personalizationSettings={personalizationSettings}
       authSession={authSession}
       cloudProviderKeys={cloudProviderKeys}
       providerKeys={providerKeys}
@@ -777,6 +944,7 @@ function App() {
       onExitSettings={exitSettings}
       onInstallClawCode={installClawCode}
       onOpenInitialSetup={openInitialSetup}
+      onPersonalizationSettingsChange={setPersonalizationSettings}
       onProviderKeysChange={setProviderKeys}
       onRefreshClawCodeStatus={refreshClawCodeStatus}
       onSaveProviderKeys={saveProviderKeys}
@@ -885,12 +1053,25 @@ function App() {
             ? renderStudio()
             : appMode === "history"
               ? renderHistory()
-              : renderChat()
+              : appMode === "library"
+                ? renderLibrary()
+                : renderChat()
       }
       downloadModal={(
         <>
           {renderDownloadProgressModal()}
           {renderUnsavedChangesModal()}
+          {chatSearchOpen ? (
+            <ChatSearchModal
+              conversations={searchableConversations}
+              onClose={() => setChatSearchOpen(false)}
+              onSelect={(conversation) => {
+                setChatSearchOpen(false);
+                continueHistoryInRuntime(conversation);
+              }}
+              t={t}
+            />
+          ) : null}
         </>
       )}
       navigation={
@@ -902,6 +1083,7 @@ function App() {
               ? renderHistoryNavigation()
               : renderRuntimeNavigation()
       }
+      sidebarOpen={sidebarOpen}
       topBar={renderTopBar()}
     />
   );

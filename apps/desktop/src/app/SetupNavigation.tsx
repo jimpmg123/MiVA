@@ -1,5 +1,6 @@
 import type { AppMode, AuthSession, SettingsSection, StepId } from "../types";
 import { BrandLogo } from "./BrandLogo";
+import { SidebarToggleIcon } from "./SidebarToggleIcon";
 import { UserNavButton } from "./UserNavButton";
 
 type SetupStepItem = { id: StepId; label: string; detail: string };
@@ -14,9 +15,15 @@ type SetupNavigationProps = {
   steps: SetupStepItem[];
   t: Record<string, string>;
   onOpenAuth: () => void;
+  onEnterPersonalization: () => void;
+  onEnterSettings: () => void;
+  onOpenBilling: () => void;
+  onOpenWebConsole: () => void;
+  onSignOut: () => void;
   onSettingsSectionChange: (section: SettingsSection) => void;
   onStepChange: (step: StepId) => void;
   onAppModeChange: (mode: AppMode) => void;
+  onToggleSidebar: () => void;
 };
 
 export function SetupNavigation({
@@ -28,18 +35,33 @@ export function SetupNavigation({
   steps,
   t,
   onOpenAuth,
+  onEnterPersonalization,
+  onEnterSettings,
+  onOpenBilling,
+  onOpenWebConsole,
+  onSignOut,
   onSettingsSectionChange,
   onStepChange,
   onAppModeChange,
+  onToggleSidebar,
 }: SetupNavigationProps) {
   return (
     <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
       <div className="miva-sidebar-header">
         <BrandLogo className="h-7 w-7 rounded-lg" />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
           <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.setupFlowSubtitle}</p>
         </div>
+        <button
+          aria-label="Close navigation"
+          className="miva-sidebar-toggle"
+          onClick={onToggleSidebar}
+          title="Close navigation"
+          type="button"
+        >
+          <SidebarToggleIcon className="h-[16px] w-[16px]" />
+        </button>
       </div>
 
       <nav className="miva-sidebar-nav">
@@ -114,7 +136,7 @@ export function SetupNavigation({
         )}
       </nav>
 
-      <UserNavButton authSession={authSession} onOpenAuth={onOpenAuth} />
+      <UserNavButton authSession={authSession} onEnterPersonalization={onEnterPersonalization} onEnterSettings={onEnterSettings} onOpenAuth={onOpenAuth} onOpenBilling={onOpenBilling} onOpenWebConsole={onOpenWebConsole} onSignOut={onSignOut} />
     </aside>
   );
 }

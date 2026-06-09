@@ -16,6 +16,7 @@
   ImportedSkill,
   AssistantSkillsCapability,
 } from "../../types";
+import { normalizePersonalityTraits } from "../characters/personalityTraits";
 export const defaultProfileDetails: ProfileDetailsDraft = {
   name: "MiVA Assistant",
   description: "Local MiVA assistant profile created from setup choices.",
@@ -96,6 +97,7 @@ export const defaultPromptSettings: PromptSettings = {
     characterId: "vtuber-shizuku",
     displayName: "Shizuku",
     personality: "Calm, friendly, and softly supportive while still giving practical answers.",
+    personalityTraits: [],
     userAddress: defaultCharacterUserAddress,
     speakingStyle: "Use gentle wording, clear line breaks, and short natural reactions.",
     reactionMode: "statusOnly",
@@ -106,6 +108,7 @@ export const defaultPromptSettings: PromptSettings = {
     "Do not claim that an external tool action was completed unless a connected tool confirms it.",
     "Before changing calendars, files, or email, explain the planned action and wait for user confirmation.",
   ],
+  generatedFinalSystemPrompt: "",
 };
 
 export const scheduleModeCopy: Record<CalendarActionMode, string> = {
@@ -385,6 +388,7 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       personality: typeof character.personality === "string" && character.personality.trim()
         ? character.personality.trim()
         : defaultPromptSettings.character.personality,
+      personalityTraits: normalizePersonalityTraits(character.personalityTraits),
       userAddress: typeof character.userAddress === "string" && character.userAddress.trim()
         ? character.userAddress.trim() === legacyCharacterUserAddress
           ? defaultCharacterUserAddress
@@ -402,6 +406,9 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
         : defaultPromptSettings.character.showInRuntime,
     },
     safetyRules: normalizeStringList(source.safetyRules, defaultPromptSettings.safetyRules),
+    generatedFinalSystemPrompt: typeof source.generatedFinalSystemPrompt === "string"
+      ? source.generatedFinalSystemPrompt.trim()
+      : defaultPromptSettings.generatedFinalSystemPrompt,
   };
 }
 
@@ -425,6 +432,15 @@ export function normalizeMemoryCapability(
       content: typeof value?.rollingSummary?.content === "string" && value.rollingSummary.content.trim()
         ? value.rollingSummary.content.trim()
         : null,
+      pinnedMemory: typeof value?.rollingSummary?.pinnedMemory === "string" && value.rollingSummary.pinnedMemory.trim()
+        ? value.rollingSummary.pinnedMemory.trim()
+        : null,
+      sessionSummary: typeof value?.rollingSummary?.sessionSummary === "string" && value.rollingSummary.sessionSummary.trim()
+        ? value.rollingSummary.sessionSummary.trim()
+        : null,
+      compactedMessageCount: Number.isFinite(Number(value?.rollingSummary?.compactedMessageCount))
+        ? Math.max(0, Math.round(Number(value?.rollingSummary?.compactedMessageCount)))
+        : 0,
       updatedAt: typeof value?.rollingSummary?.updatedAt === "string" ? value.rollingSummary.updatedAt : null,
       provider: value?.rollingSummary?.provider === "openai" || value?.rollingSummary?.provider === "gemini" || value?.rollingSummary?.provider === "groq" || value?.rollingSummary?.provider === "ollama"
         ? value.rollingSummary.provider

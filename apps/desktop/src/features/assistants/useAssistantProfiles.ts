@@ -6,7 +6,8 @@ import type { Locale } from "../../i18n";
 import { deleteCloudAssistantProfile, listCloudAssistantProfiles, upsertCloudAssistantProfile } from "../cloud/client";
 import { deleteRuntimeChatMessagesForAssistant } from "../chat/storage";
 import { mergeCloudAssistantProfiles } from "./cloudProfile";
-import { defaultProfileDetails, defaultPromptSettings, normalizePromptSettings } from "./profile";
+import { defaultProfileDetails, defaultPromptSettings, normalizeProfileCapabilities, normalizePromptSettings } from "./profile";
+import { buildSystemPromptPreview } from "./promptPreview";
 import { buildLocalAssistantProfile } from "./profileFactory";
 import {
   createLocalProfileId,
@@ -226,6 +227,10 @@ export function useAssistantProfiles({
     }
 
     if (activeLocalProfileId === NEW_LOCAL_PROFILE_DRAFT_ID) {
+      if (!promptSettingsDraft.generatedFinalSystemPrompt?.trim()) {
+        return true;
+      }
+
       return (newAssistantDraftBaselineRef.current ?? getNewAssistantDraftBaseline()) !== getCurrentNewAssistantDraftFingerprint();
     }
 
@@ -468,6 +473,9 @@ export function useAssistantProfiles({
           syncMode: "summaryMemory",
           rollingSummary: {
             content: summary.content,
+            pinnedMemory: summary.pinnedMemory ?? null,
+            sessionSummary: summary.sessionSummary ?? null,
+            compactedMessageCount: summary.compactedMessageCount ?? 0,
             updatedAt: summary.updatedAt,
             provider: summary.provider,
             model: summary.model,
@@ -486,6 +494,45 @@ export function useAssistantProfiles({
       const syncedStore = upsertAssistantProfileStore(savedStore, syncedProfile);
       setAssistantProfileStore(await saveLocalAssistantProfileStore(syncedStore));
     }
+  }
+
+  async function updateAssistantPromptSettings(
+    profileId: string,
+    updateSettings: (settings: PromptSettings) => PromptSettings,
+  ) {
+    const profile = assistantProfileStore.profiles.find((item) => item.id === profileId)
+      ?? (activeLocalProfileId === profileId ? buildCurrentLocalAssistantProfile() : null);
+    if (!profile) {
+      return null;
+    }
+
+    const nextSettings = normalizePromptSettings(updateSettings(normalizePromptSettings(profile.prompt?.settings)));
+    const promptBase = {
+      useCase: profile.useCase,
+      answerStyle: profile.answerStyle,
+      priority: profile.priority,
+      languageUse: profile.languageUse,
+      localMode: profile.localMode,
+      futureFeatures: profile.futureFeatures,
+      provider: profile.provider,
+      model: profile.model,
+    };
+    const updatedProfile: LocalAssistantProfile = {
+      ...profile,
+      updatedAt: new Date().toISOString(),
+      prompt: {
+        ...profile.prompt,
+        systemPrompt: buildSystemPromptPreview(promptBase, nextSettings),
+        settings: nextSettings,
+      },
+      capabilities: normalizeProfileCapabilities(profile.capabilities, nextSettings, profile.survey.memorySyncMode),
+    };
+    const savedStore = await persistLocalAssistantProfile(updatedProfile);
+    const savedProfile = savedStore.profiles.find((item) => item.id === profile.id) ?? updatedProfile;
+    if (profile.id === activeLocalProfileId) {
+      applyLocalAssistantProfile(savedProfile);
+    }
+    return savedProfile;
   }
 
   async function syncLocalAssistantProfileToCloud(profile: LocalAssistantProfile) {
@@ -852,6 +899,7 @@ export function useAssistantProfiles({
     syncAllAssistantProfilesFromCloud,
     syncAssistantProfileToCloud,
     updateAssistantProfileRollingSummary,
+    updateAssistantPromptSettings,
     saveSetupAssistantProfile,
     hasUnsavedStudioDraftChanges,
     discardUnsavedStudioChanges,

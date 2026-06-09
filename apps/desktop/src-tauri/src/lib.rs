@@ -47,9 +47,10 @@ const ALLOWED_MODELS: [&str; 6] = [
 ];
 const ASSISTANT_PROFILE_STORE_FILE: &str = "assistant-profiles.json";
 const CHAT_HISTORY_STORE_FILE: &str = "chat-history.json";
+const LIBRARY_ITEMS_STORE_FILE: &str = "library-items.json";
 const APP_PREFERENCES_FILE: &str = "app-preferences.json";
 const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
-const LIVE2D_MODEL_DIRS: [&str; 4] = ["mao_pro", "shizuku", "knight", "takodachi"];
+const LIVE2D_MODEL_DIRS: [&str; 6] = ["mao_pro", "shizuku", "knight", "takodachi", "doro", "pichu"];
 
 struct LocalHelperProcess(Mutex<Option<Child>>);
 
@@ -256,6 +257,60 @@ fn save_app_preferences_inner(app: AppHandle, preferences: Value) -> Result<Valu
     let content = serde_json::to_string_pretty(&preferences).map_err(|error| error.to_string())?;
     fs::write(path, content).map_err(|error| error.to_string())?;
     Ok(preferences)
+}
+
+fn empty_library_items_store() -> Value {
+    json!({
+        "schemaVersion": 1,
+        "items": [],
+        "updatedAt": null
+    })
+}
+
+fn library_items_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join(LIBRARY_ITEMS_STORE_FILE))
+}
+
+fn normalize_library_items_store(store: Value) -> Value {
+    let items = store
+        .get("items")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+
+    json!({
+        "schemaVersion": 1,
+        "items": items,
+        "updatedAt": store.get("updatedAt").and_then(Value::as_str)
+    })
+}
+
+fn load_library_items_store_inner(app: AppHandle) -> Result<Value, String> {
+    let path = library_items_store_path(&app)?;
+    if !path.exists() {
+        return Ok(empty_library_items_store());
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    if content.trim().is_empty() {
+        return Ok(empty_library_items_store());
+    }
+
+    let store = serde_json::from_str::<Value>(&content).map_err(|error| error.to_string())?;
+    Ok(normalize_library_items_store(store))
+}
+
+fn save_library_items_store_inner(app: AppHandle, store: Value) -> Result<Value, String> {
+    let path = library_items_store_path(&app)?;
+    let normalized = normalize_library_items_store(store);
+    let content = serde_json::to_string_pretty(&normalized).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())?;
+    Ok(normalized)
 }
 
 const OPENAI_FALLBACK_MODEL: &str = "gpt-4o-mini";
@@ -1794,20 +1849,78 @@ fn cancel_model_pull_inner(model: &str) -> Result<String, String> {
     Ok(format!("{model} download cancelled."))
 }
 
+fn build_personalization_prompt_lines(profile: Option<&Value>) -> Vec<String> {
+    let Some(personalization) = profile.and_then(|value| value.get("personalization")) else {
+        return Vec::new();
+    };
+
+    let mut lines = Vec::new();
+    match personalization.get("baseStyle").and_then(Value::as_str) {
+        Some("concise") => lines.push("Global personalization: prefer concise, direct answers with minimal setup.".to_string()),
+        Some("balanced") => lines.push("Global personalization: use a balanced style with a direct answer followed by useful context.".to_string()),
+        Some("detailed") => lines.push("Global personalization: include more detail, steps, and tradeoffs when the topic benefits from explanation.".to_string()),
+        Some("professional") => lines.push("Global personalization: use a polished, professional tone suitable for work contexts.".to_string()),
+        _ => {}
+    }
+    match personalization.get("warmth").and_then(Value::as_str) {
+        Some("warmer") => lines.push("Global personalization: sound warmer and more approachable while staying practical.".to_string()),
+        Some("neutral") => lines.push("Global personalization: keep warmth neutral and avoid overly familiar wording.".to_string()),
+        Some("direct") => lines.push("Global personalization: be direct and avoid unnecessary softening phrases.".to_string()),
+        _ => {}
+    }
+    match personalization.get("enthusiasm").and_then(Value::as_str) {
+        Some("more") => lines.push("Global personalization: use moderately more enthusiastic wording when appropriate.".to_string()),
+        Some("balanced") => lines.push("Global personalization: keep enthusiasm balanced and task-focused.".to_string()),
+        Some("less") => lines.push("Global personalization: keep enthusiasm low and avoid excited language.".to_string()),
+        _ => {}
+    }
+    match personalization.get("headingsAndLists").and_then(Value::as_str) {
+        Some("more") => lines.push("Global personalization: use headings, bullets, and numbered lists more often for scanability.".to_string()),
+        Some("balanced") => lines.push("Global personalization: use headings and lists when they materially improve readability.".to_string()),
+        Some("minimal") => lines.push("Global personalization: avoid headings and long lists unless the user asks or the answer is complex.".to_string()),
+        _ => {}
+    }
+    match personalization.get("emojiUse").and_then(Value::as_str) {
+        Some("none") => lines.push("Global personalization: do not use emoji unless the user explicitly asks.".to_string()),
+        Some("sparse") => lines.push("Global personalization: use emoji rarely, only when it adds clear tone or meaning.".to_string()),
+        Some("expressive") => lines.push("Global personalization: emoji are allowed for casual answers, but keep them relevant and not excessive.".to_string()),
+        _ => {}
+    }
+    if let Some(custom_instructions) = personalization
+        .get("customInstructions")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!(
+            "Global custom instructions for all conversations:\n{custom_instructions}"
+        ));
+    }
+
+    lines
+}
+
 fn chat_ollama_direct_inner(
     model: String,
     prompt: String,
     locale: String,
+    profile: Option<Value>,
 ) -> Result<String, String> {
     if !allowed_model(&model) {
         return Err(format!("{model} is not allowed in Phase 1."));
     }
 
-    let system_prompt = if locale == "ko" {
-        "You are MiVA, the user's local personal AI assistant. Reply in natural Korean unless the user asks otherwise. Do not mix in unrelated languages. Keep answers short and practical."
+    let mut system_prompt = if locale == "ko" {
+        "You are MiVA, the user's local personal AI assistant. Reply in natural Korean unless the user asks otherwise. Do not mix in unrelated languages. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful."
     } else {
-        "You are MiVA, the user's local personal AI assistant. Reply in English. Keep answers short and practical."
-    };
+        "You are MiVA, the user's local personal AI assistant. Reply in English. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful."
+    }
+    .to_string();
+    let personalization_lines = build_personalization_prompt_lines(profile.as_ref());
+    if !personalization_lines.is_empty() {
+        system_prompt.push('\n');
+        system_prompt.push_str(&personalization_lines.join("\n"));
+    }
 
     let client = Client::builder()
         .timeout(Duration::from_secs(180))
@@ -2039,6 +2152,8 @@ fn chat_once_inner(
         provider
     };
 
+    let profile_for_fallback = profile.clone();
+
     match chat_via_local_helper(
         normalized_provider.clone(),
         model.clone(),
@@ -2055,7 +2170,7 @@ fn chat_once_inner(
         Ok(answer) => Ok(answer),
         Err(error) if normalized_provider == "ollama" => {
             eprintln!("Local helper chat failed, falling back to direct Ollama: {error}");
-            chat_ollama_direct_inner(model, prompt, locale)
+            chat_ollama_direct_inner(model, prompt, locale, profile_for_fallback)
         }
         Err(error) => Err(error),
     }
@@ -2546,6 +2661,20 @@ async fn save_app_preferences(app: AppHandle, preferences: Value) -> Result<Valu
 }
 
 #[tauri::command]
+async fn load_library_items_store(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_library_items_store_inner(app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn save_library_items_store(app: AppHandle, store: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || save_library_items_store_inner(app, store))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn load_chat_history_store(app: AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || load_chat_history_store_inner(app))
         .await
@@ -2757,6 +2886,8 @@ pub fn run() {
             save_assistant_profile_store,
             load_app_preferences,
             save_app_preferences,
+            load_library_items_store,
+            save_library_items_store,
             load_chat_history_store,
             save_chat_history_store,
             delete_runtime_chat_messages,

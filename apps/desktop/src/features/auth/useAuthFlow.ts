@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { WEB_CONSOLE_URL } from "../../config/endpoints";
+import { buildWebConsoleUrl } from "../../config/endpoints";
 import { getDeviceAuthStatus, getGoogleWorkspaceAuthUrl, startDeviceAuth } from "../cloud/client";
 import { clearAuthSessionStorage, loadAuthSession, saveAuthSessionToStorage } from "./storage";
 import type { AuthFlowState, AuthSession, DeviceAuthStart } from "../../types";
@@ -93,15 +93,17 @@ export function useAuthFlow({
     }
   }
 
-  async function openWebConsole() {
+  async function openWebConsole(page?: string) {
+    const webConsoleUrl = buildWebConsoleUrl(page);
+
     try {
       if (tauriRuntime) {
-        await openUrl(WEB_CONSOLE_URL);
+        await openUrl(webConsoleUrl);
       } else {
-        window.open(WEB_CONSOLE_URL, "_blank", "noopener,noreferrer");
+        window.open(webConsoleUrl, "_blank", "noopener,noreferrer");
       }
     } catch (error) {
-      setAuthFlowError(`Could not open web console. Open this URL manually: ${WEB_CONSOLE_URL}`);
+      setAuthFlowError(`Could not open web console. Open this URL manually: ${webConsoleUrl}`);
       onLog(`Web console open failed: ${String(error)}`);
     }
   }

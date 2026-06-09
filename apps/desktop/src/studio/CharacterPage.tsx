@@ -1,4 +1,4 @@
-import type { CharacterReactionMode, CharacterRendererId, PromptSettings } from "../types";
+import type { PromptSettings } from "../types";
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -11,13 +11,13 @@ import {
   Panel,
   PrimaryButton,
   SecondaryButton,
-  Select,
   Switch,
   Textarea,
 } from "../components/ui";
 import { characterAssetCatalog, type CharacterAsset } from "../features/characters/catalog";
 import { defaultPromptSettings } from "../features/assistants/profile";
 import { getLive2DRuntimeStatus, installLive2DRuntime } from "../features/characters/live2dRuntime";
+import { buildPersonalityFromTraits, personalityTraits } from "../features/characters/personalityTraits";
 
 type CharacterStudioPanelProps = {
   settings: PromptSettings;
@@ -25,7 +25,7 @@ type CharacterStudioPanelProps = {
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
 };
 
-type CharacterTextFieldKey = "displayName" | "userAddress" | "personality" | "speakingStyle" | "live2dModelPath";
+type CharacterTextFieldKey = "displayName" | "userAddress" | "speakingStyle";
 type Live2DSetupStatus = "idle" | "checked" | "pending";
 type Live2DInstallProgress = {
   status: string;
@@ -43,11 +43,6 @@ type Live2DInstallResult = {
   installedModels: string[];
   totalSizeMb: number;
   ready: boolean;
-};
-
-const reactionModeCopy: Record<CharacterReactionMode, string> = {
-  statusOnly: "Use app status only. The model should not invent expressions or motions.",
-  aiCues: "Allow lightweight expression cues in text so Runtime can map them later.",
 };
 
 export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsChange }: CharacterStudioPanelProps) {
@@ -82,8 +77,28 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
       renderer: preset.renderer,
       live2dModelPath: preset.live2dModelPath,
       personality: preset.personality,
+      personalityTraits: [],
       speakingStyle: preset.speakingStyle,
     }));
+  };
+
+  const selectedTraits = character.personalityTraits;
+  const togglePersonalityTrait = (id: string) => {
+    updateCharacter((current) => {
+      const isSelected = current.personalityTraits.includes(id);
+      const nextSet = new Set(current.personalityTraits);
+      if (isSelected) {
+        nextSet.delete(id);
+      } else {
+        nextSet.add(id);
+      }
+      // Keep selection in canonical order. Opposites are blocked in the UI, so no conflicts here.
+      const nextTraits = personalityTraits
+        .filter((trait) => nextSet.has(trait.id))
+        .map((trait) => trait.id);
+      const personality = buildPersonalityFromTraits(nextTraits) || defaultPromptSettings.character.personality;
+      return { ...current, personalityTraits: nextTraits, personality };
+    });
   };
 
   const characterFieldClass = (key: CharacterTextFieldKey, className = "") => {
@@ -352,125 +367,85 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
         </div>
       </Panel>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Panel>
-          <div className="flex items-start gap-4">
-            <IconTile>
-              <span className="material-symbols-outlined text-[22px]">badge</span>
-            </IconTile>
-            <div className="min-w-0">
-              <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Persona details</h3>
-              <p className="mt-1 text-sm leading-6 text-[var(--miva-text-muted)]">These values are added to the assistant prompt when the character is enabled.</p>
+      <Panel>
+        <div className="flex items-start gap-4">
+          <IconTile>
+            <span className="material-symbols-outlined text-[22px]">badge</span>
+          </IconTile>
+          <div className="min-w-0">
+            <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Persona details</h3>
+            <p className="mt-1 text-sm leading-6 text-[var(--miva-text-muted)]">These values are added to the assistant prompt when the character is enabled.</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Character display name</span>
+            <Input
+              className={characterFieldClass("displayName")}
+              value={getCharacterFieldValue("displayName")}
+              onFocus={() => setFocusedCharacterField("displayName")}
+              onBlur={(event) => blurCharacterField("displayName", event.target.value)}
+              onChange={(event) => changeCharacterField("displayName", event.target.value)}
+            />
+          </label>
+
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">How the character calls you</span>
+            <Input
+              className={characterFieldClass("userAddress")}
+              placeholder="Example: call me Sinu, use casual Korean, or call me manager"
+              value={getCharacterFieldValue("userAddress")}
+              onFocus={() => setFocusedCharacterField("userAddress")}
+              onBlur={(event) => blurCharacterField("userAddress", event.target.value)}
+              onChange={(event) => changeCharacterField("userAddress", event.target.value)}
+            />
+          </label>
+
+          <div className="grid gap-2 md:col-span-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Personality</span>
+            <p className="text-xs leading-5 text-[var(--miva-text-muted)]">Pick the traits that fit this character. Opposite traits can't be selected together.</p>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {personalityTraits.map((trait) => {
+                const active = selectedTraits.includes(trait.id);
+                const blocked = !active && Boolean(trait.opposite && selectedTraits.includes(trait.opposite));
+                return (
+                  <button
+                    key={trait.id}
+                    type="button"
+                    disabled={blocked}
+                    onClick={() => togglePersonalityTrait(trait.id)}
+                    title={blocked ? "The opposite trait is selected" : undefined}
+                    className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition ${
+                      active
+                        ? "border-[var(--miva-primary)] bg-[var(--miva-primary)] text-white shadow-sm"
+                        : blocked
+                          ? "cursor-not-allowed border-[var(--miva-border)] bg-[var(--miva-surface-muted)] text-[var(--miva-text-soft)] opacity-50"
+                          : "border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text-muted)] hover:border-[var(--miva-primary)] hover:text-[var(--miva-text)]"
+                    }`}
+                  >
+                    {trait.label}
+                  </button>
+                );
+              })}
             </div>
+            <span className="text-xs leading-5 text-[var(--miva-text-soft)]">
+              {selectedTraits.length > 0 ? `Prompt: ${character.personality}` : "No traits selected — the default personality will be used."}
+            </span>
           </div>
 
-          <div className="mt-5 grid gap-4">
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Character display name</span>
-              <Input
-                className={characterFieldClass("displayName")}
-                value={getCharacterFieldValue("displayName")}
-                onFocus={() => setFocusedCharacterField("displayName")}
-                onBlur={(event) => blurCharacterField("displayName", event.target.value)}
-                onChange={(event) => changeCharacterField("displayName", event.target.value)}
-              />
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">How the character calls you</span>
-              <Input
-                className={characterFieldClass("userAddress")}
-                placeholder="Example: call me Sinu, use casual Korean, or call me manager"
-                value={getCharacterFieldValue("userAddress")}
-                onFocus={() => setFocusedCharacterField("userAddress")}
-                onBlur={(event) => blurCharacterField("userAddress", event.target.value)}
-                onChange={(event) => changeCharacterField("userAddress", event.target.value)}
-              />
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Personality</span>
-              <Textarea
-                className={characterFieldClass("personality", "min-h-[112px] resize-none")}
-                value={getCharacterFieldValue("personality")}
-                onFocus={() => setFocusedCharacterField("personality")}
-                onBlur={(event) => blurCharacterField("personality", event.target.value)}
-                onChange={(event) => changeCharacterField("personality", event.target.value)}
-              />
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Speaking style</span>
-              <Textarea
-                className={characterFieldClass("speakingStyle", "min-h-[112px] resize-none")}
-                value={getCharacterFieldValue("speakingStyle")}
-                onFocus={() => setFocusedCharacterField("speakingStyle")}
-                onBlur={(event) => blurCharacterField("speakingStyle", event.target.value)}
-                onChange={(event) => changeCharacterField("speakingStyle", event.target.value)}
-              />
-            </label>
-          </div>
-        </Panel>
-
-        <Panel>
-          <div className="flex items-start gap-4">
-            <IconTile>
-              <span className="material-symbols-outlined text-[22px]">motion_photos_auto</span>
-            </IconTile>
-            <div className="min-w-0">
-              <h3 className="font-heading text-lg font-bold text-[var(--miva-text)]">Runtime behavior</h3>
-              <p className="mt-1 text-sm leading-6 text-[var(--miva-text-muted)]">Prepare how the character will be interpreted by Runtime and future Live2D rendering.</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-4">
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Renderer</span>
-              <Select
-                value={character.renderer}
-                onChange={(event) => updateCharacter((current) => ({ ...current, renderer: event.target.value as CharacterRendererId }))}
-              >
-                <option value="placeholder">Placeholder character</option>
-                <option value="live2d">Live2D model path prepared</option>
-              </Select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Live2D model path</span>
-              <Input
-                className={characterFieldClass("live2dModelPath")}
-                placeholder="Add model3.json path later"
-                value={getCharacterFieldValue("live2dModelPath")}
-                onFocus={() => setFocusedCharacterField("live2dModelPath")}
-                onBlur={(event) => blurCharacterField("live2dModelPath", event.target.value)}
-                onChange={(event) => changeCharacterField("live2dModelPath", event.target.value)}
-              />
-              <span className="text-xs leading-5 text-[var(--miva-text-muted)]">This is stored for later. Runtime rendering is not connected in this step.</span>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Reaction mode</span>
-              <Select
-                value={character.reactionMode}
-                onChange={(event) => updateCharacter((current) => ({ ...current, reactionMode: event.target.value as CharacterReactionMode }))}
-              >
-                <option value="statusOnly">Status only</option>
-                <option value="aiCues">AI reaction cues</option>
-              </Select>
-              <span className="text-xs leading-5 text-[var(--miva-text-muted)]">{reactionModeCopy[character.reactionMode]}</span>
-            </label>
-
-            <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Prepared later</p>
-              <div className="mt-3 grid gap-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-                <p>Idle, listening, thinking, speaking, and happy motion mapping.</p>
-                <p>Character image previews and per-character asset import.</p>
-                <p>Runtime position, size, and transparency controls.</p>
-              </div>
-            </div>
-          </div>
-        </Panel>
-      </div>
+          <label className="grid gap-2 md:col-span-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Speaking style</span>
+            <Textarea
+              className={characterFieldClass("speakingStyle", "min-h-[112px] resize-none")}
+              value={getCharacterFieldValue("speakingStyle")}
+              onFocus={() => setFocusedCharacterField("speakingStyle")}
+              onBlur={(event) => blurCharacterField("speakingStyle", event.target.value)}
+              onChange={(event) => changeCharacterField("speakingStyle", event.target.value)}
+            />
+          </label>
+        </div>
+      </Panel>
 
       {(isInstallingLive2d || live2dInstallProgress?.error) && (
         <ModalBackdrop>
