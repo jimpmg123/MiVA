@@ -290,7 +290,7 @@ npm run apply:release-env
 npm run package:desktop
 ```
 
-Full cloud-only checklist: [docs/GO-LIVE.md](docs/GO-LIVE.md)
+Full cloud-only checklist: [docs/GO-LIVE.md](../GO-LIVE.md)
 
 ## Bug Reports and GitHub Issues
 
@@ -299,20 +299,20 @@ Outstanding bugs are tracked through GitHub Issues:
 - Issue list: https://github.com/jimpmg123/MiVA/issues
 - New bug report: https://github.com/jimpmg123/MiVA/issues/new
 
-When reporting a bug, include the environment, steps to reproduce, expected result, actual result, screenshots or logs if available, and severity. Serious bugs should be assigned to an owner, linked to a verification plan, and accounted for in the project schedule. The Milestone 4 bug tracking summary is in [docs/milestone/BUG_TRACKING.md](docs/milestone/BUG_TRACKING.md).
+When reporting a bug, include the environment, steps to reproduce, expected result, actual result, screenshots or logs if available, and severity. Serious bugs should be assigned to an owner, linked to a verification plan, and accounted for in the project schedule. The Milestone 4 bug tracking summary is in [BUG_TRACKING.md](BUG_TRACKING.md).
 
 ## Additional Documentation
 
-- [Deployment Plan](docs/DEPLOYMENT.md)
-- [Go-Live Checklist (Railway / Vercel / Google Cloud)](docs/GO-LIVE.md)
-- [System Architecture and Tech Stack](docs/TECH_STACK.md)
-- [Database Design](docs/DATABASE_DESIGN.md)
-- [Local Data Store](docs/LOCAL_DATA_STORE.md)
-- [Software Design Document](docs/SOFTWARE_DESIGN_DOCUMENT.md)
-- [Presentation API Design](docs/PRESENTATION_API_DESIGN.md)
-- [Admin Page Notes](docs/ADMIN_PAGE.md)
-- [Voice/STT Strategy](docs/STT_STRATEGY.md)
-- [Milestone 4 Progress Update](docs/milestone/MILESTONE_4_PROGRESS_UPDATE.md)
-- [Milestone Schedule Update](docs/milestone/SCHEDULE_UPDATE.md)
-- [Milestone API Design Update](docs/milestone/API_DESIGN_UPDATE.md)
-- [Milestone Change Review](docs/milestone/CHANGE_REVIEW.md)
+- [Deployment Plan](../DEPLOYMENT.md)
+- [Go-Live Checklist (Railway / Vercel / Google Cloud)](../GO-LIVE.md)
+- [System Architecture and Tech Stack](../TECH_STACK.md)
+- [Database Design](../DATABASE_DESIGN.md)
+- [Local Data Store](../LOCAL_DATA_STORE.md)
+- [Software Design Document](../SOFTWARE_DESIGN_DOCUMENT.md)
+- [Presentation API Design](../PRESENTATION_API_DESIGN.md)
+- [Admin Page Notes](../ADMIN_PAGE.md)
+- [Voice/STT Strategy](../STT_STRATEGY.md)
+- [Milestone 4 Progress Update](MILESTONE_4_PROGRESS_UPDATE.md)
+- [Milestone Schedule Update](SCHEDULE_UPDATE.md)
+- [Milestone API Design Update](API_DESIGN_UPDATE.md)
+- [Milestone Change Review](CHANGE_REVIEW.md)
