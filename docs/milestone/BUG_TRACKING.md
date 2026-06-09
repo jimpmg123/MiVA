@@ -21,32 +21,31 @@ When reporting a bug, include:
 - Actual result.
 - Screenshots, logs, API responses, or console errors if available.
 - Severity: Critical, Major, Minor, Low.
-- Suggested owner and verification plan.
+- Verification plan.
 
 ## Bug List / GitHub Issue Candidates
 
-| Issue ID | Title | Status | Severity | Owner | GitHub Issue | Verification Plan |
-| --- | --- | --- | --- | --- | --- | --- |
-| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed, needs regression check | Minor | Solo developer | To create | Open setup chat and confirm intro card does not cover messages or composer. |
-| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed, needs regression check | Minor | Solo developer | To create | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
-| BUG-003 | Deleted local assistant can remain visible in web console after sync | Needs verification | Major | Solo developer | To create | Delete a local assistant, sync, refresh web console, and confirm removal. |
-| BUG-004 | Google Workspace context is not consistently trusted by every model | In progress | Major | Solo developer | To create | Ask Gmail/Docs/Calendar questions with Gemini/OpenAI and verify injected context is used correctly. |
-| BUG-005 | Ollama can initially use CPU instead of GPU | Fixed, needs environment verification | Major | Solo developer | To create | Run a local model and check `ollama ps` plus GPU utilization. |
-| BUG-006 | Local Helper unavailable errors need clearer runtime recovery UI | Open | Major | Solo developer | To create | Stop Local Helper, send a runtime message, and confirm the UI tells the user how to recover. |
-| BUG-007 | Model download failure/cancel may leave stale progress state | Open | Major | Solo developer | To create | Cancel and fail a model pull; verify the progress UI resets and offers retry. |
-| BUG-008 | Cloud/local assistant sync conflict behavior is not fully defined | Open | Major | Solo developer | To create | Edit same assistant locally and remotely; verify conflict behavior and user-facing status. |
-| BUG-009 | Admin-only API access needs normal-user denial verification | Open | Critical | Solo developer | To create | Call admin endpoints with a normal user token and confirm access is denied. |
-| BUG-010 | Persona Hub sharing/import workflow is still beta placeholder | Open | Minor | Solo developer | To create | Verify web users understand presets are beta and cannot assume full community import/export. |
-| BUG-011 | Voice worker/Kokoro install may fail silently on missing Python packages | Open | Major | Solo developer | To create | Run install/start on a clean Windows machine and verify actionable errors. |
-| BUG-012 | Live2D/2D character overlay needs viewport and asset loading regression test | Open | Minor | Solo developer | To create | Open character page/overlay at desktop viewport and confirm assets render without overlap. |
-| BUG-013 | Billing route is implemented locally but Vercel must be redeployed to include latest routing | Open | Minor | Solo developer | To create | Deploy web, open `https://mi-va.vercel.app/?page=billing`, and verify Billing page is active. |
+| Issue ID | Title | Status | Severity | GitHub Issue | Verification Plan |
+| --- | --- | --- | --- | --- | --- |
+| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed, needs regression check | Minor | To create | Open setup chat and confirm intro card does not cover messages or composer. |
+| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed, needs regression check | Minor | To create | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
+| BUG-003 | Deleted local assistant can remain visible in web console after sync | Needs verification | Major | To create | Delete a local assistant, sync, refresh web console, and confirm removal. |
+| BUG-004 | Google Workspace context is not consistently trusted by every model | In progress | Major | To create | Ask Gmail/Docs/Calendar questions with Gemini/OpenAI and verify injected context is used correctly. |
+| BUG-005 | Ollama can initially use CPU instead of GPU | Fixed, needs environment verification | Major | To create | Run a local model and check `ollama ps` plus GPU utilization. |
+| BUG-006 | Local Helper unavailable errors need clearer runtime recovery UI | Open | Major | To create | Stop Local Helper, send a runtime message, and confirm the UI tells the user how to recover. |
+| BUG-007 | Model download failure/cancel may leave stale progress state | Open | Major | To create | Cancel and fail a model pull; verify the progress UI resets and offers retry. |
+| BUG-008 | Cloud/local assistant sync conflict behavior is not fully defined | Open | Major | To create | Edit same assistant locally and remotely; verify conflict behavior and user-facing status. |
+| BUG-009 | Admin-only API access needs normal-user denial verification | Open | Critical | To create | Call admin endpoints with a normal user token and confirm access is denied. |
+| BUG-010 | Persona Hub sharing/import workflow is still beta placeholder | Open | Minor | To create | Verify web users understand presets are beta and cannot assume full community import/export. |
+| BUG-011 | Voice worker/Kokoro install may fail silently on missing Python packages | Open | Major | To create | Run install/start on a clean Windows machine and verify actionable errors. |
+| BUG-012 | Live2D/2D character overlay needs viewport and asset loading regression test | Open | Minor | To create | Open character page/overlay at desktop viewport and confirm assets render without overlap. |
+| BUG-013 | Billing route is implemented locally but Vercel must be redeployed to include latest routing | Open | Minor | To create | Deploy web, open `https://mi-va.vercel.app/?page=billing`, and verify Billing page is active. |
 
 ## Serious Bug Policy
 
 A bug is serious if it is Critical severity or Major severity with user-facing impact. Serious bugs must have:
 
 - GitHub Issue created.
-- Assigned owner.
 - Expected fix or investigation date.
 - Verification plan.
 - Schedule slot in `SCHEDULE_UPDATE.md`.
@@ -75,8 +74,6 @@ A bug is serious if it is Critical severity or Major severity with user-facing i
 
 ## Severity
 Critical / Major / Minor / Low
-
-## Owner
 
 ## Verification Plan
 ```
