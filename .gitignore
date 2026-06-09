@@ -3,6 +3,7 @@ apps/local-helper/demo.env
 
 # Logs
 logs
+.codex-logs/
 .codex-run-logs/
 *.log
 npm-debug.log*
@@ -40,6 +41,8 @@ preview-*.png
 .DS_Store
 Thumbs.db
 desktop.ini
+.cursor/
+.vscode/
 
 # Environment
 .env
@@ -80,6 +83,11 @@ vtuberllm/
 # Local AI-coding planning docs
 AGENTS.md
 .claw/
+.codex/
+.continue/
+.roo/
+.aider*
+.claude/
 docs/CODING_GUIDELINES.md
 docs/PRD.md
 docs/RULES.md
