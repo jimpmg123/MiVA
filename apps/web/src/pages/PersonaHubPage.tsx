@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArrowLeft,
   AudioLines,
   Bookmark,
   BookOpen,
+  Check,
   Download,
   Grid3x3,
   Heart,
@@ -11,20 +13,34 @@ import {
   MessageSquare,
   Moon,
   Palette,
+  Pencil,
   Play,
+  RefreshCw,
   Send,
   Share2,
   Sparkles,
   ThumbsUp,
+  Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import { useLocale } from '../i18n/locale';
-import type { WebMessages } from '../i18n/messages';
+import { getPersonaPresets } from '../services/mivaApi';
+import type { PersonaPreset, PersonaPresetComment, PersonaPresetIcon } from '../services/mivaApi';
+import {
+  addLocalComment,
+  deleteLocalComment,
+  editLocalComment,
+  getAllLocalComments,
+  type LocalComment,
+  type SavedPreset,
+} from '../services/personaLocal';
 
 type PersonaHubFilter = 'trending' | 'new' | 'voice' | 'character';
 type PersonaHubView = 'grid' | 'table';
-type PresetIcon = WebMessages['personaHub']['presets'][number]['icon'];
+type PresetIcon = PersonaPresetIcon;
+type PresetLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 const presetIconMap = {
   desk: Sparkles,
@@ -52,7 +68,7 @@ function formatRelativeTime(date: Date, locale: 'ko' | 'en') {
   return date.toLocaleDateString(locale === 'ko' ? 'ko-KR' : 'en-US');
 }
 
-function HubBadge({ children, variant = 'info' }: { children: React.ReactNode; variant?: 'info' | 'warning' | 'active' }) {
+function HubBadge({ children, variant = 'info' }: { children: ReactNode; variant?: 'info' | 'warning' | 'active' }) {
   const styles = {
     info: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
     warning: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
@@ -65,7 +81,7 @@ function HubBadge({ children, variant = 'info' }: { children: React.ReactNode; v
   );
 }
 
-function HubCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+function HubCard({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <div className={`miva-card ${className}`}>
       {children}
@@ -84,24 +100,71 @@ function PresetAvatar({ icon, size = 'md' }: { icon: PresetIcon; size?: 'sm' | '
   );
 }
 
-export function PersonaHubPage() {
+export function PersonaHubPage({
+  savedPresets = [],
+  onToggleSave,
+  currentUserHandle = 'me',
+}: {
+  savedPresets?: SavedPreset[];
+  onToggleSave?: (preset: PersonaPreset) => void;
+  currentUserHandle?: string;
+} = {}) {
   const { copy, locale } = useLocale();
   const hub = copy.personaHub;
   const [personaFilter, setPersonaFilter] = useState<PersonaHubFilter>('trending');
   const [personaView, setPersonaView] = useState<PersonaHubView>('table');
-  const [selectedPresetId, setSelectedPresetId] = useState(hub.presets[0]?.id ?? '');
+  const [presets, setPresets] = useState<PersonaPreset[]>([]);
+  const [presetLoadState, setPresetLoadState] = useState<PresetLoadState>('idle');
+  const [presetLoadError, setPresetLoadError] = useState<string | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState('');
   const [draftComment, setDraftComment] = useState('');
   const [likedPresetIds, setLikedPresetIds] = useState<string[]>([]);
-  const [bookmarkedPresetIds, setBookmarkedPresetIds] = useState<string[]>(['preset-nova']);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [localCommentsMap, setLocalCommentsMap] = useState<Record<string, LocalComment[]>>(() => getAllLocalComments());
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState('');
+
+  const openPreset = (presetId: string) => {
+    setSelectedPresetId(presetId);
+    setDetailOpen(true);
+  };
+
+  const closeDetail = () => setDetailOpen(false);
+
+  const loadPresets = useCallback(async () => {
+    setPresetLoadState('loading');
+    setPresetLoadError(null);
+
+    try {
+      const response = await getPersonaPresets();
+      const nextPresets = response.presets || [];
+      setPresets(nextPresets);
+      setSelectedPresetId((current) => (
+        nextPresets.some((preset) => preset.id === current)
+          ? current
+          : nextPresets[0]?.id ?? ''
+      ));
+      setPresetLoadState('ready');
+    } catch (error) {
+      setPresets([]);
+      setSelectedPresetId('');
+      setPresetLoadError(error instanceof Error ? error.message : 'Could not load presets from the server.');
+      setPresetLoadState('error');
+    }
+  }, []);
 
   useEffect(() => {
-    setSelectedPresetId(hub.presets[0]?.id ?? '');
+    void loadPresets();
+  }, [loadPresets]);
+
+  useEffect(() => {
     setPersonaFilter('trending');
     setDraftComment('');
-  }, [locale, hub.presets]);
+    setDetailOpen(false);
+  }, [locale]);
 
   const filteredPresets = useMemo(() => {
-    const sorted = [...hub.presets];
+    const sorted = [...presets];
     if (personaFilter === 'new') {
       return sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     }
@@ -112,7 +175,7 @@ export function PersonaHubPage() {
       return sorted.filter((preset) => preset.characterFocused || preset.useCase === 'character');
     }
     return sorted.sort((a, b) => b.downloads - a.downloads);
-  }, [hub.presets, personaFilter]);
+  }, [presets, personaFilter]);
 
   const selectedPreset = filteredPresets.find((preset) => preset.id === selectedPresetId) ?? filteredPresets[0] ?? null;
 
@@ -128,10 +191,50 @@ export function PersonaHubPage() {
     ));
   };
 
-  const togglePresetBookmark = (presetId: string) => {
-    setBookmarkedPresetIds((current) => (
-      current.includes(presetId) ? current.filter((id) => id !== presetId) : [...current, presetId]
-    ));
+  const isPresetSaved = (presetId: string) => savedPresets.some((preset) => preset.id === presetId);
+
+  // Merge server seed comments (read-only) with the user's local comments (editable).
+  const presetLocalComments = selectedPreset ? localCommentsMap[selectedPreset.id] ?? [] : [];
+  const mergedComments: Array<PersonaPresetComment & { own?: boolean }> = selectedPreset
+    ? [...selectedPreset.comments, ...presetLocalComments]
+    : [];
+
+  const handlePostComment = () => {
+    const body = draftComment.trim();
+    if (!body || !selectedPreset) {
+      return;
+    }
+    setLocalCommentsMap(addLocalComment(selectedPreset.id, currentUserHandle, body));
+    setDraftComment('');
+  };
+
+  const startEditComment = (commentId: string, body: string) => {
+    setEditingCommentId(commentId);
+    setEditingDraft(body);
+  };
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null);
+    setEditingDraft('');
+  };
+
+  const saveEditComment = () => {
+    const body = editingDraft.trim();
+    if (!body || !selectedPreset || !editingCommentId) {
+      return;
+    }
+    setLocalCommentsMap(editLocalComment(selectedPreset.id, editingCommentId, body));
+    cancelEditComment();
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    if (!selectedPreset) {
+      return;
+    }
+    setLocalCommentsMap(deleteLocalComment(selectedPreset.id, commentId));
+    if (editingCommentId === commentId) {
+      cancelEditComment();
+    }
   };
 
   const personaHubFilters: Array<{ id: PersonaHubFilter; label: string }> = [
@@ -148,7 +251,13 @@ export function PersonaHubPage() {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <HubBadge variant="warning">{hub.previewBadge}</HubBadge>
-              <HubBadge>{hub.notConnectedBadge}</HubBadge>
+              <HubBadge>
+                {presetLoadState === 'ready'
+                  ? (locale === 'ko' ? '서버 연결됨' : 'Server connected')
+                  : presetLoadState === 'loading'
+                    ? (locale === 'ko' ? '서버 확인 중' : 'Checking server')
+                    : hub.notConnectedBadge}
+              </HubBadge>
             </div>
             <h2 className="font-display text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{hub.title}</h2>
             <div className="max-w-3xl space-y-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400 md:text-base">
@@ -157,43 +266,55 @@ export function PersonaHubPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button type="button" className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 dark:bg-[#1E293B] dark:text-slate-200 dark:ring-[#243044] dark:hover:bg-[#243044]">
+            <a
+              href="?page=persona-share"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 dark:bg-[#1E293B] dark:text-slate-200 dark:ring-[#243044] dark:hover:bg-[#243044]"
+            >
               <Share2 className="h-4 w-4" />
               {hub.sharePreset}
-            </button>
-            <button type="button" className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20 transition-all hover:opacity-90">
-              <Upload className="h-4 w-4" />
-              {hub.uploadBundle}
-            </button>
+            </a>
           </div>
         </div>
       </div>
 
-      <div className="grid min-w-0 grid-cols-12 gap-8">
-        <HubCard className="col-span-12 min-w-0 xl:col-span-7 p-0 overflow-hidden">
-          <div className="border-b border-slate-100 p-6 dark:border-[#243044] md:p-8">
+      <div className="relative min-w-0 min-h-[560px]">
+        <div className="min-w-0">
+          <div className="border-b border-slate-100 pb-6 dark:border-[#243044]">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="font-display text-xl font-bold text-slate-900 dark:text-slate-100">{hub.browseTitle}</h3>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{hub.browseBody}</p>
               </div>
-              <div className="flex items-center gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-[#172033]">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPersonaView('table')}
-                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'table' ? 'bg-white text-primary-container shadow-sm dark:bg-[#1E293B] dark:text-blue-300' : 'text-slate-400'}`}
+                  onClick={() => void loadPresets()}
+                  disabled={presetLoadState === 'loading'}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60 dark:bg-[#172033] dark:text-slate-300 dark:hover:bg-[#243044]"
+                  title={locale === 'ko' ? '프리셋 새로고침' : 'Refresh presets'}
                 >
-                  <List className="h-3.5 w-3.5" />
-                  {hub.tableView}
+                  <RefreshCw className={`h-4 w-4 ${presetLoadState === 'loading' ? 'animate-spin' : ''}`} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPersonaView('grid')}
-                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'grid' ? 'bg-white text-primary-container shadow-sm dark:bg-[#1E293B] dark:text-blue-300' : 'text-slate-400'}`}
-                >
-                  <Grid3x3 className="h-3.5 w-3.5" />
-                  {hub.cardsView}
-                </button>
+                <div className="flex items-center gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-[#172033]">
+                  <button
+                    type="button"
+                    onClick={() => setPersonaView('table')}
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'table' ? 'bg-white text-primary-container shadow-sm dark:bg-[#1E293B] dark:text-blue-300' : 'text-slate-400'}`}
+                  >
+                    <List className="h-3.5 w-3.5" />
+                    {hub.tableView}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPersonaView('grid')}
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all ${personaView === 'grid' ? 'bg-white text-primary-container shadow-sm dark:bg-[#1E293B] dark:text-blue-300' : 'text-slate-400'}`}
+                  >
+                    <Grid3x3 className="h-3.5 w-3.5" />
+                    {hub.cardsView}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -211,7 +332,43 @@ export function PersonaHubPage() {
             </div>
           </div>
 
-          {personaView === 'table' ? (
+          {presetLoadState === 'loading' ? (
+            <div className="flex min-h-[360px] items-center justify-center p-10">
+              <div className="w-full max-w-sm space-y-4">
+                <div className="h-4 w-28 animate-pulse rounded-full bg-slate-200 dark:bg-[#243044]" />
+                <div className="space-y-3">
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100 dark:bg-[#172033]" />
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100 dark:bg-[#172033]" />
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100 dark:bg-[#172033]" />
+                </div>
+              </div>
+            </div>
+          ) : presetLoadState === 'error' ? (
+            <div className="flex min-h-[360px] items-center justify-center p-10 text-center">
+              <div className="max-w-md">
+                <p className="font-display text-xl font-bold text-slate-900 dark:text-slate-100">Preset server is unavailable</p>
+                <p className="mt-2 break-words text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                  {presetLoadError || 'Could not load shared presets from the MiVA API server.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void loadPresets()}
+                  className="mt-5 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary-container/20"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : filteredPresets.length === 0 ? (
+            <div className="flex min-h-[360px] items-center justify-center p-10 text-center">
+              <div className="max-w-md">
+                <p className="font-display text-xl font-bold text-slate-900 dark:text-slate-100">No shared presets yet</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                  The browse area is connected to the MiVA API server. Preset data can be added after the final sharing schema is decided.
+                </p>
+              </div>
+            </div>
+          ) : personaView === 'table' ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left">
                 <thead className="border-b border-slate-100 bg-slate-50 dark:border-[#243044] dark:bg-[#172033]">
@@ -230,7 +387,7 @@ export function PersonaHubPage() {
                     return (
                       <tr
                         key={preset.id}
-                        onClick={() => setSelectedPresetId(preset.id)}
+                        onClick={() => openPreset(preset.id)}
                         className={`cursor-pointer transition-colors ${isSelected ? 'bg-primary-container/5 dark:bg-primary-container/15' : 'hover:bg-slate-50/80 dark:hover:bg-[#172033]/80'}`}
                       >
                         <td className="max-w-[220px] px-6 py-4">
@@ -268,7 +425,7 @@ export function PersonaHubPage() {
                   <button
                     key={preset.id}
                     type="button"
-                    onClick={() => setSelectedPresetId(preset.id)}
+                    onClick={() => openPreset(preset.id)}
                     className={`min-w-0 w-full overflow-hidden rounded-[28px] border p-5 text-left transition-all ${isSelected ? 'border-primary-container bg-primary-container/5 shadow-lg shadow-primary-container/10 dark:bg-primary-container/15' : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white dark:border-[#243044] dark:bg-[#172033] dark:hover:border-slate-700 dark:hover:bg-[#1E293B]'}`}
                   >
                     <div className="flex min-w-0 items-start gap-4">
@@ -307,12 +464,32 @@ export function PersonaHubPage() {
               })}
             </div>
           )}
-        </HubCard>
+        </div>
 
-        <HubCard className="col-span-12 xl:col-span-5 p-0 overflow-hidden">
-          {selectedPreset ? (
-            <>
-              <div className="border-b border-slate-100 p-6 dark:border-[#243044] md:p-8">
+        <AnimatePresence>
+          {detailOpen && selectedPreset && (
+            <motion.div
+              key="preset-detail"
+              initial={{ opacity: 0, scale: 0.98, filter: 'blur(10px)' }}
+              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 0.98, filter: 'blur(10px)' }}
+              transition={{ duration: 0.28, ease: 'easeOut' }}
+              className="absolute inset-0 z-20"
+            >
+              <HubCard className="flex h-full flex-col overflow-hidden p-0 shadow-2xl shadow-slate-300/50 dark:shadow-black/50">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100 p-4 dark:border-[#243044] md:px-8">
+                  <button
+                    type="button"
+                    onClick={closeDetail}
+                    className="flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-200 active:scale-[0.98] dark:bg-[#1E293B] dark:text-slate-300 dark:hover:bg-[#243044]"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    {locale === 'ko' ? '뒤로' : 'Back'}
+                  </button>
+                  <span className="truncate text-xs font-black uppercase tracking-widest text-slate-400">{hub.useCases[selectedPreset.useCase]}</span>
+                </div>
+                <div className="min-w-0 flex-1 overflow-y-auto">
+                  <div className="border-b border-slate-100 p-6 dark:border-[#243044] md:p-8">
                 <div className="flex items-start gap-4">
                   <PresetAvatar icon={selectedPreset.icon} size="lg" />
                   <div className="min-w-0 flex-1 overflow-hidden">
@@ -354,11 +531,11 @@ export function PersonaHubPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => togglePresetBookmark(selectedPreset.id)}
-                    className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-[#1E293B] dark:text-slate-300 dark:hover:bg-[#243044]'}`}
+                    onClick={() => onToggleSave?.(selectedPreset)}
+                    className={`flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition-all ${isPresetSaved(selectedPreset.id) ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-[#1E293B] dark:text-slate-300 dark:hover:bg-[#243044]'}`}
                   >
-                    <Bookmark className={`h-4 w-4 ${bookmarkedPresetIds.includes(selectedPreset.id) ? 'fill-current' : ''}`} />
-                    {hub.save}
+                    <Bookmark className={`h-4 w-4 ${isPresetSaved(selectedPreset.id) ? 'fill-current' : ''}`} />
+                    {isPresetSaved(selectedPreset.id) ? (locale === 'ko' ? '저장됨' : 'Saved') : hub.save}
                   </button>
                   <button type="button" className="flex items-center gap-2 rounded-2xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-200 dark:bg-[#1E293B] dark:text-slate-300 dark:hover:bg-[#243044]">
                     <Play className="h-4 w-4" />
@@ -371,26 +548,98 @@ export function PersonaHubPage() {
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <h5 className="flex min-w-0 items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
                     <MessageSquare className="h-4 w-4 shrink-0 text-primary-container" />
-                    <span className="truncate">{hub.commentsTitle} ({selectedPreset.comments.length})</span>
+                    <span className="truncate">{hub.commentsTitle} ({mergedComments.length})</span>
                   </h5>
                   <span className="shrink-0 text-right text-[10px] font-semibold leading-tight text-slate-400 md:text-xs">{hub.asyncThread}</span>
                 </div>
               </div>
 
               <div className="max-h-[360px] space-y-4 overflow-y-auto p-6 md:p-8">
-                {selectedPreset.comments.map((comment) => (
-                  <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 p-4 dark:border-[#243044] dark:bg-[#172033]">
-                    <div className="flex min-w-0 items-center justify-between gap-3">
-                      <p className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">@{comment.author}</p>
-                      <p className="shrink-0 text-xs font-semibold text-slate-400">{formatRelativeTime(new Date(comment.createdAt), locale)}</p>
+                {mergedComments.length === 0 && (
+                  <p className="py-6 text-center text-sm font-semibold text-slate-400">
+                    {locale === 'ko' ? '아직 댓글이 없어요. 첫 댓글을 남겨보세요.' : 'No comments yet. Be the first to comment.'}
+                  </p>
+                )}
+                {mergedComments.map((comment) => {
+                  const isOwn = Boolean(comment.own);
+                  const isEditing = editingCommentId === comment.id;
+                  return (
+                    <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 p-4 dark:border-[#243044] dark:bg-[#172033]">
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <p className="flex min-w-0 items-center gap-2 truncate text-sm font-bold text-slate-800 dark:text-slate-100">
+                          @{comment.author}
+                          {isOwn && (
+                            <span className="shrink-0 rounded-full bg-primary-container/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-primary-container">
+                              {locale === 'ko' ? '내 댓글' : 'You'}
+                            </span>
+                          )}
+                        </p>
+                        <p className="shrink-0 text-xs font-semibold text-slate-400">{formatRelativeTime(new Date(comment.createdAt), locale)}</p>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="mt-3">
+                          <textarea
+                            value={editingDraft}
+                            onChange={(event) => setEditingDraft(event.target.value)}
+                            className="w-full resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none ring-primary-container/20 transition-all focus:ring-4 dark:border-[#243044] dark:bg-[#1E293B] dark:text-slate-100"
+                            rows={2}
+                          />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={cancelEditComment}
+                              className="flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 dark:bg-[#1E293B] dark:text-slate-300 dark:hover:bg-[#243044]"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              {locale === 'ko' ? '취소' : 'Cancel'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={saveEditComment}
+                              disabled={!editingDraft.trim()}
+                              className="flex items-center gap-1.5 rounded-xl bg-primary-container px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              {locale === 'ko' ? '저장' : 'Save'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-2 break-words text-sm leading-relaxed text-slate-600 dark:text-slate-300">{comment.body}</p>
+                      )}
+
+                      {!isEditing && (
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <button type="button" className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-primary-container">
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                            {comment.likes} {hub.helpful}
+                          </button>
+                          {isOwn && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => startEditComment(comment.id, comment.body)}
+                                title={locale === 'ko' ? '수정' : 'Edit'}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-[#243044] dark:hover:text-slate-100"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteComment(comment.id)}
+                                title={locale === 'ko' ? '삭제' : 'Delete'}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="mt-2 break-words text-sm leading-relaxed text-slate-600 dark:text-slate-300">{comment.body}</p>
-                    <button type="button" className="mt-3 flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-primary-container">
-                      <ThumbsUp className="h-3.5 w-3.5" />
-                      {comment.likes} {hub.helpful}
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="border-t border-slate-100 bg-slate-50 p-6 dark:border-[#243044] dark:bg-[#172033] md:p-8">
@@ -399,44 +648,55 @@ export function PersonaHubPage() {
                   <input
                     value={draftComment}
                     onChange={(event) => setDraftComment(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        handlePostComment();
+                      }
+                    }}
                     placeholder={hub.commentPlaceholder}
                     className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none ring-primary-container/20 transition-all focus:ring-4 dark:border-[#243044] dark:bg-[#1E293B] dark:text-slate-100 dark:placeholder:text-slate-500"
                   />
                   <button
                     type="button"
-                    onClick={() => setDraftComment('')}
-                    className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white"
+                    onClick={handlePostComment}
+                    disabled={!draftComment.trim()}
+                    className="flex items-center gap-2 rounded-2xl bg-primary-container px-5 py-3 text-sm font-bold text-white transition-all disabled:opacity-50"
                   >
                     <Send className="h-4 w-4" />
                     {hub.post}
                   </button>
                 </div>
-                <p className="mt-3 text-xs font-semibold text-slate-400">{hub.mockCommentNote}</p>
+                <p className="mt-3 text-xs font-semibold text-slate-400">
+                  {locale === 'ko'
+                    ? '내가 작성한 댓글은 이 브라우저에 저장되며 수정·삭제할 수 있어요.'
+                    : 'Comments you write are saved in this browser and can be edited or deleted.'}
+                </p>
               </div>
-            </>
-          ) : (
-            <div className="flex h-full min-h-[420px] items-center justify-center p-10 text-center text-slate-400 dark:text-slate-500">
-              {hub.selectPreset}
-            </div>
+                </div>
+              </HubCard>
+            </motion.div>
           )}
-        </HubCard>
+        </AnimatePresence>
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {hub.steps.map((step, index) => {
           const StepIcon = index === 0 ? Upload : index === 1 ? Users : AudioLines;
           return (
-            <HubCard key={step.title} className="p-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container dark:bg-primary-container/20">
-                  <StepIcon className="h-5 w-5" />
+            <div key={step.title}>
+              <HubCard className="h-full p-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-container/10 text-primary-container dark:bg-primary-container/20">
+                    <StepIcon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{step.title}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{step.body}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{step.title}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{step.body}</p>
-                </div>
-              </div>
-            </HubCard>
+              </HubCard>
+            </div>
           );
         })}
       </div>

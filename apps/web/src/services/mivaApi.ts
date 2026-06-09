@@ -15,6 +15,42 @@ export type CodingAccessMode = "readOnly" | "fileEdits" | "shellCommands";
 export type ApiKeyProviderId = "openai" | "gemini" | "groq" | "anthropic" | "custom";
 export type ApiKeyStatus = "notConfigured" | "configured" | "verified" | "error";
 export type UsageMode = "local" | "cloud";
+export type PersonaPresetIcon = "desk" | "tutor" | "focus" | "character";
+export type PersonaPresetUseCase = "daily" | "study" | "work" | "character";
+
+export interface PersonaPresetComment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  likes: number;
+}
+
+export interface PersonaPreset {
+  id: string;
+  icon: PersonaPresetIcon;
+  title: string;
+  author: string;
+  voice: string;
+  character: string;
+  useCase: PersonaPresetUseCase;
+  tags: string[];
+  description: string;
+  updatedAt: string;
+  featured?: boolean;
+  voiceFocused?: boolean;
+  characterFocused?: boolean;
+  comments: PersonaPresetComment[];
+  downloads: number;
+  likes: number;
+  commentCount: number;
+}
+
+export interface PersonaPresetCatalogResponse {
+  presets: PersonaPreset[];
+  source: string;
+  schemaVersion: string;
+}
 
 export interface PromptSettings {
   persona: string;
@@ -333,6 +369,10 @@ export async function completeDesktopDeviceLogin(deviceCode: string, token: stri
 
 export async function getAssistantProfiles() {
   return fetchJson<{ profiles: AssistantProfile[] }>(`${CLOUD_API_URL}/assistant-profiles`);
+}
+
+export async function getPersonaPresets() {
+  return fetchJson<PersonaPresetCatalogResponse>(`${CLOUD_API_URL}/catalog/persona-presets`);
 }
 
 export async function getAssistantProfile(profileId: string) {

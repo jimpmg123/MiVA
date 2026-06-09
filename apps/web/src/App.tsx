@@ -11,8 +11,10 @@ import {
   Bell, 
   HelpCircle, 
   ArrowLeft,
-  RefreshCw, 
+  RefreshCw,
   ChevronRight,
+  ChevronDown,
+  Bookmark,
   BarChart3,
   ShieldCheck,
   Download,
@@ -23,6 +25,7 @@ import {
   Plus,
   KeyRound,
   CreditCard,
+  Infinity as InfinityIcon,
   Activity,
   CheckCircle2,
   CircleStop,
@@ -38,6 +41,14 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { LandingPage } from './pages/LandingPage';
 import { PersonaHubPage } from './pages/PersonaHubPage';
+import { PersonaSharePage } from './pages/PersonaSharePage';
+import { SavedAssistantsPage } from './pages/SavedAssistantsPage';
+import {
+  getSavedPresets,
+  removeSavedPreset,
+  toggleSavedPreset,
+} from './services/personaLocal';
+import type { SavedPreset } from './services/personaLocal';
 import { LanguageToggle, useLocale } from './i18n/locale';
 import { useTheme } from './i18n/theme';
 import type { WebMessages } from './i18n/messages';
@@ -65,6 +76,7 @@ import type {
   AuthRole,
   AuthUser,
   CloudState,
+  PersonaPreset,
   ProviderId,
 } from './services/mivaApi';
 
@@ -104,7 +116,7 @@ declare global {
 }
 
 // --- Types ---
-type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'apiKeys' | 'usage' | 'billing' | 'integrations' | 'voice' | 'personaHub' | 'admin' | 'settings';
+type PageId = 'dashboard' | 'devices' | 'models' | 'profiles' | 'savedAssistants' | 'apiKeys' | 'usage' | 'billing' | 'integrations' | 'voice' | 'personaHub' | 'personaShare' | 'admin' | 'settings';
 type ServiceStatus = 'checking' | 'connected' | 'offline';
 type AuthState = {
   role: AuthRole;
@@ -433,6 +445,79 @@ function buildNavItems(nav: WebMessages['nav']): NavItem[] {
 }
 
 const authStorageKey = 'miva.web.auth.v1';
+
+const pageParamMap: Record<string, PageId> = {
+  dashboard: 'dashboard',
+  devices: 'devices',
+  models: 'models',
+  profiles: 'profiles',
+  savedAssistants: 'savedAssistants',
+  'saved-assistants': 'savedAssistants',
+  apiKeys: 'apiKeys',
+  usage: 'usage',
+  billing: 'billing',
+  integrations: 'integrations',
+  voice: 'voice',
+  personaHub: 'personaHub',
+  'persona-hub': 'personaHub',
+  personaShare: 'personaShare',
+  'persona-share': 'personaShare',
+  admin: 'admin',
+  settings: 'settings',
+};
+
+// Canonical URL slug for each page. Used when writing `?page=` so every screen
+// has its own distinct, shareable address (e.g. ?page=billing, ?page=persona-hub).
+const pageToSlug: Record<PageId, string> = {
+  dashboard: 'dashboard',
+  devices: 'devices',
+  models: 'models',
+  profiles: 'profiles',
+  savedAssistants: 'saved-assistants',
+  apiKeys: 'apiKeys',
+  usage: 'usage',
+  billing: 'billing',
+  integrations: 'integrations',
+  voice: 'voice',
+  personaHub: 'persona-hub',
+  personaShare: 'persona-share',
+  admin: 'admin',
+  settings: 'settings',
+};
+
+// Build the address for a given page, preserving any other query params/hash.
+// The dashboard is the default screen and keeps a clean URL (no `page` param).
+function buildPageHref(page: PageId): string {
+  const url = new URL(window.location.href);
+  if (page === 'dashboard') {
+    url.searchParams.delete('page');
+  } else {
+    url.searchParams.set('page', pageToSlug[page]);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function getInitialPage(): PageId {
+  try {
+    const page = new URLSearchParams(window.location.search).get('page');
+    if (page && pageParamMap[page]) {
+      return pageParamMap[page];
+    }
+  } catch {
+    // Fall back to the dashboard.
+  }
+
+  return 'dashboard';
+}
+
+function getPostLoginPage(role: AuthRole): PageId {
+  if (role === 'admin') {
+    return 'admin';
+  }
+
+  const requestedPage = getInitialPage();
+  return requestedPage === 'admin' ? 'dashboard' : requestedPage;
+}
 
 function getDesktopLoginRequest() {
   if (typeof window === 'undefined') {
@@ -1678,49 +1763,173 @@ const UsagePage = ({ cloud, onRefreshCloud }: { cloud: CloudState; onRefreshClou
   );
 };
 
+type BillingFeature = { label: string; included: boolean; highlight?: boolean; note?: string };
+type BillingPlan = {
+  id: string;
+  name: string;
+  price: string;
+  tagline: string;
+  features: BillingFeature[];
+  cta: string;
+  featured?: boolean;
+  current?: boolean;
+  hidePeriod?: boolean;
+  priceNote?: string;
+};
+
 const BillingPage = () => {
-  const plans = [
-    { name: 'Free', price: '$0', detail: 'Local-first setup, manual sync, and basic web management.', active: true },
-    { name: 'Pro', price: '$9', detail: 'Cloud sync, assistant library, usage analytics, and priority templates.', active: false },
-    { name: 'Team', price: '$29', detail: 'Shared assistants, admin analytics, team devices, and policy controls.', active: false },
+  const { locale } = useLocale();
+  const ko = locale === 'ko';
+
+  const t = {
+    title: ko ? '요금제' : 'Plans',
+    subtitle: ko
+      ? '무료 로컬 API로 시작하고, 매월 제공되는 클라우드 토큰 · 공유 · 코드 생성까지 필요한 만큼 확장하세요.'
+      : 'Start with the free local API, then scale up with monthly cloud tokens, sharing, and code generation.',
+    perMonth: ko ? ' /월' : ' /mo',
+    recommended: ko ? '추천' : 'Popular',
+    current: ko ? '현재 플랜' : 'Current',
+    footer: ko
+      ? '이 화면은 프로토타입으로 실제 결제는 처리되지 않습니다. 결제 연동은 추후 추가됩니다.'
+      : 'This is a prototype screen — no real payment is processed. Checkout will be connected later.',
+  };
+
+  const plans: BillingPlan[] = [
+    {
+      id: 'free',
+      name: 'Free',
+      price: '$0',
+      tagline: ko ? '로컬에서 가볍게 시작' : 'Get started locally',
+      current: true,
+      cta: ko ? '현재 플랜' : 'Current plan',
+      features: [
+        { label: ko ? '무료 로컬 API만 사용' : 'Free local API only', included: true, highlight: true },
+        { label: ko ? '어시스턴트 최대 5개' : 'Up to 5 assistants', included: true },
+        { label: ko ? '매월 클라우드 토큰' : 'Monthly cloud tokens', included: false },
+        { label: ko ? '웹 비서 공유 · 다운로드' : 'Share & download web assistants', included: false },
+        { label: ko ? 'AI 직접 코드 생성' : 'AI code generation', included: false },
+      ],
+    },
+    {
+      id: 'plus',
+      name: 'Plus',
+      price: '$3.99',
+      tagline: ko ? '공유하고 코드까지 생성' : 'Share and generate code',
+      featured: true,
+      cta: ko ? 'Plus로 업그레이드' : 'Upgrade to Plus',
+      features: [
+        { label: ko ? '매월 500K 토큰 제공' : '500K tokens / month', included: true, highlight: true, note: 'Sonnet · GPT 5.4' },
+        { label: ko ? '어시스턴트 최대 10개' : 'Up to 10 assistants', included: true },
+        { label: ko ? '웹 비서 공유 · 다운로드' : 'Share & download web assistants', included: true, highlight: true },
+        { label: ko ? 'AI 직접 코드 생성' : 'AI code generation', included: true, highlight: true },
+        { label: ko ? 'Free의 모든 기능 포함' : 'Everything in Free', included: true },
+      ],
+    },
+    {
+      id: 'pro',
+      name: 'Pro',
+      price: '$19.99',
+      hidePeriod: true,
+      priceNote: ko ? '최초 결제 · 이후 매월 $6.99' : 'First payment · then $6.99/mo',
+      tagline: ko ? '제한 없이 모든 기능' : 'Everything, unlimited',
+      cta: ko ? 'Pro로 업그레이드' : 'Upgrade to Pro',
+      features: [
+        { label: ko ? '매월 1M 입출력 토큰 제공' : '1M input/output tokens / month', included: true, highlight: true, note: 'Sonnet · GPT 5.4' },
+        { label: ko ? '어시스턴트 무제한' : 'Unlimited assistants', included: true, highlight: true },
+        { label: ko ? '모든 기능 사용 가능' : 'All features unlocked', included: true },
+        { label: ko ? '웹 비서 공유 · 다운로드' : 'Share & download web assistants', included: true },
+        { label: ko ? 'AI 직접 코드 생성' : 'AI code generation', included: true },
+      ],
+    },
   ];
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
       <div>
-        <h2 className="text-3xl font-bold font-display tracking-tight">Billing</h2>
-        <p className="text-slate-500 mt-1 max-w-2xl">
-          Mock billing screen for planning. Real checkout will be connected later through a payment provider.
-        </p>
+        <h2 className="text-3xl font-bold font-display tracking-tight">{t.title}</h2>
+        <p className="text-slate-500 mt-1 max-w-2xl">{t.subtitle}</p>
       </div>
 
-      <div className="grid grid-cols-12 gap-6">
-        {plans.map((plan) => (
-          <Card key={plan.name} className={`col-span-12 lg:col-span-4 p-8 ${plan.active ? 'border-primary-container' : ''}`}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black font-display">{plan.name}</h3>
-              {plan.active && <Badge variant="success">Current</Badge>}
-            </div>
-            <p className="mt-6 text-4xl font-black font-display text-slate-900">{plan.price}<span className="text-base text-slate-400">/mo</span></p>
-            <p className="mt-4 min-h-[72px] text-sm leading-6 text-slate-500">{plan.detail}</p>
-            <button
-              className={`mt-8 w-full rounded-2xl px-6 py-4 text-sm font-black uppercase tracking-widest transition active:scale-[0.98] ${
-                plan.active ? 'bg-slate-100 text-slate-400' : 'bg-primary-container text-white shadow-xl shadow-primary-container/20'
+      <div className="grid grid-cols-12 items-stretch gap-6">
+        {plans.map((plan) => {
+          const featured = Boolean(plan.featured);
+          const isPro = plan.id === 'pro';
+          return (
+            <Card
+              key={plan.id}
+              className={`relative col-span-12 flex flex-col overflow-hidden p-8 lg:col-span-4 ${
+                featured ? 'border-primary-container shadow-xl shadow-primary-container/10 ring-2 ring-primary-container/30' : ''
               }`}
-              type="button"
             >
-              {plan.active ? 'Current Plan' : 'Mock Upgrade'}
-            </button>
-          </Card>
-        ))}
+              {featured && (
+                <span className="absolute right-6 top-6">
+                  <Badge variant="active">{t.recommended}</Badge>
+                </span>
+              )}
+
+              <div className="flex items-center gap-2">
+                <h3 className="text-2xl font-black font-display">{plan.name}</h3>
+                {plan.current && <Badge variant="success">{t.current}</Badge>}
+                {isPro && <InfinityIcon className="h-5 w-5 text-primary-container" />}
+              </div>
+              <p className="mt-1 text-sm font-semibold text-slate-500">{plan.tagline}</p>
+
+              <p className="mt-6 text-4xl font-black font-display text-slate-900">
+                {plan.price}
+                {!plan.hidePeriod && <span className="text-base font-bold text-slate-400">{t.perMonth}</span>}
+              </p>
+              {plan.priceNote && (
+                <p className="mt-1 text-xs font-semibold text-slate-400">{plan.priceNote}</p>
+              )}
+
+              <ul className="mt-6 flex-1 space-y-3">
+                {plan.features.map((feature, i) => (
+                  <li key={i} className="flex items-start gap-3 text-sm">
+                    {feature.included ? (
+                      <CheckCircle2 className={`mt-0.5 h-5 w-5 shrink-0 ${feature.highlight ? 'text-primary-container' : 'text-green-600'}`} />
+                    ) : (
+                      <X className="mt-0.5 h-5 w-5 shrink-0 text-slate-300" />
+                    )}
+                    <span className="min-w-0">
+                      <span
+                        className={
+                          feature.included
+                            ? feature.highlight
+                              ? 'font-bold text-slate-900'
+                              : 'font-medium text-slate-700'
+                            : 'text-slate-400 line-through decoration-slate-300'
+                        }
+                      >
+                        {feature.label}
+                      </span>
+                      {feature.note && (
+                        <span className="mt-0.5 block text-[11px] font-medium text-slate-400">{feature.note}</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <button
+                className={`mt-8 w-full rounded-2xl px-6 py-4 text-sm font-black uppercase tracking-widest transition active:scale-[0.98] ${
+                  plan.current
+                    ? 'cursor-default bg-slate-100 text-slate-400'
+                    : 'bg-primary-container text-white shadow-xl shadow-primary-container/20 hover:opacity-90'
+                }`}
+                disabled={plan.current}
+                type="button"
+              >
+                {plan.cta}
+              </button>
+            </Card>
+          );
+        })}
       </div>
 
       <Card className="p-8">
         <div className="flex items-center gap-3 text-slate-500">
-          <CheckCircle2 className="h-5 w-5 text-green-600" />
-          <p className="text-sm font-semibold">
-            No payment is processed in this prototype. This screen exists to reserve the service structure.
-          </p>
+          <ShieldCheck className="h-5 w-5 text-green-600" />
+          <p className="text-sm font-semibold">{t.footer}</p>
         </div>
       </Card>
     </motion.div>
@@ -2548,7 +2757,7 @@ export default function App() {
   const { copy, locale } = useLocale();
   const shell = copy.shell;
   const navItems = useMemo(() => buildNavItems(copy.nav), [copy.nav]);
-  const [activePage, setActivePage] = useState<PageId>('dashboard');
+  const [activePage, setActivePage] = useState<PageId>(() => getInitialPage());
   const [auth, setAuth] = useState<AuthState>(() => loadAuthState());
   const [desktopLoginRequest] = useState(() => getDesktopLoginRequest());
   const [showLogin, setShowLogin] = useState(() => Boolean(getDesktopLoginRequest()));
@@ -2561,6 +2770,7 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>(initialConnection);
   const [cloud, setCloud] = useState<CloudState>(initialCloudState);
+  const [savedPresets, setSavedPresets] = useState<SavedPreset[]>(() => getSavedPresets());
   const [action, setAction] = useState<ActionState>({ type: 'idle' });
   const [showPullCancelConfirm, setShowPullCancelConfirm] = useState(false);
   const [downloadDockMode, setDownloadDockMode] = useState<ModelDownloadDockMode>('modal');
@@ -2575,6 +2785,29 @@ export default function App() {
   const handleDesktopAppDownload = () => {
     triggerDesktopAppDownload();
     setShowDesktopDownloadNotice(true);
+  };
+
+  // Navigate to a page and push a matching address so each screen has its own
+  // URL and the browser back/forward buttons move between screens.
+  const handleNavigate = (page: PageId) => {
+    if (page !== activePage) {
+      window.history.pushState({}, document.title, buildPageHref(page));
+    }
+    setActivePage(page);
+  };
+
+  const returnToPersonaHub = () => {
+    handleNavigate('personaHub');
+  };
+
+  const currentUserHandle = auth.user?.displayName?.trim() || 'me';
+
+  const handleToggleSavedPreset = (preset: PersonaPreset) => {
+    setSavedPresets(toggleSavedPreset(preset));
+  };
+
+  const handleRemoveSavedPreset = (presetId: string) => {
+    setSavedPresets(removeSavedPreset(presetId));
   };
   const visibleNavItems = useMemo(
     () => auth.role === 'admin'
@@ -2665,7 +2898,7 @@ export default function App() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      setActivePage(getPostLoginPage(response.user.role));
       await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Sign in failed.');
@@ -2735,7 +2968,7 @@ export default function App() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      setActivePage(getPostLoginPage(response.user.role));
       await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Google sign-in failed.');
@@ -2764,7 +2997,7 @@ export default function App() {
       };
       window.localStorage.setItem(authStorageKey, JSON.stringify(nextAuth));
       setAuth(nextAuth);
-      setActivePage(response.user.role === 'admin' ? 'admin' : 'dashboard');
+      setActivePage(getPostLoginPage(response.user.role));
       await refreshCloud(response.user.role);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Could not switch development account.');
@@ -3232,6 +3465,28 @@ export default function App() {
     }
   }, [activePage, auth.role]);
 
+  // Keep the active screen in sync with the address when the user uses the
+  // browser back/forward buttons or opens a shared link in the same tab.
+  useEffect(() => {
+    const handlePopState = () => {
+      setActivePage(getInitialPage());
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Reconcile the address with the active screen for programmatic navigation
+  // (login, logout, dev account switch, admin redirect). Nav clicks already
+  // push their own history entry, so this only replaces a stale address.
+  useEffect(() => {
+    const currentParam = new URLSearchParams(window.location.search).get('page');
+    const urlPage = currentParam ? pageParamMap[currentParam] ?? 'dashboard' : 'dashboard';
+    if (urlPage !== activePage) {
+      window.history.replaceState({}, document.title, buildPageHref(activePage));
+    }
+  }, [activePage]);
+
   const actions: WebConsoleActions = {
     refreshConnection,
     startOllama,
@@ -3303,8 +3558,22 @@ export default function App() {
       case 'billing': return <BillingPage />;
       case 'integrations': return <IntegrationsPage />;
       case 'voice': return <VoiceCharacterPage />;
-      case 'personaHub': return <PersonaHubPage key={locale} />;
-      case 'admin': return <DashboardPage connection={connection} action={action} actions={actions} />;
+      case 'savedAssistants': return (
+        <SavedAssistantsPage
+          savedPresets={savedPresets}
+          onRemove={handleRemoveSavedPreset}
+          onGoToHub={() => handleNavigate('personaHub')}
+        />
+      );
+      case 'personaHub': return (
+        <PersonaHubPage
+          savedPresets={savedPresets}
+          onToggleSave={handleToggleSavedPreset}
+          currentUserHandle={currentUserHandle}
+        />
+      );
+      case 'personaShare': return <PersonaSharePage profiles={cloud.profiles} onBackToHub={returnToPersonaHub} />;
+      case 'admin': return auth.role === 'admin' ? <AdminAnalyticsPage cloud={cloud} refreshCloud={refreshCloud} /> : <DashboardPage connection={connection} action={action} actions={actions} />;
       case 'settings': return <SettingsPage />;
       default: return null;
     }
@@ -3360,20 +3629,75 @@ export default function App() {
           </div>
 
           <nav className="space-y-1">
-            {visibleNavItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActivePage(item.id)}
-                className={`w-full group py-3 px-4 flex items-center gap-3 font-semibold text-sm rounded-xl transition-all active:scale-[0.98] ${
-                  activePage === item.id 
-                    ? 'bg-primary-container text-white shadow-lg shadow-primary-container/20' 
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
-                }`}
-              >
-                <item.icon className={`h-5 w-5 transition-colors ${activePage === item.id ? 'text-white' : 'text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white'}`} />
-                <span className="font-display tracking-tight">{item.label}</span>
-              </button>
-            ))}
+            {visibleNavItems.map((item) => {
+              const isActive = activePage === item.id;
+
+              if (item.id === 'profiles') {
+                const expanded = activePage === 'profiles' || activePage === 'savedAssistants';
+                const subItems: Array<{ id: PageId; label: string; icon: any; count?: number }> = [
+                  { id: 'profiles', label: locale === 'ko' ? '내 동기화 비서' : 'My synced assistants', icon: UserCircle },
+                  { id: 'savedAssistants', label: locale === 'ko' ? '저장한 공유 비서' : 'Saved shared', icon: Bookmark, count: savedPresets.length },
+                ];
+
+                return (
+                  <div key={item.id}>
+                    <button
+                      onClick={() => handleNavigate('profiles')}
+                      className={`w-full group py-3 px-4 flex items-center gap-3 font-semibold text-sm rounded-xl transition-all active:scale-[0.98] ${
+                        expanded
+                          ? 'bg-primary-container text-white shadow-lg shadow-primary-container/20'
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
+                      }`}
+                    >
+                      <item.icon className={`h-5 w-5 transition-colors ${expanded ? 'text-white' : 'text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white'}`} />
+                      <span className="font-display tracking-tight flex-1 text-left">{item.label}</span>
+                      {expanded ? <ChevronDown className="h-4 w-4 opacity-80" /> : <ChevronRight className="h-4 w-4 opacity-60" />}
+                    </button>
+                    {expanded && (
+                      <div className="mt-1 ml-5 space-y-1 border-l border-slate-100 pl-3 dark:border-slate-800">
+                        {subItems.map((sub) => {
+                          const subActive = activePage === sub.id;
+                          return (
+                            <button
+                              key={sub.id}
+                              onClick={() => handleNavigate(sub.id)}
+                              className={`w-full group py-2.5 px-3 flex items-center gap-2.5 font-semibold text-[13px] rounded-lg transition-all active:scale-[0.98] ${
+                                subActive
+                                  ? 'bg-primary-container/10 text-primary-container dark:bg-primary-container/20'
+                                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
+                              }`}
+                            >
+                              <sub.icon className={`h-4 w-4 ${subActive ? 'text-primary-container' : 'text-slate-400'}`} />
+                              <span className="flex-1 text-left">{sub.label}</span>
+                              {typeof sub.count === 'number' && sub.count > 0 && (
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${subActive ? 'bg-primary-container text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+                                  {sub.count}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleNavigate(item.id)}
+                  className={`w-full group py-3 px-4 flex items-center gap-3 font-semibold text-sm rounded-xl transition-all active:scale-[0.98] ${
+                    isActive
+                      ? 'bg-primary-container text-white shadow-lg shadow-primary-container/20'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
+                  }`}
+                >
+                  <item.icon className={`h-5 w-5 transition-colors ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white'}`} />
+                  <span className="font-display tracking-tight">{item.label}</span>
+                </button>
+              );
+            })}
           </nav>
         </div>
 
