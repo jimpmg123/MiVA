@@ -12,26 +12,39 @@ import {
   summarizeActionRequest,
 } from "./action-confirmation.mjs";
 
-const WORKSPACE_SLASH_LABELS = [
-  "Google Calendar",
-  "Google Docs",
-  "Google Drive",
-  "Gmail",
-  "Google Sheets",
-];
+import { getProviderApiKey } from "./provider-keys.mjs";
 
 const WORKSPACE_SLASH_PATTERN = /^\/(?:calendar|google-calendar|gcal|docs|google-docs|gdocs|drive|google-drive|gdrive|gmail|mail|email|sheets|google-sheets|spreadsheet)\b/i;
 
-const WORKSPACE_SLASH_COMMAND_LIST = "/calendar, /docs, /drive, /gmail, /sheets";
-import { getProviderApiKey } from "./provider-keys.mjs";
-
-const serviceKeywords = {
-  calendar: ["calendar", "schedule", "event", "meeting", "appointment", "reservation", "booked", "cancel", "delete", "remove", "\uc77c\uc815", "\uce98\ub9b0\ub354", "\ud68c\uc758", "\ubbf8\ud305", "\uc2a4\ucf00\uc904", "\uc608\uc57d", "\ucde8\uc18c", "\uc0ad\uc81c"],
-  gmail: ["gmail", "email", "mail", "inbox", "\uba54\uc77c", "\uc774\uba54\uc77c", "\uc9c0\uba54\uc77c", "\ubc1b\uc740\ud3b8\uc9c0"],
-  drive: ["drive", "file", "folder", "document", "\ub4dc\ub77c\uc774\ube0c", "\ud30c\uc77c", "\ud3f4\ub354"],
-  docs: ["docs", "doc", "document", "google docs", "\uad6c\uae00 \ubb38\uc11c", "\uad6c\uae00 \ub3c5\uc2a4", "\ubb38\uc11c", "\ub3c5\uc2a4"],
-  sheets: ["sheets", "spreadsheet", "sheet", "\uc2a4\ud504\ub808\ub4dc\uc2dc\ud2b8", "\uc2dc\ud2b8", "\ud45c"],
+// Workspace services are activated ONLY by an explicit slash command (or a [Google X] label).
+// There is intentionally no keyword/substring detection of plain message text.
+const WORKSPACE_SLASH_SERVICE = {
+  calendar: "calendar",
+  "google-calendar": "calendar",
+  gcal: "calendar",
+  docs: "docs",
+  "google-docs": "docs",
+  gdocs: "docs",
+  drive: "drive",
+  "google-drive": "drive",
+  gdrive: "drive",
+  gmail: "gmail",
+  mail: "gmail",
+  email: "gmail",
+  sheets: "sheets",
+  "google-sheets": "sheets",
+  spreadsheet: "sheets",
 };
+
+const WORKSPACE_LABEL_SERVICE = {
+  "Google Calendar": "calendar",
+  "Google Docs": "docs",
+  "Google Drive": "drive",
+  "Gmail": "gmail",
+  "Google Sheets": "sheets",
+};
+
+const WORKSPACE_SERVICE_ORDER = ["calendar", "gmail", "drive", "docs", "sheets"];
 function getProfileSettings(profile) {
   return profile?.prompt?.settings && typeof profile.prompt.settings === "object"
     ? profile.prompt.settings
@@ -54,14 +67,33 @@ function servicePolicyAllowsRead(settings, service) {
   return globalPolicy !== "disabled" && servicePolicy !== "disabled";
 }
 
-function messageMentionsService(prompt, service) {
-  const lowerPrompt = String(prompt || "").toLowerCase();
-  return serviceKeywords[service].some((keyword) => lowerPrompt.includes(keyword.toLowerCase()));
-}
+export function workspaceServicesFromSlash(prompt) {
+  const text = String(prompt || "");
+  const services = new Set();
 
-function mentionedWorkspaceServices(prompt) {
-  return ["calendar", "gmail", "drive", "docs", "sheets"]
-    .filter((service) => messageMentionsService(prompt, service));
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const slashMatch = line.match(/^\/([a-z-]+)/i);
+    if (slashMatch) {
+      const service = WORKSPACE_SLASH_SERVICE[slashMatch[1].toLowerCase()];
+      if (service) {
+        services.add(service);
+      }
+      continue;
+    }
+
+    for (const [label, service] of Object.entries(WORKSPACE_LABEL_SERVICE)) {
+      if (line.startsWith(`[${label}]`)) {
+        services.add(service);
+      }
+    }
+  }
+
+  return WORKSPACE_SERVICE_ORDER.filter((service) => services.has(service));
 }
 
 function formatWorkspaceServiceName(service, locale) {
@@ -99,11 +131,12 @@ function requestedServices(prompt, settings) {
     ? selected
     : new Set(["gmail", "calendar", "drive", "docs", "sheets"]);
 
-  return ["calendar", "gmail", "drive", "docs", "sheets"]
+  const slashServices = new Set(workspaceServicesFromSlash(prompt));
+  return WORKSPACE_SERVICE_ORDER
     .filter((service) => (
       fallbackSelected.has(service) &&
       servicePolicyAllowsRead(settings, service) &&
-      messageMentionsService(prompt, service)
+      slashServices.has(service)
     ))
     .slice(0, 3);
 }
@@ -178,7 +211,7 @@ function extractJsonObject(value) {
 }
 
 function buildWorkspaceWriteConfirmationMessage({ prompt, locale }) {
-  const services = mentionedWorkspaceServices(prompt);
+  const services = workspaceServicesFromSlash(prompt);
   const serviceLabel = joinWorkspaceServiceNames(services, locale);
   const toolLabel = services.length === 1
     ? formatWorkspaceServiceName(services[0], locale)
@@ -230,7 +263,7 @@ export function userMessageUsesWorkspaceSlash(content) {
     return true;
   }
 
-  return WORKSPACE_SLASH_LABELS.some((label) => text.startsWith(`[${label}]`));
+  return Object.keys(WORKSPACE_LABEL_SERVICE).some((label) => text.startsWith(`[${label}]`));
 }
 
 export function isWorkspaceSlashSession({ workspaceSlashForced, messages, latestUserPrompt }) {
@@ -251,74 +284,6 @@ export function isWorkspaceSlashSession({ workspaceSlashForced, messages, latest
   return (messages || []).some((message) => (
     message.role === "user" && userMessageUsesWorkspaceSlash(message.content)
   ));
-}
-
-export function buildUnsolicitedWorkspaceGuidance({ prompt, locale }) {
-  const services = mentionedWorkspaceServices(prompt);
-  if (services.length === 0) {
-    return null;
-  }
-
-  const slashExamples = {
-    calendar: locale === "en" ? "`/calendar add a meeting tomorrow at 3 PM`" : "`/calendar 내일 오후 3시 회의 추가`",
-    docs: locale === "en" ? "`/docs append a summary to my report`" : "`/docs 보고서에 요약 추가`",
-    drive: locale === "en" ? "`/drive find my project proposal PDF`" : "`/drive 프로젝트 제안서 PDF 찾아줘`",
-    gmail: locale === "en" ? "`/gmail summarize recent inbox messages`" : "`/gmail 최근 받은편지함 요약`",
-    sheets: locale === "en" ? "`/sheets summarize this week's sales tab`" : "`/sheets 이번 주 매출 시트 요약`",
-  };
-  const slashByService = {
-    calendar: "/calendar",
-    docs: "/docs",
-    drive: "/drive",
-    gmail: "/gmail",
-    sheets: "/sheets",
-  };
-
-  if (services.length === 1 && slashByService[services[0]]) {
-    const service = services[0];
-    const name = formatWorkspaceServiceName(service, locale);
-    const slash = slashByService[service];
-    const example = slashExamples[service];
-    if (locale === "en") {
-      return [
-        `${name} actions only run after you start the message with a slash command.`,
-        "",
-        `Use ${slash} first, then describe what you want.`,
-        `Example: ${example}`,
-        "",
-        `Available commands: ${WORKSPACE_SLASH_COMMAND_LIST}`,
-      ].join("\n");
-    }
-
-    return [
-      `${name} 작업은 슬래시 명령으로 기능을 활성화한 뒤에만 실행할 수 있습니다.`,
-      "",
-      `먼저 ${slash}로 시작한 다음 요청을 이어서 작성해 주세요.`,
-      `예: ${example}`,
-      "",
-      `사용 가능한 명령: ${WORKSPACE_SLASH_COMMAND_LIST}`,
-    ].join("\n");
-  }
-
-  if (locale === "en") {
-    return [
-      "Google Workspace actions only run after you start with a slash command.",
-      "",
-      "Enable the feature with a slash command, then describe what you want.",
-      "Examples: `/calendar ...`, `/docs ...`, `/drive ...`, `/gmail ...`, `/sheets ...`",
-      "",
-      `Available commands: ${WORKSPACE_SLASH_COMMAND_LIST}`,
-    ].join("\n");
-  }
-
-  return [
-    "Google Calendar, Docs, Drive, Gmail, Sheets 기능은 슬래시 명령으로만 사용할 수 있습니다.",
-    "",
-    "슬래시로 기능을 활성화한 뒤 요청을 이어서 작성해 주세요.",
-    "예: `/calendar 내일 3시 회의 추가`, `/docs 보고서에 내용 추가`, `/drive 제안서 PDF 찾아줘`",
-    "",
-    `사용 가능한 명령: ${WORKSPACE_SLASH_COMMAND_LIST}`,
-  ].join("\n");
 }
 
 function buildWorkspaceActionCompletedMessage(result, locale) {
@@ -497,7 +462,7 @@ export async function buildWorkspaceContext({ prompt, profile, authToken }) {
     return null;
   }
 
-  const mentionedServices = mentionedWorkspaceServices(prompt);
+  const mentionedServices = workspaceServicesFromSlash(prompt);
   const services = requestedServices(prompt, settings);
   if (services.length === 0) {
     if (mentionedServices.length > 0) {

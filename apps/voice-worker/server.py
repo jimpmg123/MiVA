@@ -602,7 +602,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MiVA optional Python voice worker")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument(
+        "--analyze-document",
+        dest="analyze_document_path",
+        default=None,
+        help="Parse a single document and print the result as JSON, then exit.",
+    )
     args = parser.parse_args()
+
+    # One-shot document analysis mode. This lets the local helper extract text
+    # from PDFs/spreadsheets without starting (or cold-booting) the long-running
+    # Kokoro TTS worker, so attaching a file never waits on the voice engine.
+    if args.analyze_document_path is not None:
+        try:
+            result = analyze_document({"path": args.analyze_document_path})
+        except Exception as error:  # noqa: BLE001 - report any failure as JSON
+            result = {
+                "ok": False,
+                "error": "DOCUMENT_ANALYSIS_FAILED",
+                "message": str(error),
+            }
+        sys.stdout.write(json.dumps(result))
+        sys.stdout.flush()
+        return
 
     server = ThreadingHTTPServer((args.host, args.port), VoiceWorkerHandler)
     print(f"MiVA Voice Worker listening on http://{args.host}:{args.port}", flush=True)

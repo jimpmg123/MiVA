@@ -17,7 +17,6 @@ import { resolveWorkspaceActionPrompt } from "../services/action-confirmation.mj
 import { getProviderApiKey } from "../services/provider-keys.mjs";
 import { runClawCodeAgent, shouldRouteToClawCode } from "../services/claw-code.mjs";
 import {
-  buildUnsolicitedWorkspaceGuidance,
   buildWorkspaceActionContext,
   buildWorkspaceContext,
   isWorkspaceSlashSession,
@@ -143,31 +142,6 @@ export async function handleChat(req, res, origin) {
     latestUserPrompt,
   });
 
-  if (!routeToClawCode && !workspaceSlashSession) {
-    const guidance = buildUnsolicitedWorkspaceGuidance({ prompt: latestUserPrompt, locale });
-    if (guidance) {
-      if (body.stream === true) {
-        writeCorsHeaders(res, origin);
-        res.writeHead(200, {
-          "content-type": "application/x-ndjson; charset=utf-8",
-          "cache-control": "no-cache",
-        });
-        res.write(`${JSON.stringify({ message: { content: guidance } })}\n`);
-        res.write(`${JSON.stringify({ done: true, answer: guidance })}\n`);
-        res.end();
-        return;
-      }
-
-      sendJson(res, 200, {
-        ok: true,
-        provider,
-        model,
-        answer: guidance,
-      }, origin);
-      return;
-    }
-  }
-
   const workspaceContext = workspaceSlashSession
     ? await buildWorkspaceContext({
       prompt: workspacePrompt,
@@ -262,9 +236,11 @@ export async function handleChat(req, res, origin) {
     messages.splice(1, 0, {
       role: "system",
       content: [
-        "Rolling summary memory for this assistant:",
+        "Runtime memory for this assistant:",
         body.memorySummary.trim(),
-        "Use this summary only as background context. The user's latest message has priority."
+        "Use profile memory and pinned long-term memory as stable background context.",
+        "Use compacted current conversation context only to continue this active thread.",
+        "The user's latest message has priority over memory when they conflict."
       ].join("\n")
     });
   }

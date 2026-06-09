@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import {
-  buildUnsolicitedWorkspaceGuidance,
   isWorkspaceSlashSession,
   userMessageUsesWorkspaceSlash,
+  workspaceServicesFromSlash,
 } from "./workspace.mjs";
 
 assert.equal(userMessageUsesWorkspaceSlash("/drive find proposal"), true);
@@ -11,18 +11,16 @@ assert.equal(userMessageUsesWorkspaceSlash("/calendar add meeting"), true);
 assert.equal(userMessageUsesWorkspaceSlash("[Google Calendar] add meeting"), true);
 assert.equal(userMessageUsesWorkspaceSlash("calendar add meeting"), false);
 
-assert.equal(
-  buildUnsolicitedWorkspaceGuidance({ prompt: "드라이브에서 제안서 찾아줘", locale: "ko" })?.includes("/drive"),
-  true,
-);
-assert.equal(
-  buildUnsolicitedWorkspaceGuidance({ prompt: "캘린더에 내일 회의 추가해줘", locale: "ko" })?.includes("/calendar"),
-  true,
-);
-assert.equal(
-  buildUnsolicitedWorkspaceGuidance({ prompt: "구구단 계산하는 코드 만들어줘", locale: "ko" }),
-  null,
-);
+// Services activate ONLY from an explicit slash command or [Google X] label.
+assert.deepEqual(workspaceServicesFromSlash("/drive find proposal"), ["drive"]);
+assert.deepEqual(workspaceServicesFromSlash("/gmail summarize inbox"), ["gmail"]);
+assert.deepEqual(workspaceServicesFromSlash("[Google Calendar] 내일 3시 회의"), ["calendar"]);
+assert.deepEqual(workspaceServicesFromSlash("/spreadsheet weekly sales"), ["sheets"]);
+// Plain text that merely contains a service word must NOT activate anything.
+assert.deepEqual(workspaceServicesFromSlash("summarize this file"), []);
+assert.deepEqual(workspaceServicesFromSlash("너 표정 뭐가지고 잇어"), []);
+assert.deepEqual(workspaceServicesFromSlash("please delete this line and remove the import"), []);
+assert.deepEqual(workspaceServicesFromSlash("드라이브에서 제안서 찾아줘"), []);
 
 assert.equal(
   isWorkspaceSlashSession({

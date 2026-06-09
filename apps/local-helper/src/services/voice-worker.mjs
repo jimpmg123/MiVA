@@ -353,18 +353,10 @@ export async function installKokoroDependencies({ pythonExecutable = null } = {}
 }
 
 export async function installDocumentDependencies() {
-  let status = null;
-  try {
-    const startResult = await startVoiceWorker();
-    status = startResult.status;
-  } catch {
-    status = await getVoiceWorkerStatus();
-  }
+  const python = await findPython312();
 
   const packages = ["pandas", "openpyxl", "xlrd", "PyMuPDF"];
-  const candidates = status?.python?.executable
-    ? [{ command: status.python.executable, argsPrefix: [] }]
-    : pythonCandidates();
+  const candidates = python ? [python] : pythonCandidates();
 
   let lastResult = null;
   for (const candidate of candidates) {
@@ -399,21 +391,51 @@ export async function installDocumentDependencies() {
   );
 }
 
-export async function analyzeDocument(payload) {
-  await startVoiceWorker();
-  let response = await postJson(`${VOICE_WORKER_BASE_URL}/documents/analyze`, payload, 180000);
+function parseDocumentResult(result) {
+  const text = String(result.stdout || "").trim();
+  const lastLine = text.split(/\r?\n/).filter(Boolean).at(-1) || "";
+  try {
+    return JSON.parse(lastLine);
+  } catch {
+    const detail = result.stderr || text || `Python exited with code ${result.code}`;
+    throw new Error(`Document analysis failed: ${detail}`);
+  }
+}
 
-  if (response.data?.error === "DOCUMENT_DEPENDENCIES_MISSING") {
-    await installDocumentDependencies();
-    response = await postJson(`${VOICE_WORKER_BASE_URL}/documents/analyze`, payload, 180000);
+async function runDocumentAnalysis(payload) {
+  const candidate = await findPython312();
+  if (!candidate) {
+    throw new Error(
+      "Python 3.12 is required to analyze documents. Install it and try again."
+    );
   }
 
-  if (!response.ok || !response.data?.ok) {
-    const message = response.data?.message || response.data?.error || `Python worker returned HTTP ${response.status}`;
+  const result = await runProcess(
+    candidate.command,
+    [...candidate.argsPrefix, workerScript, "--analyze-document", String(payload?.path ?? "")],
+    180000
+  );
+
+  return parseDocumentResult(result);
+}
+
+// Document parsing runs as a short-lived Python process and never touches the
+// long-running Kokoro voice worker, so attaching a file does not pay the TTS
+// cold-start cost (or require the voice engine to be running at all).
+export async function analyzeDocument(payload) {
+  let data = await runDocumentAnalysis(payload);
+
+  if (data?.error === "DOCUMENT_DEPENDENCIES_MISSING") {
+    await installDocumentDependencies();
+    data = await runDocumentAnalysis(payload);
+  }
+
+  if (!data?.ok) {
+    const message = data?.message || data?.error || "Document analysis failed.";
     throw new Error(message);
   }
 
-  return response.data;
+  return data;
 }
 
 export async function synthesizeVoice(payload) {

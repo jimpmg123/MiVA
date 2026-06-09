@@ -48,13 +48,68 @@ const profileInstructionMap = {
   }
 };
 
+const personalizationInstructionMap = {
+  baseStyle: {
+    concise: "Global personalization: prefer concise, direct answers with minimal setup.",
+    balanced: "Global personalization: use a balanced style with a direct answer followed by useful context.",
+    detailed: "Global personalization: include more detail, steps, and tradeoffs when the topic benefits from explanation.",
+    professional: "Global personalization: use a polished, professional tone suitable for work contexts."
+  },
+  warmth: {
+    warmer: "Global personalization: sound warmer and more approachable while staying practical.",
+    neutral: "Global personalization: keep warmth neutral and avoid overly familiar wording.",
+    direct: "Global personalization: be direct and avoid unnecessary softening phrases."
+  },
+  enthusiasm: {
+    more: "Global personalization: use moderately more enthusiastic wording when appropriate.",
+    balanced: "Global personalization: keep enthusiasm balanced and task-focused.",
+    less: "Global personalization: keep enthusiasm low and avoid excited language."
+  },
+  headingsAndLists: {
+    more: "Global personalization: use headings, bullets, and numbered lists more often for scanability.",
+    balanced: "Global personalization: use headings and lists when they materially improve readability.",
+    minimal: "Global personalization: avoid headings and long lists unless the user asks or the answer is complex."
+  },
+  emojiUse: {
+    none: "Global personalization: do not use emoji unless the user explicitly asks.",
+    sparse: "Global personalization: use emoji rarely, only when it adds clear tone or meaning.",
+    expressive: "Global personalization: emoji are allowed for casual answers, but keep them relevant and not excessive."
+  }
+};
+
+function buildPersonalizationInstructions(personalization) {
+  if (!personalization || typeof personalization !== "object") {
+    return [];
+  }
+
+  const instructions = [];
+  for (const [field, choices] of Object.entries(personalizationInstructionMap)) {
+    const value = personalization[field];
+    const instruction = typeof value === "string" ? choices[value] : null;
+    if (instruction) {
+      instructions.push(instruction);
+    }
+  }
+
+  if (typeof personalization.customInstructions === "string" && personalization.customInstructions.trim()) {
+    instructions.push([
+      "Global custom instructions for all conversations:",
+      personalization.customInstructions.trim()
+    ].join("\n"));
+  }
+
+  return instructions;
+}
+
 function buildProfileInstructions(profile, provider) {
   if (!profile || typeof profile !== "object") {
     return [];
   }
 
   const instructions = [];
+  let personalizationAdded = false;
   instructions.push("Preserve meaningful line breaks from the user's message when referring to or rewriting user-provided text. If your answer is more than a few sentences, use natural line breaks so it is easy to read.");
+  instructions.push("Runtime answer format: write normal answers in GitHub Flavored Markdown. Use headings only when they improve scanning, lists for steps or options, blockquotes for quoted notes, and fenced code blocks with language labels for code. Keep short answers as simple Markdown paragraphs.");
   for (const key of ["useCase", "answerStyle", "priority", "languageUse", "localMode"]) {
     const value = profile[key];
     const instruction = profileInstructionMap[key]?.[value];
@@ -236,6 +291,9 @@ function buildProfileInstructions(profile, provider) {
       }
     }
 
+    instructions.push(...buildPersonalizationInstructions(profile.personalization));
+    personalizationAdded = true;
+
     if (Array.isArray(promptSettings.safetyRules)) {
       for (const rule of promptSettings.safetyRules) {
         if (typeof rule === "string" && rule.trim()) {
@@ -243,6 +301,10 @@ function buildProfileInstructions(profile, provider) {
         }
       }
     }
+  }
+
+  if (!personalizationAdded) {
+    instructions.push(...buildPersonalizationInstructions(profile.personalization));
   }
 
   return instructions;
