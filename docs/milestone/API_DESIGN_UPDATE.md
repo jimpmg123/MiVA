@@ -1,7 +1,7 @@
 # Milestone 4 API Design Update
 
 Milestone period: May 12, 2026 to June 5, 2026  
-Document update date: June 9, 2026
+Document update date: June 10, 2026
 
 ## API Architecture
 
@@ -10,7 +10,7 @@ MiVA now uses two API layers:
 | Layer | Runtime | Purpose |
 | --- | --- | --- |
 | Cloud API | NestJS + Prisma + Supabase PostgreSQL, deployed to Railway | Account/session auth, device sync, assistant profile sync, provider key metadata, usage/admin data, Google Workspace OAuth/context/actions, Studio generation endpoints, persona preset catalog. |
-| Local Helper API | Node.js localhost service, bundled with desktop/local dev | Ollama detection/start/install, local model pull/delete/cancel, chat routing, cloud-provider forwarding, Claw Code, voice worker bridge, Daiso/image/document extensions, Workspace runtime context. |
+| Local Helper API | Node.js localhost service, bundled with desktop/local dev | Ollama detection/start/install, local model pull/delete/cancel, chat routing, cloud-provider forwarding, Claw Code, voice worker bridge, image/document extensions, Workspace runtime context. |
 
 Production links prepared for beta:
 
@@ -79,8 +79,6 @@ Production links prepared for beta:
 | `POST` | `/claw-code/install` | Install/prepare Claw Code agent support | Implemented |
 | `POST` | `/claw-code/workspace` | Select or store Claw Code workspace | Implemented |
 | `POST` | `/claw-code/run` | Run Claw Code agent path | Implemented |
-| `GET` | `/daiso/status` | Check Daiso CLI bridge availability | Implemented |
-| `POST` | `/daiso/run` | Run Daiso CLI bridge command | Implemented |
 | `GET` | `/image-gen/status` | Check image generation extension status | Implemented |
 | `POST` | `/image-gen/generate` | Generate image through configured provider path | Implemented |
 | `POST` | `/documents/analyze` | Analyze document input through local helper path | Implemented |

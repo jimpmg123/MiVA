@@ -1,7 +1,7 @@
 # Milestone 4 Progress Update
 
 Milestone period: May 12, 2026 to June 5, 2026  
-Document update date: June 9, 2026
+Document update date: June 10, 2026
 
 ## Individual Progress Update - Jinu Hong
 
@@ -56,7 +56,7 @@ Role: Full-stack developer / solo implementation lead
 | 2D character / Live2D | 50% | Character page, catalog, overlay app, and Live2D runtime path exist. | Need asset polish, reaction mapping, viewport QA, and performance checks. |
 | Conversation memory | 60% | Rolling summary memory can be injected into runtime prompts. | Need user controls, memory reset/export behavior, and longer conversation verification. |
 | Google Workspace actions | 60% | OAuth/status/context/actions routes and runtime context path exist. | Need stricter confirmation, permission auditing, and more Gmail/Docs/Calendar QA. |
-| Bug tracking in GitHub Issues | 40% | README and bug tracking plan now link to GitHub Issues and define issue candidates. | Need to create the actual GitHub Issue records and assign/verify serious bugs. |
+| Bug tracking in GitHub Issues | 80% | README and bug tracking docs link to GitHub Issues; issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) were created for current bug/regression candidates. | Need to verify, prioritize, and close or update each issue during final QA. |
 
 ### Blockers / Risks
 
@@ -98,7 +98,7 @@ Reasoning: the project started late and peer verification is incomplete, but the
 
 - Treat setup, Ollama/local-helper, assistant profiles, runtime chat, and beta web deployment as the primary final-release path.
 - Keep Persona Hub, voice, character, memory, and Workspace actions as beta features unless final QA verifies them.
-- Create GitHub Issues for the serious bug candidates in `BUG_TRACKING.md`.
+- Verify and prioritize GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues), with serious bugs reserved for the next QA/fix window.
 - Reserve the next schedule window for QA and bug fixing, not additional scope expansion.
 - Update API docs again after any final route/schema changes.
 
@@ -115,12 +115,12 @@ The following checks were used as the current Milestone 4 verification record:
 
 | Area | Verification | Result |
 | --- | --- | --- |
-| Local Helper | `npm run check --prefix apps/local-helper` | Passed. Validates Node syntax for server, chat, documents, voice, Workspace, Daiso, and prompt modules. |
+| Local Helper | `npm run check --prefix apps/local-helper` | Passed. Validates Node syntax for server, chat, documents, voice, Workspace, and prompt modules. |
 | Desktop release build path | `npm run check --prefix apps/desktop` | Passed. Builds the desktop React/Tauri frontend bundle used by release packaging. |
 | Desktop Rust/Tauri backend | `cargo check` in `apps/desktop/src-tauri` | Passed with existing non-blocking warnings only. |
 | Web beta | `GET https://mi-va.vercel.app` | Returned HTTP 200. |
 | Cloud API health | `GET https://miva-production.up.railway.app/health` | Returned HTTP 200 with `ok: true`. |
-| Desktop installer artifact | `HEAD https://mi-va.vercel.app/downloads/MiVA-Desktop-setup.exe` | Returned HTTP 200, `application/x-msdos-program`, 33,547,794 bytes. |
+| Desktop installer artifact | `HEAD https://mi-va.vercel.app/downloads/MiVA-Desktop-setup.exe` | Returned HTTP 200. Latest packaged installer in the repository is 41,969,173 bytes. |
 
 ## Milestone 4 Requirement Checklist
 
@@ -130,7 +130,7 @@ The following checks were used as the current Milestone 4 verification record:
 | Bug report method and GitHub Issues link in README | Completed |
 | Schedule update | Completed in `SCHEDULE_UPDATE.md` |
 | API Design update | Completed in `API_DESIGN_UPDATE.md` |
-| Bug tracking prepared | Completed in `BUG_TRACKING.md`; actual issue creation still needed |
+| Bug tracking prepared | Completed in `BUG_TRACKING.md`; GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) created |
 | Another teammate tests completed features | Not completed / skipped due solo workflow |
 | Beta deployment link prepared | Completed |
 | Individual progress update | Completed |

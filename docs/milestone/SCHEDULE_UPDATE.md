@@ -1,7 +1,7 @@
 # Milestone 1-4 Schedule Update
 
 Milestone period: May 12, 2026 to June 5, 2026  
-Document update date: June 9, 2026
+Document update date: June 10, 2026
 
 ## Summary
 
@@ -17,7 +17,7 @@ Progress started later than planned and was mostly completed by one developer, s
 | May 17-May 23 | Ollama setup, local helper install/start flow, README and web checks | Preserved assistant model selection, added voice settings/worker scaffold, replaced Workspace CLI with direct Google API direction, updated README/web checks | Completed |
 | May 24-May 30 | Local model runtime polish, optional voice path | Added local Kokoro TTS runtime path and planned voice worker integration | Completed |
 | May 31-June 2 | Database/API schema, web console profile review, bug tracking docs | Updated API schema, Workspace services, local helper voice/runtime paths, web console assistant review, deployment/API/bug tracking docs, setup chat bug fix | Completed |
-| June 3-June 5 | Integration and beta release | Added Claw Code agent service and install UI, character overlay, Live2D runtime, Studio/runtime pages, streaming chat, vision, documents, Workspace APIs, Daiso bridge, dev services, desktop shell, web redesign/i18n, and release packaging docs | Completed |
+| June 3-June 5 | Integration and beta release | Added Claw Code agent service and install UI, character overlay, Live2D runtime, Studio/runtime pages, streaming chat, vision, documents, Workspace APIs, dev services, desktop shell, web redesign/i18n, and release packaging docs | Completed |
 
 ## Updated Feature Status
 
@@ -44,8 +44,8 @@ Progress started later than planned and was mostly completed by one developer, s
 | Target Date | Work Item | Owner | Priority |
 | --- | --- | --- | --- |
 | June 6-June 9 | Milestone documentation, README, API update, bug tracking, beta link verification | Jinu Hong | High |
-| June 10-June 13 | Run focused QA on setup, model download, runtime chat, profile sync, Persona Hub, voice, character overlay | Jinu Hong | High |
-| June 14-June 17 | Fix serious bugs from QA and GitHub Issues; verify Workspace and Claw Code edge cases | Jinu Hong | High |
+| June 10-June 13 | Run focused QA on setup, model download, runtime chat, profile sync, Persona Hub, voice, character overlay, and Studio question generation | Jinu Hong | High |
+| June 14-June 17 | Fix serious bugs from GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues); verify Workspace and Claw Code edge cases | Jinu Hong | High |
 | June 18-June 20 | Production packaging, desktop installer refresh, Vercel/Railway smoke test | Jinu Hong | High |
 | Final release window | Final polish, test evidence, presentation/demo script, final report/API docs | Jinu Hong | High |
 
@@ -53,5 +53,5 @@ Progress started later than planned and was mostly completed by one developer, s
 
 - The schedule changed from a narrow local-helper deliverable to a broader assistant platform beta.
 - The broadened scope increased feature surface area but left less time for peer verification and test coverage.
-- Serious bugs will be handled by Jinu Hong through GitHub Issues with a verification plan and schedule slot.
+- Serious bugs will be handled by Jinu Hong through GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) with a verification plan and schedule slot.
 - Voice, character, Persona Hub sharing, and Workspace actions should be presented as beta/partial features unless final QA verifies them before release.

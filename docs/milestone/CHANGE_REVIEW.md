@@ -1,7 +1,7 @@
 # Milestone 1-4 Change Review
 
 Milestone period: May 12, 2026 to June 5, 2026  
-Document update date: June 9, 2026
+Document update date: June 10, 2026
 
 ## Scope Context
 
@@ -26,7 +26,7 @@ The active working tree contains changes across 56 tracked files with about 5,77
 | --- | --- |
 | `apps/desktop` | Setup navigation, Studio, runtime chat, assistant cards, prompt generation UI, character page, Live2D/overlay, rolling memory, profile menu, settings, packaging dependencies. |
 | `apps/api` | Catalog expansion, persona presets, API key sync, Studio prompt-generation endpoints, Workspace and usage APIs. |
-| `apps/local-helper` | Chat routing, provider/tool prompts, Workspace context/actions, Claw Code service, voice worker bridge, Daiso/image/document routes. |
+| `apps/local-helper` | Chat routing, provider/tool prompts, Workspace context/actions, Claw Code service, voice worker bridge, image/document routes. |
 | `apps/voice-worker` | Local voice worker endpoint improvements for Kokoro/local TTS path. |
 | `apps/web` | Web console expansion, Persona Hub/share page, billing route, assistant profile/API service updates. |
 | `docs` | Design documentation updates and this Milestone 4 documentation package. |
