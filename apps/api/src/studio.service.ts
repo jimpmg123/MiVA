@@ -1548,6 +1548,9 @@ export class StudioService {
       normalizedPayload,
       () => fallbackQuestions(normalizedPayload),
       normalizeQuestionsPayload,
+      {
+        timeoutMs: Number(process.env.OPENAI_QUESTION_TIMEOUT_MS || 8000),
+      },
     );
   }
 
@@ -1663,6 +1666,9 @@ export class StudioService {
     payload: unknown,
     fallback: () => T,
     validate: (value: unknown) => T | null,
+    options?: {
+      timeoutMs?: number;
+    },
   ): Promise<T & { source?: "openai" | "fallback"; fallbackReason?: string }> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
@@ -1671,35 +1677,39 @@ export class StudioService {
 
     try {
       const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-      const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 20000);
+      const timeoutMs = options?.timeoutMs ?? Number(process.env.OPENAI_TIMEOUT_MS || 20000);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.4,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: [
-                `Task: ${taskName}`,
-                "Return JSON only. Do not wrap it in Markdown.",
-                "Input:",
-                JSON.stringify(payload, null, 2),
-              ].join("\n"),
-            },
-          ],
-        }),
-      });
-      clearTimeout(timeout);
+      let response: Response;
+      try {
+        response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.4,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: systemPrompt },
+              {
+                role: "user",
+                content: [
+                  `Task: ${taskName}`,
+                  "Return JSON only. Do not wrap it in Markdown.",
+                  "Input:",
+                  JSON.stringify(payload, null, 2),
+                ].join("\n"),
+              },
+            ],
+          }),
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
 
       if (!response.ok) {
         const text = await response.text();
