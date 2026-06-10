@@ -53,6 +53,7 @@ const configuredWebOrigins = (process.env.MIVA_WEB_ORIGINS || process.env.MIVA_C
   .filter(Boolean);
 
 export const allowedOrigins = new Set([
+  "https://mi-va.vercel.app",
   "http://localhost:1420",
   "http://127.0.0.1:1420",
   "http://localhost:1421",
