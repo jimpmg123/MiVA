@@ -682,11 +682,11 @@ export function useRuntimeChat({
     });
 
     const generated = await runChatOnce({
-      provider: "gemini",
-      model: "gemini-2.5-flash-lite",
+      provider: "openai",
+      model: OPENAI_COMPACTION_MODEL,
       prompt,
       locale: activeLocale,
-      apiKey: null,
+      apiKey: providerKeys.openai.trim() || null,
       authToken: authSession?.token ?? null,
       profile: input.assistantProfile,
     });
@@ -1261,14 +1261,14 @@ export function useRuntimeChat({
           {
             role: "assistant",
             content: updatedProfile
-              ? `Generated and saved this prompt rule with Gemini:\n\n- ${fixRule}\n\nYou can review it in Studio > Prompts.`
+              ? `Generated and saved this prompt rule with OpenAI:\n\n- ${fixRule}\n\nYou can review it in Studio > Prompts.`
               : "I could not find the active assistant profile to update.",
             createdAt: new Date().toISOString(),
             provider: activeProvider,
             model: providerModel,
           },
         ]);
-        onLog(`Prompt rule generated with Gemini from /fix: ${fixRule}`);
+        onLog(`Prompt rule generated with OpenAI from /fix: ${fixRule}`);
       } catch (error) {
         const message = `Prompt rule update failed: ${String(error)}`;
         updateChatMessages(chatMode, (current) => [
