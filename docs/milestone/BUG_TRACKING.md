@@ -27,8 +27,8 @@ When reporting a bug, include:
 
 | Issue ID | Title | Status | Severity | GitHub Issue | Verification Plan |
 | --- | --- | --- | --- | --- | --- |
-| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed, needs regression check | Minor | [#1](https://github.com/jimpmg123/MiVA/issues/1) | Open setup chat and confirm intro card does not cover messages or composer. |
-| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed, needs regression check | Minor | [#2](https://github.com/jimpmg123/MiVA/issues/2) | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
+| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed (closed via 651d640) | Minor | [#1](https://github.com/jimpmg123/MiVA/issues/1) | Open setup chat and confirm intro card does not cover messages or composer. |
+| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed (closed via ae82c7b, 7f4b831) | Minor | [#2](https://github.com/jimpmg123/MiVA/issues/2) | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
 | BUG-003 | Deleted local assistant can remain visible in web console after sync | Needs verification | Major | [#3](https://github.com/jimpmg123/MiVA/issues/3) | Delete a local assistant, sync, refresh web console, and confirm removal. |
 | BUG-004 | Google Workspace context is not consistently trusted by every model | In progress | Major | [#4](https://github.com/jimpmg123/MiVA/issues/4) | Ask Gmail/Docs/Calendar questions with Gemini/OpenAI and verify injected context is used correctly. |
 | BUG-005 | Ollama can initially use CPU instead of GPU | Fixed, needs environment verification | Major | [#5](https://github.com/jimpmg123/MiVA/issues/5) | Run a local model and check `ollama ps` plus GPU utilization. |
@@ -40,7 +40,10 @@ When reporting a bug, include:
 | BUG-011 | Voice worker/Kokoro install may fail silently on missing Python packages | Open | Major | [#11](https://github.com/jimpmg123/MiVA/issues/11) | Run install/start on a clean Windows machine and verify actionable errors. |
 | BUG-012 | Live2D/2D character overlay needs viewport and asset loading regression test | Open | Minor | [#12](https://github.com/jimpmg123/MiVA/issues/12) | Open character page/overlay at desktop viewport and confirm assets render without overlap. |
 | BUG-013 | Billing route deployment needs verification | Open | Minor | [#13](https://github.com/jimpmg123/MiVA/issues/13) | Deploy web, open `https://mi-va.vercel.app/?page=billing`, and verify Billing page is active. |
-| BUG-014 | Studio question generation can fall back after OpenAI timeout | Fixed, needs release regression check | Major | [#14](https://github.com/jimpmg123/MiVA/issues/14) | Use the packaged app against Railway, generate Studio questions for study/coding/companion assistants, and confirm no blocking `Failed to fetch` error appears. |
+| BUG-014 | Studio question generation can fall back after OpenAI timeout | Fixed (closed via 143bbe1, c020bf6) | Major | [#14](https://github.com/jimpmg123/MiVA/issues/14) | Use the packaged app against Railway, generate Studio questions for study/coding/companion assistants, and confirm no blocking `Failed to fetch` error appears. |
+| BUG-015 | Material Symbols icons render as missing glyphs when offline or packaged | Fixed (closed via 20f5c6b) | Minor | [#15](https://github.com/jimpmg123/MiVA/issues/15) | Run the packaged desktop app offline and confirm Studio/setup icons render instead of showing boxes. |
+| BUG-016 | Deployed web console cannot reach the local helper (CORS origin not allowed) | Fixed (closed via d763fea) | Major | [#16](https://github.com/jimpmg123/MiVA/issues/16) | Run the local helper, open https://mi-va.vercel.app, and confirm Local Helper shows Connected (GET /health returns access-control-allow-origin). |
+| BUG-017 | Studio Models list drag-to-reorder did not work in the desktop (Tauri) build | Fixed (pointer-based reorder; commit pending) | Minor | [#17](https://github.com/jimpmg123/MiVA/issues/17) | In Studio > Models, drag a row by its handle above/below another row; confirm the order changes, persists as User sort, and survives navigating away and back. |
 
 ## Serious Bug Policy
 

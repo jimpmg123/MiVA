@@ -11,7 +11,7 @@ Create a shared registry shape for providers and tools so MiVA can add new capab
 Initial scope:
 
 - Define provider metadata for OpenAI, Gemini, Groq, and Ollama.
-- Define tool metadata for Google Workspace and Daiso CLI.
+- Define tool metadata for Google Workspace.
 - Track common fields such as id, label, icon, auth type, env key, help URL, models, capabilities, and confirmation policy.
 - Keep the first version internal to the app; do not build a full external plugin system yet.
 
@@ -47,7 +47,7 @@ Make runtime prompts describe enabled providers, tools, and capabilities from th
 Initial scope:
 
 - Build a common capability summary from enabled manifests.
-- Include enabled Google Workspace, Daiso CLI, TTS, and provider capabilities in a consistent system/developer prompt section.
+- Include enabled Google Workspace, TTS, and provider capabilities in a consistent system/developer prompt section.
 - Avoid telling the model that a capability exists if the runtime cannot actually execute it.
 - Keep local-model prompt length controlled.
 

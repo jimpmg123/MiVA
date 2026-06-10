@@ -75,7 +75,6 @@ stitch-samples/
 stitch_*.zip
 *.zip
 apps/desktop/public/live2d/
-apps/desktop/public/live2d-models/
 
 # Local reference repositories
 VtuberLLM/

@@ -393,7 +393,7 @@ Role: Full-stack developer / solo implementation lead
 | 2D character / Live2D | 50% | Character page, catalog, overlay app, and Live2D runtime path exist. | Need asset polish, reaction mapping, viewport QA, and performance checks. |
 | Conversation memory | 60% | Rolling summary memory can be injected into runtime prompts. | Need user controls, memory reset/export behavior, and longer conversation verification. |
 | Google Workspace actions | 60% | OAuth/status/context/actions routes and runtime context path exist. | Need stricter confirmation, permission auditing, and more Gmail/Docs/Calendar QA. |
-| Bug tracking in GitHub Issues | 80% | README and bug tracking docs link to GitHub Issues; issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) were created for current bug/regression candidates. | Need to verify, prioritize, and close or update each issue during final QA. |
+| Bug tracking in GitHub Issues | 80% | README and bug tracking docs link to GitHub Issues; issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) were created for current bug/regression candidates. | Need to verify, prioritize, and close or update each issue during final QA. |
 
 ### Blockers / Risks
 
@@ -435,7 +435,7 @@ Reasoning: the project started late and peer verification is incomplete, but the
 
 - Treat setup, Ollama/local-helper, assistant profiles, runtime chat, and beta web deployment as the primary final-release path.
 - Keep Persona Hub, voice, character, memory, and Workspace actions as beta features unless final QA verifies them.
-- Verify and prioritize GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues), with serious bugs reserved for the next QA/fix window.
+- Verify and prioritize GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues), with serious bugs reserved for the next QA/fix window.
 - Reserve the next schedule window for QA and bug fixing, not additional scope expansion.
 - Update API docs again after any final route/schema changes.
 
@@ -467,7 +467,7 @@ The following checks were used as the current Milestone 4 verification record:
 | Bug report method and GitHub Issues link in README | Completed |
 | Schedule update | Completed in `SCHEDULE_UPDATE.md` |
 | API Design update | Completed in `API_DESIGN_UPDATE.md` |
-| Bug tracking prepared | Completed in `BUG_TRACKING.md`; GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) created |
+| Bug tracking prepared | Completed in `BUG_TRACKING.md`; GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) created |
 | Another teammate tests completed features | Not completed / skipped due solo workflow |
 | Beta deployment link prepared | Completed |
 | Individual progress update | Completed |
@@ -523,7 +523,7 @@ Progress started later than planned and was mostly completed by one developer, s
 | --- | --- | --- | --- |
 | June 6-June 9 | Milestone documentation, README, API update, bug tracking, beta link verification | Jinu Hong | High |
 | June 10-June 13 | Run focused QA on setup, model download, runtime chat, profile sync, Persona Hub, voice, character overlay, and Studio question generation | Jinu Hong | High |
-| June 14-June 17 | Fix serious bugs from GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues); verify Workspace and Claw Code edge cases | Jinu Hong | High |
+| June 14-June 17 | Fix serious bugs from GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues); verify Workspace and Claw Code edge cases | Jinu Hong | High |
 | June 18-June 20 | Production packaging, desktop installer refresh, Vercel/Railway smoke test | Jinu Hong | High |
 | Final release window | Final polish, test evidence, presentation/demo script, final report/API docs | Jinu Hong | High |
 
@@ -531,7 +531,7 @@ Progress started later than planned and was mostly completed by one developer, s
 
 - The schedule changed from a narrow local-helper deliverable to a broader assistant platform beta.
 - The broadened scope increased feature surface area but left less time for peer verification and test coverage.
-- Serious bugs will be handled by Jinu Hong through GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) with a verification plan and schedule slot.
+- Serious bugs will be handled by Jinu Hong through GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) with a verification plan and schedule slot.
 - Voice, character, Persona Hub sharing, and Workspace actions should be presented as beta/partial features unless final QA verifies them before release.
 
 ---
@@ -918,8 +918,8 @@ When reporting a bug, include:
 
 | Issue ID | Title | Status | Severity | GitHub Issue | Verification Plan |
 | --- | --- | --- | --- | --- | --- |
-| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed, needs regression check | Minor | [#1](https://github.com/jimpmg123/MiVA/issues/1) | Open setup chat and confirm intro card does not cover messages or composer. |
-| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed, needs regression check | Minor | [#2](https://github.com/jimpmg123/MiVA/issues/2) | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
+| BUG-001 | Initial setup test chat intro card blocked chat content | Fixed (closed via 651d640) | Minor | [#1](https://github.com/jimpmg123/MiVA/issues/1) | Open setup chat and confirm intro card does not cover messages or composer. |
+| BUG-002 | Runtime sidebar showed misleading conversation grouping | Fixed (closed via ae82c7b, 7f4b831) | Minor | [#2](https://github.com/jimpmg123/MiVA/issues/2) | Open runtime sidebar and verify assistant/conversation grouping is understandable. |
 | BUG-003 | Deleted local assistant can remain visible in web console after sync | Needs verification | Major | [#3](https://github.com/jimpmg123/MiVA/issues/3) | Delete a local assistant, sync, refresh web console, and confirm removal. |
 | BUG-004 | Google Workspace context is not consistently trusted by every model | In progress | Major | [#4](https://github.com/jimpmg123/MiVA/issues/4) | Ask Gmail/Docs/Calendar questions with Gemini/OpenAI and verify injected context is used correctly. |
 | BUG-005 | Ollama can initially use CPU instead of GPU | Fixed, needs environment verification | Major | [#5](https://github.com/jimpmg123/MiVA/issues/5) | Run a local model and check `ollama ps` plus GPU utilization. |
@@ -931,7 +931,10 @@ When reporting a bug, include:
 | BUG-011 | Voice worker/Kokoro install may fail silently on missing Python packages | Open | Major | [#11](https://github.com/jimpmg123/MiVA/issues/11) | Run install/start on a clean Windows machine and verify actionable errors. |
 | BUG-012 | Live2D/2D character overlay needs viewport and asset loading regression test | Open | Minor | [#12](https://github.com/jimpmg123/MiVA/issues/12) | Open character page/overlay at desktop viewport and confirm assets render without overlap. |
 | BUG-013 | Billing route deployment needs verification | Open | Minor | [#13](https://github.com/jimpmg123/MiVA/issues/13) | Deploy web, open `https://mi-va.vercel.app/?page=billing`, and verify Billing page is active. |
-| BUG-014 | Studio question generation can fall back after OpenAI timeout | Fixed, needs release regression check | Major | [#14](https://github.com/jimpmg123/MiVA/issues/14) | Use the packaged app against Railway, generate Studio questions for study/coding/companion assistants, and confirm no blocking `Failed to fetch` error appears. |
+| BUG-014 | Studio question generation can fall back after OpenAI timeout | Fixed (closed via 143bbe1, c020bf6) | Major | [#14](https://github.com/jimpmg123/MiVA/issues/14) | Use the packaged app against Railway, generate Studio questions for study/coding/companion assistants, and confirm no blocking `Failed to fetch` error appears. |
+| BUG-015 | Material Symbols icons render as missing glyphs when offline or packaged | Fixed (closed via 20f5c6b) | Minor | [#15](https://github.com/jimpmg123/MiVA/issues/15) | Run the packaged desktop app offline and confirm Studio/setup icons render instead of showing boxes. |
+| BUG-016 | Deployed web console cannot reach the local helper (CORS origin not allowed) | Fixed (closed via d763fea) | Major | [#16](https://github.com/jimpmg123/MiVA/issues/16) | Run the local helper, open https://mi-va.vercel.app, and confirm Local Helper shows Connected (GET /health returns access-control-allow-origin). |
+| BUG-017 | Studio Models list drag-to-reorder did not work in the desktop (Tauri) build | Fixed (pointer-based reorder; commit pending) | Minor | [#17](https://github.com/jimpmg123/MiVA/issues/17) | In Studio > Models, drag a row by its handle above/below another row; confirm the order changes, persists as User sort, and survives navigating away and back. |
 
 ## Serious Bug Policy
 

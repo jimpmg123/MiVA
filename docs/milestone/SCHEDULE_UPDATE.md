@@ -45,7 +45,7 @@ Progress started later than planned and was mostly completed by one developer, s
 | --- | --- | --- | --- |
 | June 6-June 9 | Milestone documentation, README, API update, bug tracking, beta link verification | Jinu Hong | High |
 | June 10-June 13 | Run focused QA on setup, model download, runtime chat, profile sync, Persona Hub, voice, character overlay, and Studio question generation | Jinu Hong | High |
-| June 14-June 17 | Fix serious bugs from GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues); verify Workspace and Claw Code edge cases | Jinu Hong | High |
+| June 14-June 17 | Fix serious bugs from GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues); verify Workspace and Claw Code edge cases | Jinu Hong | High |
 | June 18-June 20 | Production packaging, desktop installer refresh, Vercel/Railway smoke test | Jinu Hong | High |
 | Final release window | Final polish, test evidence, presentation/demo script, final report/API docs | Jinu Hong | High |
 
@@ -53,5 +53,5 @@ Progress started later than planned and was mostly completed by one developer, s
 
 - The schedule changed from a narrow local-helper deliverable to a broader assistant platform beta.
 - The broadened scope increased feature surface area but left less time for peer verification and test coverage.
-- Serious bugs will be handled by Jinu Hong through GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) with a verification plan and schedule slot.
+- Serious bugs will be handled by Jinu Hong through GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) with a verification plan and schedule slot.
 - Voice, character, Persona Hub sharing, and Workspace actions should be presented as beta/partial features unless final QA verifies them before release.

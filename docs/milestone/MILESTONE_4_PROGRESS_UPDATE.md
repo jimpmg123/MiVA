@@ -56,7 +56,7 @@ Role: Full-stack developer / solo implementation lead
 | 2D character / Live2D | 50% | Character page, catalog, overlay app, and Live2D runtime path exist. | Need asset polish, reaction mapping, viewport QA, and performance checks. |
 | Conversation memory | 60% | Rolling summary memory can be injected into runtime prompts. | Need user controls, memory reset/export behavior, and longer conversation verification. |
 | Google Workspace actions | 60% | OAuth/status/context/actions routes and runtime context path exist. | Need stricter confirmation, permission auditing, and more Gmail/Docs/Calendar QA. |
-| Bug tracking in GitHub Issues | 80% | README and bug tracking docs link to GitHub Issues; issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) were created for current bug/regression candidates. | Need to verify, prioritize, and close or update each issue during final QA. |
+| Bug tracking in GitHub Issues | 80% | README and bug tracking docs link to GitHub Issues; issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) were created for current bug/regression candidates. | Need to verify, prioritize, and close or update each issue during final QA. |
 
 ### Blockers / Risks
 
@@ -98,7 +98,7 @@ Reasoning: the project started late and peer verification is incomplete, but the
 
 - Treat setup, Ollama/local-helper, assistant profiles, runtime chat, and beta web deployment as the primary final-release path.
 - Keep Persona Hub, voice, character, memory, and Workspace actions as beta features unless final QA verifies them.
-- Verify and prioritize GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues), with serious bugs reserved for the next QA/fix window.
+- Verify and prioritize GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues), with serious bugs reserved for the next QA/fix window.
 - Reserve the next schedule window for QA and bug fixing, not additional scope expansion.
 - Update API docs again after any final route/schema changes.
 
@@ -130,7 +130,7 @@ The following checks were used as the current Milestone 4 verification record:
 | Bug report method and GitHub Issues link in README | Completed |
 | Schedule update | Completed in `SCHEDULE_UPDATE.md` |
 | API Design update | Completed in `API_DESIGN_UPDATE.md` |
-| Bug tracking prepared | Completed in `BUG_TRACKING.md`; GitHub Issues [#1-#14](https://github.com/jimpmg123/MiVA/issues) created |
+| Bug tracking prepared | Completed in `BUG_TRACKING.md`; GitHub Issues [#1-#17](https://github.com/jimpmg123/MiVA/issues) created |
 | Another teammate tests completed features | Not completed / skipped due solo workflow |
 | Beta deployment link prepared | Completed |
 | Individual progress update | Completed |
