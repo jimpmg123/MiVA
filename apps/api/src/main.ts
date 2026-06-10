@@ -30,8 +30,10 @@ function isLocalDevOrigin(origin: string) {
   try {
     const url = new URL(origin);
     const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-    const localPorts = new Set(["1420", "1421", "5173", "5174", "5175", "5176", String(PORT)]);
-    return localHosts.has(url.hostname) && localPorts.has(url.port);
+    const port = Number(url.port);
+    const isTauriDevPort = port >= 1420 && port <= 1430;
+    const isViteDevPort = port >= 5173 && port <= 5199;
+    return localHosts.has(url.hostname) && (port === PORT || isTauriDevPort || isViteDevPort);
   } catch {
     return false;
   }

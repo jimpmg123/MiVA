@@ -19,11 +19,15 @@ export const toolManifests = Object.fromEntries(
 ) as Record<ToolManifest["id"], ToolManifest>;
 
 export function buildToolPromptPreviewLines(toolConnections: Record<string, unknown>) {
-  return toolManifestList.map((tool) => {
+  return toolManifestList.flatMap((tool) => {
     const enabled = toolConnections[tool.id] === true;
+    if (!enabled) {
+      return [];
+    }
+
     const confirmation = tool.confirmation.writeActions === "required"
       ? " Write actions require confirmation."
       : "";
-    return `- ${tool.title}: ${enabled ? "on" : "off"}. ${tool.role}${confirmation}`;
+    return [`- ${tool.title}: on. ${tool.role}${confirmation}`];
   });
 }

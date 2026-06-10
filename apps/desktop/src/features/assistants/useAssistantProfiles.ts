@@ -46,6 +46,15 @@ import type {
 export const DEFAULT_LOCAL_PROFILE_ID = "local_default";
 export const NEW_LOCAL_PROFILE_DRAFT_ID = "local_new_draft";
 const SIGN_IN_BEFORE_SYNC_MESSAGE = "Sign in before syncing assistant profiles.";
+const EMPTY_STUDIO_ASSISTANT_SURVEY: SurveyState = {
+  useCase: null,
+  answerStyle: null,
+  priority: null,
+  languageUse: null,
+  localMode: null,
+  futureFeatures: [],
+  memorySyncMode: "profileOnly",
+};
 
 type UseAssistantProfilesOptions = {
   appMode: AppMode;
@@ -151,6 +160,23 @@ export function useAssistantProfiles({
       survey,
       hardware,
     });
+  }
+
+  function mergePromptVariables(profile: LocalAssistantProfile, promptVariables?: Record<string, unknown>): LocalAssistantProfile {
+    if (!promptVariables) {
+      return profile;
+    }
+
+    return {
+      ...profile,
+      prompt: {
+        ...profile.prompt,
+        variables: {
+          ...profile.prompt.variables,
+          ...promptVariables,
+        },
+      },
+    };
   }
 
   function applyLocalAssistantProfile(profile: LocalAssistantProfile) {
@@ -301,9 +327,9 @@ export function useAssistantProfiles({
     throw new Error(message);
   }
 
-  async function saveCurrentLocalAssistantProfile() {
+  async function saveCurrentLocalAssistantProfile(options?: { promptVariables?: Record<string, unknown> }) {
     clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile();
+    const profile = mergePromptVariables(buildCurrentLocalAssistantProfile(), options?.promptVariables);
     validateProfileAuth(profile, "save");
     validateUniqueProfileName(profile, "save");
     const nextStore = upsertAssistantProfileStore(assistantProfileStore, profile);
@@ -331,12 +357,15 @@ export function useAssistantProfiles({
     }
   }
 
-  async function addCurrentLocalAssistantProfile() {
+  async function addCurrentLocalAssistantProfile(options?: { promptVariables?: Record<string, unknown> }) {
     clearAssistantProfileSyncStatus();
-    const profile = buildCurrentLocalAssistantProfile({
-      forceNew: true,
-      profileId: createLocalProfileId(),
-    });
+    const profile = mergePromptVariables(
+      buildCurrentLocalAssistantProfile({
+        forceNew: true,
+        profileId: createLocalProfileId(),
+      }),
+      options?.promptVariables,
+    );
     validateProfileAuth(profile, "add");
     validateUniqueProfileName(profile, "add");
     const nextStore = addAssistantProfileStore(assistantProfileStore, profile);
@@ -748,6 +777,7 @@ export function useAssistantProfiles({
     setActiveLocalProfileId(NEW_LOCAL_PROFILE_DRAFT_ID);
     setProfileDetailsDraft(defaultProfileDetails);
     setPromptSettingsDraft(defaultPromptSettings);
+    setSurvey(EMPTY_STUDIO_ASSISTANT_SURVEY);
     setImportedSkillsDraft([]);
     setAssistantProfileError(null);
     setAssistantProfileSaveState("idle");

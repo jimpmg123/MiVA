@@ -30,6 +30,39 @@ type WindowControlsProps = {
   className?: string;
 };
 
+function MinimizeIcon() {
+  return (
+    <svg aria-hidden="true" className="h-[10px] w-[10px]" fill="none" viewBox="0 0 10 10">
+      <path d="M1.5 5h7" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function MaximizeIcon({ restore }: { restore: boolean }) {
+  if (restore) {
+    return (
+      <svg aria-hidden="true" className="h-[10px] w-[10px]" fill="none" viewBox="0 0 10 10">
+        <path d="M3.5 1.5h5v5" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.4" />
+        <path d="M1.5 3.5h5v5h-5z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" className="h-[10px] w-[10px]" fill="none" viewBox="0 0 10 10">
+      <path d="M1.7 1.7h6.6v6.6H1.7z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" className="h-[10px] w-[10px]" fill="none" viewBox="0 0 10 10">
+      <path d="m2 2 6 6M8 2 2 8" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 export function WindowControls({ className = "" }: WindowControlsProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -81,33 +114,33 @@ export function WindowControls({ className = "" }: WindowControlsProps) {
     await getCurrentWebviewWindow().close();
   }
 
+  const buttonClassName = "grid h-full w-11 place-items-center text-[var(--miva-window-control)] transition hover:bg-[rgba(63,111,168,0.13)] hover:text-[var(--miva-text)]";
+
   return (
     <div className={`flex h-full shrink-0 items-stretch ${className}`}>
       <button
         aria-label="Minimize window"
-        className="grid h-full w-9 place-items-center text-[var(--miva-window-control)] transition hover:bg-[rgba(63,111,168,0.13)] hover:text-[var(--miva-text)]"
+        className={buttonClassName}
         onClick={() => void minimizeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[17px]">remove</span>
+        <MinimizeIcon />
       </button>
       <button
         aria-label={isMaximized ? "Restore window" : "Maximize window"}
-        className="grid h-full w-9 place-items-center text-[var(--miva-window-control)] transition hover:bg-[rgba(63,111,168,0.13)] hover:text-[var(--miva-text)]"
+        className={buttonClassName}
         onClick={() => void toggleMaximizeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[18px]">
-          {isMaximized ? "close_fullscreen" : "crop_square"}
-        </span>
+        <MaximizeIcon restore={isMaximized} />
       </button>
       <button
         aria-label="Close window"
-        className="grid h-full w-9 place-items-center text-[var(--miva-window-control)] transition hover:bg-[var(--miva-danger)] hover:text-white"
+        className="grid h-full w-11 place-items-center text-[var(--miva-window-control)] transition hover:bg-[var(--miva-danger)] hover:text-white"
         onClick={() => void closeWindow()}
         type="button"
       >
-        <span className="material-symbols-outlined text-[19px]">close</span>
+        <CloseIcon />
       </button>
     </div>
   );

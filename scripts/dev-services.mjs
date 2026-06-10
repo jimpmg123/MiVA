@@ -17,8 +17,10 @@ const services = {
   },
   api: {
     cwd: path.join(rootDir, "apps/api"),
-    command: process.execPath,
-    args: ["./node_modules/tsx/dist/cli.mjs", "src/main.ts"],
+    command: process.platform === "win32" ? "cmd.exe" : process.execPath,
+    args: process.platform === "win32"
+      ? ["/c", "npm", "run", "dev"]
+      : ["./node_modules/tsx/dist/cli.mjs", "src/main.ts"],
     ports: [4000],
     healthUrl: "http://127.0.0.1:4000/health",
   },

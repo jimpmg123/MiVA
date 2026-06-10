@@ -1,164 +1,134 @@
-import type { AppMode, ProviderMode } from "../types";
-import { isTauriRuntime } from "./tauri";
-import { Button } from "../components/ui";
-import { SidebarToggleIcon } from "./SidebarToggleIcon";
 import { WindowControls, WindowDragLayer } from "../components/WindowControls";
+import { SidebarToggleIcon } from "./SidebarToggleIcon";
+import { isTauriRuntime } from "./tauri";
 
 type AppTopBarProps = {
-  activeModelLabel: string;
-  activeProviderIcon: string;
-  activeProviderLabel: string;
-  activeProviderMode: ProviderMode;
-  appMode: AppMode;
-  providerText: Record<string, string>;
-  settingsOpen: boolean;
+  activeAssistantName: string;
+  activeAssistantSubtitle: string;
+  memoryItemCount: number;
+  runtimeActionsVisible: boolean;
   sidebarOpen: boolean;
-  centerHidden: boolean;
-  studioSaveLabel: string;
-  studioSaveVisible: boolean;
-  t: Record<string, string>;
-  onModeChange: (mode: AppMode) => void;
-  onStudioSave: () => void;
+  syncLabel: string;
+  synced: boolean;
+  onNewChat: () => void;
+  onOpenHistory: () => void;
+  onOpenModelUpload: () => void;
+  onOpenStudio: () => void;
   onToggleSidebar: () => void;
 };
 
 export function AppTopBar({
-  activeModelLabel,
-  activeProviderIcon,
-  activeProviderLabel,
-  activeProviderMode,
-  appMode,
-  providerText,
-  settingsOpen,
+  activeAssistantName,
+  activeAssistantSubtitle,
+  memoryItemCount,
+  runtimeActionsVisible,
   sidebarOpen,
-  centerHidden,
-  studioSaveLabel,
-  studioSaveVisible,
-  t,
-  onModeChange,
-  onStudioSave,
+  syncLabel,
+  synced,
+  onNewChat,
+  onOpenHistory,
+  onOpenModelUpload,
+  onOpenStudio,
   onToggleSidebar,
 }: AppTopBarProps) {
   const desktopChrome = isTauriRuntime();
-  const gridClass = desktopChrome
-    ? "grid-cols-[minmax(0,1fr)_auto_auto]"
-    : "grid-cols-[minmax(0,1fr)_auto]";
-  const modelChipTitle = `${activeProviderLabel} / ${activeModelLabel}`;
+  const initials = getAssistantInitials(activeAssistantName);
+  const memoryLabel = formatCompactCount(memoryItemCount);
 
   return (
-    <header className="@container/topbar relative miva-topbar w-full min-w-0 shrink-0 px-2">
+    <header className="relative h-12 w-full shrink-0 border-b border-slate-200 bg-white pl-5 pr-36 text-slate-900">
       {desktopChrome && <WindowDragLayer />}
 
-      <div className={`relative z-10 grid h-full w-full items-center gap-1.5 pointer-events-none ${gridClass}`}>
-        <div className="pointer-events-none flex min-w-0 items-center gap-1.5 overflow-hidden">
+      <div className={`pointer-events-none relative z-10 flex h-full min-w-0 items-center gap-4 overflow-hidden ${runtimeActionsVisible ? "pr-[calc(20rem_+_18rem)]" : ""}`}>
+        <div className="pointer-events-auto flex min-w-0 items-center gap-3">
           {!sidebarOpen && (
             <button
               aria-label="Open navigation"
-              className="miva-sidebar-toggle pointer-events-auto"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
               onClick={onToggleSidebar}
               title="Open navigation"
               type="button"
             >
-              <SidebarToggleIcon className="h-[16px] w-[16px]" />
+              <SidebarToggleIcon className="h-3.5 w-3.5" />
             </button>
           )}
-          {!settingsOpen && appMode !== "setup" && (
-            <div className="flex max-w-full shrink-0 rounded-[9px] border border-[var(--miva-border)] bg-[var(--miva-topbar-segment-bg)] p-0.5">
-              <Button
-                className={`pointer-events-auto flex !h-7 !min-h-7 shrink-0 items-center gap-1 rounded-[7px] !px-2 !py-0 !text-[10px] font-semibold leading-3 transition ${
-                  appMode === "studio"
-                    ? "bg-[var(--miva-topbar-segment-active-bg)] text-[var(--miva-topbar-segment-active-text)] shadow-[var(--miva-shadow-sm)]"
-                    : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
-                }`}
-                onClick={() => onModeChange("studio")}
-                size="sm"
-                variant="ghost"
-              >
-                <span className="material-symbols-outlined text-[13px]">construction</span>
-                {t.studioMode}
-              </Button>
-              <Button
-                className={`pointer-events-auto flex !h-7 !min-h-7 shrink-0 items-center gap-1 rounded-[7px] !px-2 !py-0 !text-[10px] font-semibold leading-3 transition ${
-                  appMode === "runtime"
-                    ? "bg-[var(--miva-topbar-segment-active-bg)] text-[var(--miva-topbar-segment-active-text)] shadow-[var(--miva-shadow-sm)]"
-                    : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
-                }`}
-                onClick={() => onModeChange("runtime")}
-                size="sm"
-                variant="ghost"
-              >
-                <span className="material-symbols-outlined text-[13px]">rocket_launch</span>
-                {t.runtimeMode}
-              </Button>
-              <Button
-                className={`pointer-events-auto flex !h-7 !min-h-7 shrink-0 items-center gap-1 rounded-[7px] !px-2 !py-0 !text-[10px] font-semibold leading-3 transition ${
-                  appMode === "history"
-                    ? "bg-[var(--miva-topbar-segment-active-bg)] text-[var(--miva-topbar-segment-active-text)] shadow-[var(--miva-shadow-sm)]"
-                    : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
-                }`}
-                onClick={() => onModeChange("history")}
-                size="sm"
-                variant="ghost"
-              >
-                <span className="material-symbols-outlined text-[13px]">history</span>
-                {t.historyMode}
-              </Button>
-              <Button
-                className={`pointer-events-auto flex !h-7 !min-h-7 shrink-0 items-center gap-1 rounded-[7px] !px-2 !py-0 !text-[10px] font-semibold leading-3 transition ${
-                  appMode === "library"
-                    ? "bg-[var(--miva-topbar-segment-active-bg)] text-[var(--miva-topbar-segment-active-text)] shadow-[var(--miva-shadow-sm)]"
-                    : "text-[var(--miva-text-muted)] hover:text-[var(--miva-text)]"
-                }`}
-                onClick={() => onModeChange("library")}
-                size="sm"
-                variant="ghost"
-              >
-                <span className="material-symbols-outlined text-[13px]">folder_open</span>
-                Library
-              </Button>
+
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-sm font-bold text-blue-600">
+            {initials}
+          </div>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="truncate text-sm font-bold leading-5 text-slate-900">{activeAssistantName}</h2>
+              <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-600">
+                Active
+              </span>
             </div>
-          )}
+            <div className="flex min-w-0 items-center gap-2 text-[11px] font-medium text-slate-500">
+              <span className="truncate">{activeAssistantSubtitle}</span>
+              <span className="shrink-0 text-slate-300">|</span>
+              <span className="inline-flex shrink-0 items-center gap-1">
+                <i className="ph ph-database text-xs text-slate-400" />
+                {memoryLabel} Memory items
+              </span>
+              <span className="shrink-0 text-slate-300">|</span>
+              <span className={`inline-flex shrink-0 items-center gap-1 ${synced ? "text-green-600" : "text-slate-400"}`}>
+                <i className={`ph ${synced ? "ph-check-circle" : "ph-circle"} text-xs`} />
+                {syncLabel}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {settingsOpen || centerHidden ? (
-          <div />
-        ) : studioSaveVisible ? (
-          <div className="pointer-events-none mx-auto flex w-full max-w-[260px] min-w-0 justify-center">
-            <Button
-              className="pointer-events-auto inline-flex !min-h-7 items-center gap-1 rounded-full bg-[var(--miva-primary)] !px-3 !py-1 !text-[11px] font-bold text-[var(--miva-on-primary)] shadow-[var(--miva-shadow-md)] transition hover:bg-[var(--miva-primary-hover)] active:scale-[0.98]"
-              onClick={onStudioSave}
+        {runtimeActionsVisible && (
+          <div className="pointer-events-auto absolute right-[calc(11rem_+_1px)] top-1/2 z-20 flex -translate-y-1/2 items-center gap-3">
+            <button
+              className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
+              onClick={onNewChat}
+              type="button"
             >
-              <span className="material-symbols-outlined text-[14px]">save</span>
-              {studioSaveLabel}
-            </Button>
-          </div>
-        ) : (
-          <div
-            className="mx-auto flex w-fit min-w-0 max-w-[280px] items-center gap-1.5 rounded-[8px] border border-[var(--miva-border)] bg-[var(--miva-topbar-chip-bg)] px-2 py-1 backdrop-blur @[840px]/topbar:w-full"
-            title={modelChipTitle}
-          >
-            <span
-              className={`shrink-0 rounded-md px-1.5 py-0.5 text-[8px] font-bold tracking-[0.08em] ${
-                activeProviderMode === "local"
-                  ? "bg-[var(--miva-success-soft)] text-[var(--miva-success)]"
-                  : "bg-[var(--miva-primary)] text-[var(--miva-on-primary)]"
-              }`}
-            >
-              {activeProviderMode === "local" ? providerText.localHeader : providerText.cloudHeader}
-            </span>
-            <span className="material-symbols-outlined hidden shrink-0 text-[12px] text-[var(--miva-success)] @[840px]/topbar:inline">{activeProviderIcon}</span>
-            <span className="hidden truncate text-[10px] font-semibold text-[var(--miva-topbar-chip-text)] @[840px]/topbar:inline">
-              {modelChipTitle}
-            </span>
-          </div>
-        )}
-
-        {desktopChrome && (
-          <div className="pointer-events-auto -mr-2 h-full">
-            <WindowControls />
+              <i className="ph ph-plus text-sm text-slate-500" />
+              New Chat
+            </button>
+            <div className="h-5 w-px bg-slate-200" />
+            <TopBarIconButton icon="ph-pencil-simple" label="Studio" onClick={onOpenStudio} />
+            <TopBarIconButton icon="ph-upload-simple" label="Model Upload" onClick={onOpenModelUpload} />
+            <TopBarIconButton icon="ph-clock-counter-clockwise" label="History" onClick={onOpenHistory} />
           </div>
         )}
       </div>
+      {desktopChrome && <WindowControls className="pointer-events-auto absolute right-0 top-0 z-30 h-full" />}
     </header>
   );
+}
+
+function TopBarIconButton({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
+  return (
+    <button
+      aria-label={label}
+      className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <i className={`ph ${icon} text-lg`} />
+    </button>
+  );
+}
+
+function getAssistantInitials(name: string) {
+  const words = name
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const value = words.length >= 2
+    ? `${words[0][0] ?? ""}${words[1][0] ?? ""}`
+    : (words[0] ?? "AI").slice(0, 2);
+  return value.toUpperCase();
+}
+
+function formatCompactCount(value: number) {
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+  }
+  return String(value);
 }

@@ -63,13 +63,10 @@ export const assistantProfiles = [
 ];
 
 export const defaultPromptSettings = {
+  assistantName: "",
   persona: "A practical personal assistant named MiVA.",
   roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
-  responseRules: [
-    "Start with the direct answer, then add context only when it helps.",
-    "Ask a short clarifying question when the request is ambiguous.",
-    "Keep local/private data assumptions explicit.",
-  ],
+  responseRules: [],
   scheduleRules: {
     mode: "draftOnly",
     timezone: "Asia/Seoul",
@@ -246,6 +243,21 @@ export function normalizeStringList(value: unknown, fallback: string[]) {
   return normalized.length ? normalized : [...fallback];
 }
 
+const legacyCodeResponseRules = new Set([
+  "For code-related answers, put non-trivial snippets in fenced code blocks with a language label such as ```tsx, ```jsx, ```ts, ```js, ```css, ```json, or ```bash.",
+  "For code-related answers, use fenced code blocks with language labels so MiVA renders code as copyable dark cards.",
+  "For code-related answers, use fenced code blocks with language labels so MiVA renders them as copyable dark code cards",
+]);
+
+function normalizeResponseRules(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [...defaultPromptSettings.responseRules];
+  }
+
+  return normalizeStringList(value, [])
+    .filter((rule) => !legacyCodeResponseRules.has(rule) && !/code-related answers?.*fenced code blocks?/i.test(rule));
+}
+
 export function normalizeWorkspacePolicy(value: unknown) {
   return ["disabled", "askFirst", "connectedOnly"].includes(String(value)) ? value : "disabled";
 }
@@ -293,13 +305,14 @@ export function normalizePromptSettings(value: any) {
 
   return {
     ...source,
+    assistantName: typeof source.assistantName === "string" ? source.assistantName.trim() : defaultPromptSettings.assistantName,
     persona: typeof source.persona === "string" && source.persona.trim()
       ? source.persona.trim()
       : defaultPromptSettings.persona,
     roleGoal: typeof source.roleGoal === "string" && source.roleGoal.trim()
       ? source.roleGoal.trim()
       : defaultPromptSettings.roleGoal,
-    responseRules: normalizeStringList(source.responseRules, defaultPromptSettings.responseRules),
+    responseRules: normalizeResponseRules(source.responseRules),
     scheduleRules: {
       mode: scheduleMode,
       timezone: typeof scheduleRules.timezone === "string" && scheduleRules.timezone.trim()

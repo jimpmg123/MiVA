@@ -1,9 +1,16 @@
 const exactConfirmations = new Set([
   "yes",
+  "yes ok",
+  "yes okay",
+  "yes please",
   "y",
   "o",
   "ok",
+  "ok yes",
+  "ok please",
   "okay",
+  "okay yes",
+  "okay please",
   "\u3147",
   "\u3147\u3147",
   "\u3147\u3147\u3147",
@@ -54,14 +61,23 @@ const shortAffirmativeMarkers = [
   "go ahead",
 ];
 
+function normalizedConfirmationText(prompt) {
+  return latestUserInstruction(prompt)
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isShortActionConfirmation(prompt) {
-  const normalized = latestUserInstruction(prompt).trim().toLowerCase();
+  const normalized = normalizedConfirmationText(prompt);
   return exactConfirmations.has(normalized)
     || /^(ㅇ|ㅇㅇ|ㅇㅇㅇ|ㅇㅋ|ㅇㅈ|ok|o|y)$/.test(normalized);
 }
 
 export function hasExplicitActionConfirmation(prompt) {
-  const normalized = latestUserInstruction(prompt).trim().toLowerCase();
+  const normalized = normalizedConfirmationText(prompt);
   if (isShortActionConfirmation(prompt)) {
     return true;
   }

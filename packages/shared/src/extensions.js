@@ -256,36 +256,10 @@ export const toolManifestList = [
         "Google Workspace access is usable only when a later Workspace context or Workspace action result is included in this prompt. Do not assume access from the profile setting alone.",
         "When Google app context is provided, it was retrieved by MiVA using the user's approved Google permissions. Use that retrieved context to answer the user.",
         "Do not claim you lack access if the needed Gmail, Google Calendar, Google Drive, Google Docs, or Google Sheets information is included in the provided context.",
-        "Write actions such as creating Google Calendar events, updating Google Docs, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion. Never invent progress messages such as 'adding to calendar now' without a tool result.",
+        "Write actions such as creating Google Calendar events, creating or updating Google Docs, or deleting data require explicit confirmation and a connected tool result. Only say a write action is done after the connected tool confirms completion. Never invent progress messages such as 'adding to calendar now' without a tool result.",
       ],
       disabled: [
         "Google Workspace context is off. You may draft schedules, emails, and workspace plans, but do not claim you used Google apps.",
-      ],
-    },
-  },
-  {
-    id: "daisoCli",
-    title: "Daiso CLI",
-    label: "Daiso",
-    icon: "terminal",
-    description: "Runs approved Daiso CLI workflows for read-only Korean retail, convenience, place, fuel price, and cinema lookups.",
-    role: "Lets the assistant use Daiso CLI context included by MiVA. It must only report lookup completion after the connected CLI confirms it.",
-    features: ["Approved CLI workflows", "Read-only local command bridge", "Live external lookup context"],
-    auth: {
-      type: "localRuntime",
-    },
-    capabilities: ["readContext", "localCommand"],
-    confirmation: {
-      writeActions: "none",
-    },
-    prompt: {
-      enabled: [
-        "When Daiso CLI is available, you may use Daiso CLI context included by MiVA for read-only Korean retail, convenience store, place, fuel price, and cinema lookups.",
-        "If a Daiso CLI result is included in the prompt, summarize that result instead of claiming the tool is unavailable. Only report lookup completion after the connected CLI result is present.",
-        "If no Daiso CLI result is included, prepare the workflow or ask the user to use the /daiso command before claiming live retail, inventory, place, fuel, or cinema data was checked.",
-      ],
-      disabled: [
-        "Daiso CLI is off. Do not claim Daiso CLI actions are available or completed.",
       ],
     },
   },
@@ -342,8 +316,12 @@ export function buildToolCapabilityInstructions(toolConnections = {}) {
 
   for (const tool of toolManifestList) {
     const enabled = toolConnections?.[tool.id] === true;
-    instructions.push(`${tool.title} profile setting: ${enabled ? "enabled" : "disabled"}.`);
-    instructions.push(...(enabled ? tool.prompt.enabled : tool.prompt.disabled));
+    if (!enabled) {
+      continue;
+    }
+
+    instructions.push(`${tool.title} profile setting: enabled.`);
+    instructions.push(...tool.prompt.enabled);
   }
 
   return instructions;

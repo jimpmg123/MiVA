@@ -1,19 +1,20 @@
 import { flushSync } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
-import type { LocalAssistantProfile, ProfileDetailsDraft, PromptSettings, UserProfile } from "../types";
+import type { LocalAssistantProfile, MivaPromptLayerSettings, ProfileDetailsDraft, PromptSettings, UserProfile } from "../types";
 import { Badge, IconTile, Input, Panel, PrimaryButton, ProgressBar, SecondaryButton, StatusAlert, Textarea } from "../components/ui";
+import { defaultMivaPromptLayerSettings, defaultProfileDetails } from "../features/assistants/profile";
+import { buildSystemPromptPreview } from "../features/assistants/promptPreview";
+import { resolvePromptAssistantName } from "../features/assistants/promptIdentity";
 import { loadUserProfile } from "../features/profile/storage";
 import {
   finalizeStudioPrompt,
-  generateStudioPreview,
   generateStudioQuestions,
-  refineStudioPromptRules,
   saveStudioAssistantRecipe,
+  type AssistantCategoryId,
   type AssistantRecipeDraft,
   type FinalizePromptResponse,
   type StudioAnswer,
   type StudioOption,
-  type StudioPreview,
   type StudioQuestion,
 } from "../features/studio/promptBuilder";
 
@@ -21,9 +22,14 @@ type PromptStudioPanelProps = {
   profile: LocalAssistantProfile;
   profileDetailsDraft: ProfileDetailsDraft;
   settings: PromptSettings;
+  hasSavedPrompt: boolean;
+  mivaDevModeOpen: boolean;
+  mivaPromptLayers: MivaPromptLayerSettings;
+  onMivaDevModeOpenChange: (open: boolean) => void;
+  onMivaPromptLayersChange: (settings: MivaPromptLayerSettings) => void;
   onProfileDetailsChange: (draft: ProfileDetailsDraft | ((current: ProfileDetailsDraft) => ProfileDetailsDraft)) => void;
   onPromptSettingsChange: (updater: (current: PromptSettings) => PromptSettings) => void;
-  onSaveLocal: () => Promise<unknown> | unknown;
+  onSaveLocal: (options?: { promptVariables?: Record<string, unknown> }) => Promise<unknown> | unknown;
 };
 
 type PromptBuilderStage = "starter" | "generated" | "preview" | "final" | "manage";
@@ -38,6 +44,16 @@ const PLANNING = "Planning & Life";
 const CREATIVE = "Creative & Ideas";
 const FUN = "Fun & Companion";
 const SOMETHING_ELSE = "Something else";
+
+const assistantCategoryByStarterLabel = new Map<string, AssistantCategoryId>([
+  [STUDY.toLowerCase(), "study"],
+  [WRITING.toLowerCase(), "writing"],
+  [WORK.toLowerCase(), "work"],
+  [CODING.toLowerCase(), "coding"],
+  [PLANNING.toLowerCase(), "planning"],
+  [CREATIVE.toLowerCase(), "creative"],
+  [FUN.toLowerCase(), "personal"],
+]);
 
 // Fixed first question. Category selection drives which follow-up questions appear next.
 const categoryQuestion: StudioQuestion = {
@@ -240,6 +256,27 @@ function getAnswerText(answer: StudioAnswer | undefined) {
   return answer.answerLabel || answer.customText || "";
 }
 
+function getStarterCategoryFromAnswers(answers: StudioAnswer[]): AssistantCategoryId | null {
+  const answer = answers.find((item) => item.questionId === "assistant-kind");
+  const candidates = [
+    typeof answer?.answerValue === "string" ? answer.answerValue : "",
+    getAnswerText(answer),
+  ];
+
+  for (const candidate of candidates) {
+    const category = assistantCategoryByStarterLabel.get(candidate.replace(/\s+/g, " ").trim().toLowerCase());
+    if (category) {
+      return category;
+    }
+  }
+
+  return null;
+}
+
+function getStarterToneFromAnswers(answers: StudioAnswer[]) {
+  return getAnswerText(answers.find((answer) => answer.questionId === "writing-q3"));
+}
+
 function isAnswerComplete(question: StudioQuestion, answer: StudioAnswer | undefined) {
   if (!answer) {
     return false;
@@ -275,6 +312,7 @@ function buildPromptSettingsFromRecipe(
   const avoidances = recipe.rules.find((rule) => /avoid|do not|never|must not/i.test(rule)) ?? current.simple.avoidances;
   const assistantKind = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-kind"));
   const assistantBrief = getAnswerText(starterAnswers.find((answer) => answer.questionId === "assistant-purpose"));
+  const preferredTone = getStarterToneFromAnswers(starterAnswers);
 
   return {
     ...current,
@@ -282,7 +320,7 @@ function buildPromptSettingsFromRecipe(
       ...current.simple,
       assistantPurpose: assistantKind || recipe.purpose || current.simple.assistantPurpose,
       desiredTasks: assistantBrief || recipe.workflowSteps.join("\n") || current.simple.desiredTasks,
-      preferredTone: recipe.rules.slice(0, 2).join(" ") || current.simple.preferredTone,
+      preferredTone: preferredTone || recipe.rules.slice(0, 2).join(" ") || current.simple.preferredTone,
       avoidances,
     },
     persona: recipe.name ? `A custom assistant named ${recipe.name}.` : current.persona,
@@ -302,6 +340,15 @@ function sourceMessage(source?: "openai" | "fallback", fallbackReason?: string) 
   }
 
   return null;
+}
+
+function resolveProfileDescription(currentDescription: string, generatedDescription: string, fallbackDescription: string) {
+  const current = currentDescription.trim();
+  if (current && current !== defaultProfileDetails.description) {
+    return current;
+  }
+
+  return generatedDescription.trim() || fallbackDescription.trim() || defaultProfileDetails.description;
 }
 
 function errorText(error: unknown) {
@@ -345,12 +392,17 @@ export function PromptStudioPanel({
   profile,
   profileDetailsDraft,
   settings,
+  hasSavedPrompt,
+  mivaDevModeOpen,
+  mivaPromptLayers,
+  onMivaDevModeOpenChange,
+  onMivaPromptLayersChange,
   onProfileDetailsChange,
   onPromptSettingsChange,
   onSaveLocal,
 }: PromptStudioPanelProps) {
   const [savedUserProfile] = useState<UserProfile>(() => loadUserProfile());
-  const [stage, setStage] = useState<PromptBuilderStage>(() => settings.generatedFinalSystemPrompt?.trim() ? "manage" : "starter");
+  const [stage, setStage] = useState<PromptBuilderStage>(() => hasSavedPrompt ? "manage" : "starter");
   const [starterIndex, setStarterIndex] = useState(0);
   const [studioIndex, setStudioIndex] = useState(0);
   const [starterAnswers, setStarterAnswers] = useState<StudioAnswer[]>([]);
@@ -358,11 +410,10 @@ export function PromptStudioPanel({
   const [generatedQuestions, setGeneratedQuestions] = useState<StudioQuestion[]>([]);
   const [textDrafts, setTextDrafts] = useState<Record<string, string>>({});
   const [customDrafts, setCustomDrafts] = useState<Record<string, string>>({});
-  const [preview, setPreview] = useState<StudioPreview | null>(null);
-  const [promptRules, setPromptRules] = useState<string[]>([]);
-  const [feedback, setFeedback] = useState("");
   const [finalResult, setFinalResult] = useState<FinalizePromptResponse | null>(null);
   const [ruleDrafts, setRuleDrafts] = useState<string[]>(() => settings.responseRules.length ? settings.responseRules : [""]);
+  const [mivaLayerDraft, setMivaLayerDraft] = useState<MivaPromptLayerSettings>(() => mivaPromptLayers);
+  const [mivaLayerStatus, setMivaLayerStatus] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<LoadingAction | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -386,13 +437,48 @@ export function PromptStudioPanel({
       ? starterQuestions.length + studioIndex + 1
       : stage === "manage"
         ? progressTotal
-        : totalQuestionCount + (stage === "preview" ? 1 : 2);
+        : totalQuestionCount + 2;
   const progressValue = Math.min(100, Math.round((progressStep / progressTotal) * 100));
   const activeQuestion = stage === "starter"
     ? starterQuestions[starterIndex]
     : stage === "generated"
       ? generatedQuestions[studioIndex]
       : null;
+
+  useEffect(() => {
+    setMivaLayerDraft(mivaPromptLayers);
+  }, [mivaPromptLayers]);
+
+  const updateMivaLayerDraft = (field: keyof MivaPromptLayerSettings, value: string) => {
+    setMivaLayerStatus(null);
+    setMivaLayerDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const saveMivaLayerSettings = async () => {
+    setLoadingAction("save");
+    setErrorMessage(null);
+    setMivaLayerStatus(null);
+
+    try {
+      flushSync(() => onMivaPromptLayersChange(mivaLayerDraft));
+      await onSaveLocal();
+      setMivaLayerStatus("MiVA dev mode settings saved for this assistant.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save MiVA dev mode settings.");
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const resetMivaLayerSettings = () => {
+    setErrorMessage(null);
+    setMivaLayerDraft(defaultMivaPromptLayerSettings);
+    onMivaPromptLayersChange(defaultMivaPromptLayerSettings);
+    setMivaLayerStatus("Default MiVA runtime prompt structure applied to this assistant draft. Save settings to keep it.");
+  };
 
   const getAnswers = (target: AnswerTarget) => target === "starter" ? starterAnswers : studioAnswers;
   const setAnswers = (target: AnswerTarget, updater: (answers: StudioAnswer[]) => StudioAnswer[]) => {
@@ -405,8 +491,46 @@ export function PromptStudioPanel({
   const currentAnswerFor = (question: StudioQuestion, target: AnswerTarget) => (
     getAnswers(target).find((answer) => answer.questionId === question.id)
   );
+  const syncStarterAnswersToPromptSettings = (answers: StudioAnswer[]) => {
+    const assistantKind = getAnswerText(answers.find((answer) => answer.questionId === "assistant-kind")).trim();
+    const assistantBrief = getAnswerText(answers.find((answer) => answer.questionId === "assistant-purpose")).trim();
+    const preferredTone = getStarterToneFromAnswers(answers).trim();
+    if (!assistantKind && !assistantBrief && !preferredTone) {
+      return;
+    }
+
+    onPromptSettingsChange((current) => {
+      const nextSimple = {
+        ...current.simple,
+        assistantPurpose: assistantKind
+          ? [assistantKind, assistantBrief].filter(Boolean).join(" - ")
+          : current.simple.assistantPurpose,
+        desiredTasks: assistantBrief || current.simple.desiredTasks,
+        preferredTone: preferredTone || current.simple.preferredTone,
+      };
+
+      if (
+        nextSimple.assistantPurpose === current.simple.assistantPurpose
+        && nextSimple.desiredTasks === current.simple.desiredTasks
+        && nextSimple.preferredTone === current.simple.preferredTone
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        simple: nextSimple,
+      };
+    });
+  };
   const writeAnswer = (target: AnswerTarget, answer: StudioAnswer) => {
-    setAnswers(target, (current) => upsertAnswer(current, answer));
+    setAnswers(target, (current) => {
+      const nextAnswers = upsertAnswer(current, answer);
+      if (target === "starter") {
+        syncStarterAnswersToPromptSettings(nextAnswers);
+      }
+      return nextAnswers;
+    });
   };
   const setGeneratedStatus = (source?: "openai" | "fallback", fallbackReason?: string) => {
     const message = sourceMessage(source, fallbackReason);
@@ -536,61 +660,6 @@ export function PromptStudioPanel({
     }
   };
 
-  const handleGeneratePreview = async (rules = promptRules) => {
-    setLoadingAction("preview");
-    setErrorMessage(null);
-    try {
-      const result = await generateStudioPreview({
-        userProfile: savedUserProfile,
-        assistantPurpose,
-        starterAnswers,
-        studioAnswers,
-        currentPromptRules: rules,
-      });
-      setPreview(result);
-      setPromptRules(result.draftPromptRules);
-      setStage("preview");
-      setGeneratedStatus(result.source, result.fallbackReason);
-    } catch (error) {
-      setErrorMessage(`Could not generate the preview: ${errorText(error)}`);
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleRefineRules = async () => {
-    if (!preview || !feedback.trim()) {
-      return;
-    }
-
-    setLoadingAction("refine");
-    setErrorMessage(null);
-    try {
-      const result = await refineStudioPromptRules({
-        userProfile: savedUserProfile,
-        assistantPurpose,
-        starterAnswers,
-        studioAnswers,
-        currentPromptRules: promptRules,
-        sampleUserMessage: preview.sampleUserMessage,
-        sampleAssistantResponse: preview.sampleAssistantResponse,
-        userFeedback: feedback,
-      });
-      setPromptRules(result.updatedPromptRules);
-      setFeedback("");
-      setGeneratedStatus(result.source, result.fallbackReason);
-      setStatusMessage(result.changeSummary);
-
-      if (result.shouldRegeneratePreview) {
-        await handleGeneratePreview(result.updatedPromptRules);
-      }
-    } catch (error) {
-      setErrorMessage(`Could not refine the prompt rules: ${errorText(error)}`);
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
   const handleFinalizePrompt = async () => {
     setLoadingAction("finalize");
     setErrorMessage(null);
@@ -600,8 +669,8 @@ export function PromptStudioPanel({
         assistantPurpose,
         starterAnswers,
         studioAnswers,
-        finalPromptRules: promptRules,
-        latestPreview: preview,
+        finalPromptRules: [],
+        latestPreview: null,
       });
       setFinalResult(result);
       setStage("final");
@@ -621,9 +690,14 @@ export function PromptStudioPanel({
     const recipe = finalResult.assistantRecipe;
     const nextProfileDetails: ProfileDetailsDraft = {
       name: finalResult.assistantName || recipe.name || profileDetailsDraft.name,
-      description: recipe.purpose || profileDetailsDraft.description,
+      description: resolveProfileDescription(
+        profileDetailsDraft.description,
+        finalResult.assistantDescription,
+        recipe.purpose,
+      ),
     };
     const nextPromptSettings = buildPromptSettingsFromRecipe(settings, recipe, finalResult.finalSystemPrompt, starterAnswers);
+    const assistantCategory = getStarterCategoryFromAnswers(starterAnswers) ?? finalResult.assistantCategory;
 
     setLoadingAction("save");
     setErrorMessage(null);
@@ -632,12 +706,20 @@ export function PromptStudioPanel({
         onProfileDetailsChange(nextProfileDetails);
         onPromptSettingsChange(() => nextPromptSettings);
       });
-      const savedProfile = await onSaveLocal();
+      const promptVariables = {
+        assistantCategory,
+        assistantDescription: nextProfileDetails.description,
+        starterAnswers,
+        studioAnswers,
+        assistantRecipe: recipe,
+      };
+      const savedProfile = await onSaveLocal({ promptVariables });
       const profileForCloud = isLocalAssistantProfile(savedProfile) ? savedProfile : profile;
 
       try {
         await saveStudioAssistantRecipe({
           profile: profileForCloud,
+          assistantCategory,
           profileDetails: nextProfileDetails,
           promptSettings: nextPromptSettings,
           finalSystemPrompt: finalResult.finalSystemPrompt,
@@ -647,6 +729,7 @@ export function PromptStudioPanel({
       } catch (cloudError) {
         setStatusMessage(`Saved locally. Web save was skipped or failed: ${errorText(cloudError)}`);
       }
+      setStage("manage");
     } catch (error) {
       setErrorMessage(`Could not save this assistant: ${errorText(error)}`);
     } finally {
@@ -723,7 +806,7 @@ export function PromptStudioPanel({
     if (studioIndex < generatedQuestions.length - 1) {
       setStudioIndex((current) => current + 1);
     } else {
-      void handleGeneratePreview();
+      void handleFinalizePrompt();
     }
   };
 
@@ -768,7 +851,7 @@ export function PromptStudioPanel({
     const nextLabel = target === "starter" && starterIndex === starterQuestions.length - 1
       ? "Generate AI Questions"
       : target === "studio" && studioIndex === generatedQuestions.length - 1
-        ? "Generate Preview"
+        ? "Finalize Assistant"
         : "Next";
 
     return (
@@ -812,7 +895,7 @@ export function PromptStudioPanel({
             Back
           </SecondaryButton>
           <PrimaryButton disabled={!complete || loadingAction !== null} onClick={() => goNext(question, target)}>
-            {loadingAction === "questions" || loadingAction === "preview" ? "Working..." : nextLabel}
+            {loadingAction === "questions" || loadingAction === "finalize" ? "Working..." : nextLabel}
             <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
           </PrimaryButton>
         </div>
@@ -820,96 +903,14 @@ export function PromptStudioPanel({
     );
   };
 
-  const renderPreview = () => {
-    if (!preview) {
-      return null;
-    }
-
-    return (
-      <div className="grid gap-6">
-        <Panel>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Preview</p>
-              <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Test conversation</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-                Review the response pattern before MIVA turns it into a durable system prompt.
-              </p>
-            </div>
-            {preview.source === "openai" ? <Badge tone="success">openai</Badge> : null}
-          </div>
-
-          <div className="mt-6 grid gap-4">
-            <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Sample user message</p>
-              <p className="mt-2 text-sm font-semibold leading-6 text-[var(--miva-text)]">{preview.sampleUserMessage}</p>
-            </div>
-            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-sm leading-6 text-[var(--miva-surface-muted)]">
-              {preview.sampleAssistantResponse}
-            </pre>
-          </div>
-        </Panel>
-
-        <Panel>
-          <div className="grid gap-6 xl:grid-cols-[1fr_1.1fr]">
-            <div>
-              <h3 className="font-heading text-xl font-bold text-[var(--miva-text)]">Prompt rules</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">
-                Feedback is converted into reusable rules, not stored as a one-off chat instruction.
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                {preview.detectedResponseFormat.map((format) => (
-                  <Badge key={format} tone="action">{format}</Badge>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid gap-3">
-              {promptRules.map((rule, index) => (
-                <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4 text-sm leading-6 text-[var(--miva-text)]" key={`${rule}-${index}`}>
-                  {rule}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <label className="mt-6 grid gap-2">
-            <span className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Preview feedback</span>
-            <Textarea
-              className="min-h-[120px] resize-none"
-              placeholder="Example: Make this more direct, use shorter steps, and include a checklist at the end."
-              value={feedback}
-              onChange={(event) => setFeedback(event.target.value)}
-            />
-          </label>
-
-          <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
-            <SecondaryButton onClick={() => {
-              setStage("generated");
-              setStudioIndex(Math.max(0, generatedQuestions.length - 1));
-            }}>
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-              Back to questions
-            </SecondaryButton>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <SecondaryButton disabled={!feedback.trim() || loadingAction !== null} onClick={() => void handleRefineRules()}>
-                {loadingAction === "refine" ? "Refining..." : "Refine Again"}
-              </SecondaryButton>
-              <PrimaryButton disabled={loadingAction !== null} onClick={() => void handleFinalizePrompt()}>
-                {loadingAction === "finalize" ? "Finalizing..." : "Finalize Assistant"}
-                <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-              </PrimaryButton>
-            </div>
-          </div>
-        </Panel>
-      </div>
-    );
-  };
-
   const renderFinal = () => {
     if (!finalResult) {
       return null;
     }
+    const visibleFinalPrompt = buildSystemPromptPreview(profile, {
+      ...settings,
+      generatedFinalSystemPrompt: finalResult.finalSystemPrompt,
+    });
 
     return (
       <Panel>
@@ -936,13 +937,16 @@ export function PromptStudioPanel({
         </div>
 
         <pre className="mt-6 max-h-[440px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
-          {finalResult.finalSystemPrompt}
+          {visibleFinalPrompt}
         </pre>
 
         <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
-          <SecondaryButton disabled={loadingAction !== null} onClick={() => setStage("preview")}>
+          <SecondaryButton disabled={loadingAction !== null} onClick={() => {
+            setStage("generated");
+            setStudioIndex(Math.max(0, generatedQuestions.length - 1));
+          }}>
             <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            Back to preview
+            Back to questions
           </SecondaryButton>
           <PrimaryButton disabled={loadingAction !== null} onClick={() => void handleSaveAssistant()}>
             {loadingAction === "save" ? "Saving..." : "Save Assistant"}
@@ -953,15 +957,19 @@ export function PromptStudioPanel({
     );
   };
 
-  const renderManage = () => (
+  const renderManage = () => {
+    const visiblePromptPreview = buildSystemPromptPreview(profile, settings);
+    const resolvedAssistantName = resolvePromptAssistantName(settings);
+
+    return (
     <div className="grid gap-6">
       <Panel>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Current prompt</p>
-            <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Saved system prompt</h3>
+            <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Visible assistant prompt</h3>
             <p className="mt-2 max-w-[720px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              This assistant already has a completed Studio prompt. Runtime fixes from /fix are reflected in the rules below.
+              This shows the user-created assistant prompt. MiVA runtime, tool, safety, and rendering instructions are injected separately and hidden from this view.
             </p>
           </div>
           <SecondaryButton onClick={() => {
@@ -969,15 +977,31 @@ export function PromptStudioPanel({
             setStarterIndex(0);
             setGeneratedQuestions([]);
             setStudioAnswers([]);
-            setPreview(null);
             setFinalResult(null);
           }}>
             Rebuild from questions
           </SecondaryButton>
         </div>
 
-        <pre className="mt-6 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
-          {settings.generatedFinalSystemPrompt?.trim() || profile.prompt.systemPrompt}
+        <div className="mt-6 grid gap-3 rounded-lg border border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <label className="grid gap-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--miva-text-soft)]">Your name is</span>
+            <Input
+              placeholder={resolvedAssistantName}
+              value={settings.assistantName}
+              onChange={(event) => onPromptSettingsChange((current) => ({
+                ...current,
+                assistantName: event.target.value,
+              }))}
+            />
+          </label>
+          <div className="rounded-md bg-[var(--miva-surface)] px-3 py-2 text-xs font-semibold text-[var(--miva-text-muted)]">
+            Current: {resolvedAssistantName}
+          </div>
+        </div>
+
+        <pre className="mt-4 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--miva-text)] p-5 text-xs leading-6 text-[var(--miva-surface-muted)]">
+          {visiblePromptPreview}
         </pre>
       </Panel>
 
@@ -1019,7 +1043,88 @@ export function PromptStudioPanel({
         </div>
       </Panel>
     </div>
+    );
+  };
+
+  const renderMivaDevMode = () => (
+    <div className="grid gap-6">
+      <Panel>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-4">
+            <IconTile className="h-12 w-12">
+              <span className="material-symbols-outlined text-[24px]">tune</span>
+            </IconTile>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">MiVA dev mode</p>
+              <h3 className="mt-2 font-heading text-[24px] font-bold leading-8 text-[var(--miva-text)]">MiVA detailed settings</h3>
+              <p className="mt-2 max-w-[760px] text-sm leading-6 text-[var(--miva-text-muted)]">
+                Every assistant starts with these defaults, then keeps its own editable copy. Use them for MiVA rendering rules and runtime capability contracts, not for this assistant's personality.
+              </p>
+            </div>
+          </div>
+          <Badge tone="action">This assistant</Badge>
+        </div>
+
+        <div className="mt-7 grid gap-7">
+          <label className="grid gap-3">
+            <span>
+              <span className="block text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Default response surface</span>
+              <span className="mt-1 block text-sm leading-6 text-[var(--miva-text-muted)]">
+                Tell models what MiVA can render: Markdown, headings, tables, code cards, images, and emphasis rules.
+              </span>
+            </span>
+            <Textarea
+              className="min-h-[260px] font-mono text-xs leading-5"
+              value={mivaLayerDraft.responseSurfacePrompt}
+              onChange={(event) => updateMivaLayerDraft("responseSurfacePrompt", event.target.value)}
+            />
+          </label>
+
+          <label className="grid gap-3 border-t border-[var(--miva-border)] pt-7">
+            <span>
+              <span className="block text-xs font-black uppercase tracking-[0.14em] text-[var(--miva-text-soft)]">Default capability prompt</span>
+              <span className="mt-1 block text-sm leading-6 text-[var(--miva-text-muted)]">
+                Describe MiVA-specific tools and constraints: Workspace, coding, image, TTS, character, and imported skills.
+              </span>
+            </span>
+            <Textarea
+              className="min-h-[300px] font-mono text-xs leading-5"
+              value={mivaLayerDraft.capabilityPrompt}
+              onChange={(event) => updateMivaLayerDraft("capabilityPrompt", event.target.value)}
+            />
+          </label>
+        </div>
+
+        {mivaLayerStatus ? (
+          <StatusAlert className="mt-6" tone="success">{mivaLayerStatus}</StatusAlert>
+        ) : null}
+        {errorMessage ? (
+          <StatusAlert className="mt-3" tone="danger">{errorMessage}</StatusAlert>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--miva-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+          <SecondaryButton disabled={loadingAction !== null} onClick={() => onMivaDevModeOpenChange(false)}>
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Back to Prompts
+          </SecondaryButton>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <SecondaryButton disabled={loadingAction !== null} onClick={resetMivaLayerSettings}>
+              <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+              Reset defaults
+            </SecondaryButton>
+            <PrimaryButton disabled={loadingAction !== null} onClick={() => void saveMivaLayerSettings()}>
+              {loadingAction === "save" ? "Saving..." : "Save settings"}
+              <span className="material-symbols-outlined text-[18px]">save</span>
+            </PrimaryButton>
+          </div>
+        </div>
+      </Panel>
+    </div>
   );
+
+  if (hasSavedPrompt && mivaDevModeOpen) {
+    return renderMivaDevMode();
+  }
 
   return (
     <div className="grid gap-6">
@@ -1042,7 +1147,7 @@ export function PromptStudioPanel({
 
         <div className="mt-6">
           <div className="flex items-center justify-between gap-4 text-xs font-bold text-[var(--miva-text-soft)]">
-            <span>{activeQuestion ? activeQuestion.title : stage === "preview" ? "Preview and refine" : stage === "manage" ? "Manage saved prompt" : "Finalize and save"}</span>
+            <span>{activeQuestion ? activeQuestion.title : stage === "manage" ? "Manage saved prompt" : "Finalize and save"}</span>
             <span>{progressValue}% Complete</span>
           </div>
           <ProgressBar className="mt-3" value={progressValue} />
@@ -1069,7 +1174,6 @@ export function PromptStudioPanel({
 
       {stage === "starter" && activeQuestion ? renderQuestion(activeQuestion, "starter", starterIndex, starterQuestions.length) : null}
       {stage === "generated" && activeQuestion ? renderQuestion(activeQuestion, "studio", studioIndex, generatedQuestions.length) : null}
-      {stage === "preview" ? renderPreview() : null}
       {stage === "final" ? renderFinal() : null}
       {stage === "manage" ? renderManage() : null}
     </div>

@@ -26,7 +26,6 @@ type CharacterStudioPanelProps = {
 };
 
 type CharacterTextFieldKey = "displayName" | "userAddress" | "speakingStyle";
-type Live2DSetupStatus = "idle" | "checked" | "pending";
 type Live2DInstallProgress = {
   status: string;
   completed: number;
@@ -47,7 +46,6 @@ type Live2DInstallResult = {
 
 export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsChange }: CharacterStudioPanelProps) {
   const [focusedCharacterField, setFocusedCharacterField] = useState<CharacterTextFieldKey | null>(null);
-  const [live2dSetupStatus, setLive2dSetupStatus] = useState<Live2DSetupStatus>("idle");
   const [live2dSetupNotice, setLive2dSetupNotice] = useState<string | null>(null);
   const [isInstallingLive2d, setIsInstallingLive2d] = useState(false);
   const [live2dInstallProgress, setLive2dInstallProgress] = useState<Live2DInstallProgress | null>(null);
@@ -56,11 +54,6 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
   const live2dModelCount = characterAssetCatalog.filter((preset) => preset.renderer === "live2d").length;
   const selectedLive2dReady = character.renderer === "live2d" && Boolean(character.live2dModelPath);
   const live2dRuntimeReady = live2dRuntimeStatus?.ready === true;
-  const live2dRendererBadge = live2dRuntimeReady
-    ? "Installed"
-    : live2dSetupStatus === "checked"
-      ? "Checked"
-      : "Not installed";
 
   const updateCharacter = (updater: (current: PromptSettings["character"]) => PromptSettings["character"]) => {
     onPromptSettingsChange((current) => ({
@@ -131,14 +124,6 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
     }
   };
 
-  const checkBundledLive2dAssets = () => {
-    setLive2dSetupStatus("checked");
-    const sizeCopy = live2dRuntimeStatus?.totalSizeMb
-      ? ` Current installed runtime size is ${live2dRuntimeStatus.totalSizeMb} MB.`
-      : " Bundled model assets are about 19 MB before install.";
-    setLive2dSetupNotice(`${live2dModelCount} bundled Live2D character profiles are registered. Select one below to prepare it for Runtime.${sizeCopy}`);
-  };
-
   const prepareLive2dRuntimeInstall = async () => {
     if (!tauriRuntime) {
       setLive2dSetupNotice("Live2D installation must be run inside the MiVA Desktop app, not the browser preview.");
@@ -159,7 +144,6 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
     try {
       const result = await installLive2DRuntime();
       setLive2dRuntimeStatus(result);
-      setLive2dSetupStatus("checked");
       setLive2dSetupNotice(`Live2D runtime installed at ${result.installDir}. ${result.installedModels.length} models are ready. Total size: ${result.totalSizeMb} MB.`);
     } catch (error) {
       const message = String(error);
@@ -186,7 +170,6 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
       .then((status) => {
         setLive2dRuntimeStatus(status);
         if (status.ready) {
-          setLive2dSetupStatus("checked");
           setLive2dSetupNotice(`Live2D runtime is already installed. ${status.installedModels.length} models are ready. Total size: ${status.totalSizeMb} MB.`);
         }
       })
@@ -212,7 +195,7 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--miva-text-soft)]">2D character setup</p>
             <h3 className="mt-2 font-heading text-xl font-bold text-[var(--miva-text)]">Prepare Live2D for this device</h3>
             <p className="mt-2 max-w-[760px] text-sm leading-6 text-[var(--miva-text-muted)]">
-              Use this area as the user-facing install flow for downloaded builds. Bundled models can be checked now; the renderer installer button is separated so it can be wired to a Tauri command when the Live2D runtime is added.
+              Install the Live2D renderer, Cubism Core, and bundled character models so this assistant can use a 2D character in Runtime.
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
@@ -221,52 +204,11 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
           </div>
         </div>
 
-        <div className="mt-6 grid gap-3 md:grid-cols-3">
-          <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
-            <div className="flex items-start justify-between gap-3">
-              <IconTile>
-                <span className="material-symbols-outlined text-[22px]">deployed_code</span>
-              </IconTile>
-              <Badge tone={live2dRuntimeReady ? "success" : live2dSetupStatus === "checked" ? "action" : "neutral"}>{live2dRendererBadge}</Badge>
-            </div>
-            <h4 className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">Live2D renderer</h4>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Installs Pixi Live2D support, Cubism Core, and model files needed to load model3.json in Runtime.</p>
-          </div>
-
-          <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
-            <div className="flex items-start justify-between gap-3">
-              <IconTile tone="success">
-                <span className="material-symbols-outlined text-[22px]">inventory_2</span>
-              </IconTile>
-              <Badge tone={live2dRuntimeStatus?.installedModels.length ? "success" : live2dModelCount > 0 ? "action" : "neutral"}>
-                {live2dRuntimeStatus?.installedModels.length ? `${live2dRuntimeStatus.installedModels.length} installed` : live2dModelCount > 0 ? "Bundled" : "Missing"}
-              </Badge>
-            </div>
-            <h4 className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">Character models</h4>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Checks the built-in Live2D catalog so users can choose Mao, Shizuku, Knight, or Takodachi.</p>
-          </div>
-
-          <div className="rounded-lg bg-[var(--miva-bg-soft)] p-4">
-            <div className="flex items-start justify-between gap-3">
-              <IconTile tone="warning">
-                <span className="material-symbols-outlined text-[22px]">graphic_eq</span>
-              </IconTile>
-              <Badge>Planned</Badge>
-            </div>
-            <h4 className="mt-4 font-heading text-base font-bold text-[var(--miva-text)]">Voice lip sync</h4>
-            <p className="mt-2 text-sm leading-6 text-[var(--miva-text-muted)]">Reserved for the audio analyser bridge that drives mouth parameters while TTS is playing.</p>
-          </div>
-        </div>
-
         <div className="mt-6 flex flex-wrap gap-3">
           <PrimaryButton disabled={isInstallingLive2d} onClick={() => void prepareLive2dRuntimeInstall()}>
             <span className="material-symbols-outlined text-[20px]">download</span>
             {isInstallingLive2d ? "Installing Live2D runtime" : live2dRuntimeReady ? "Reinstall Live2D runtime" : "Install Live2D runtime"}
           </PrimaryButton>
-          <SecondaryButton onClick={checkBundledLive2dAssets}>
-            <span className="material-symbols-outlined text-[20px]">fact_check</span>
-            Check bundled models
-          </SecondaryButton>
         </div>
 
         {live2dSetupNotice && (
@@ -291,24 +233,19 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-6 grid gap-4">
           <label className="flex items-center justify-between gap-4 rounded-lg bg-[var(--miva-bg-soft)] p-4">
             <span>
               <span className="block text-sm font-bold text-[var(--miva-text)]">Enable character for this assistant</span>
-              <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">Stores character settings with the assistant profile.</span>
+              <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">Stores character settings with the assistant profile and shows the character in Runtime.</span>
             </span>
-            <Switch checked={character.enabled} onCheckedChange={(checked) => updateCharacter((current) => ({ ...current, enabled: checked }))} />
+            <Switch
+              checked={character.enabled}
+              onCheckedChange={(checked) => updateCharacter((current) => ({ ...current, enabled: checked, showInRuntime: checked }))}
+            />
           </label>
 
-          <label className="flex items-center justify-between gap-4 rounded-lg bg-[var(--miva-bg-soft)] p-4">
-            <span>
-              <span className="block text-sm font-bold text-[var(--miva-text)]">Show in Runtime</span>
-              <span className="mt-1 block text-xs leading-5 text-[var(--miva-text-muted)]">Runtime can decide whether to display a character panel later.</span>
-            </span>
-            <Switch checked={character.showInRuntime} onCheckedChange={(checked) => updateCharacter((current) => ({ ...current, showInRuntime: checked }))} />
-          </label>
-
-          <div className="rounded-lg border border-dashed border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-4 md:col-span-2">
+          <div className="rounded-lg border border-dashed border-[var(--miva-border)] bg-[var(--miva-bg-soft)] p-4">
             <p className="text-sm font-bold text-[var(--miva-text)]">Floating overlay window</p>
             <p className="mt-1 text-xs leading-5 text-[var(--miva-text-muted)]">
               In Runtime, use the picture-in-picture button on the character panel to open a transparent always-on-top window you can drag anywhere on screen.
@@ -330,7 +267,7 @@ export function CharacterStudioPanel({ settings, tauriRuntime, onPromptSettingsC
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-3">
-          {characterAssetCatalog.map((preset) => {
+          {characterAssetCatalog.filter((preset) => preset.renderer !== "placeholder").map((preset) => {
             const active = character.characterId === preset.id;
             return (
               <Button

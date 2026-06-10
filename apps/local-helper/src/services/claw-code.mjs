@@ -147,17 +147,6 @@ async function readWorkspaceFile(workspaceRoot, relativePath) {
   return content.length > 12000 ? `${content.slice(0, 12000)}\n...[truncated]` : content;
 }
 
-async function writeWorkspaceFile(workspaceRoot, relativePath, content) {
-  const fullPath = path.resolve(workspaceRoot, relativePath);
-  if (!isPathInsideWorkspace(workspaceRoot, relativePath)) {
-    throw new Error("Path is outside the allowed workspace.");
-  }
-
-  await mkdir(path.dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, content, "utf8");
-  return fullPath;
-}
-
 async function listWorkspaceDirectory(workspaceRoot, relativePath = ".") {
   const fullPath = path.resolve(workspaceRoot, relativePath);
   if (!isPathInsideWorkspace(workspaceRoot, relativePath)) {
@@ -169,6 +158,99 @@ async function listWorkspaceDirectory(workspaceRoot, relativePath = ".") {
     .slice(0, 100)
     .map((entry) => `${entry.isDirectory() ? "[dir]" : "[file]"} ${entry.name}`)
     .join("\n");
+}
+
+function normalizeArtifactName(value) {
+  const normalized = String(value || "generated-code.txt")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/");
+
+  return normalized || "generated-code.txt";
+}
+
+function languageForFileName(name) {
+  const extension = path.extname(name).replace(/^\./, "").toLowerCase();
+  const languageMap = {
+    cjs: "js",
+    css: "css",
+    html: "html",
+    js: "js",
+    json: "json",
+    jsx: "jsx",
+    md: "md",
+    mjs: "js",
+    py: "python",
+    rs: "rust",
+    sh: "bash",
+    ts: "ts",
+    tsx: "tsx",
+    yaml: "yaml",
+    yml: "yaml",
+  };
+
+  return languageMap[extension] || extension || "text";
+}
+
+function mimeTypeForFileName(name) {
+  const extension = path.extname(name).replace(/^\./, "").toLowerCase();
+  const mimeMap = {
+    css: "text/css",
+    html: "text/html",
+    js: "text/javascript",
+    json: "application/json",
+    jsx: "text/javascript",
+    md: "text/markdown",
+    mjs: "text/javascript",
+    py: "text/x-python",
+    ts: "text/typescript",
+    tsx: "text/typescript",
+    txt: "text/plain",
+  };
+
+  return `${mimeMap[extension] || "text/plain"};charset=utf-8`;
+}
+
+function upsertGeneratedFileArtifact(artifacts, args) {
+  const name = normalizeArtifactName(args?.path);
+  const content = typeof args?.content === "string" ? args.content : "";
+  const existing = artifacts.find((artifact) => artifact.name === name);
+  const nextArtifact = {
+    id: existing?.id || `code-file-${artifacts.length + 1}`,
+    name,
+    mimeType: mimeTypeForFileName(name),
+    content,
+    language: languageForFileName(name),
+  };
+
+  if (existing) {
+    Object.assign(existing, nextArtifact);
+    return existing;
+  }
+
+  artifacts.push(nextArtifact);
+  return nextArtifact;
+}
+
+function buildGeneratedCodeMarkdown(artifacts, locale) {
+  if (!artifacts.length) {
+    return "";
+  }
+
+  const heading = locale === "en" ? "Generated code" : "생성된 코드";
+  const lines = [`## ${heading}`];
+
+  for (const artifact of artifacts) {
+    lines.push("");
+    lines.push(`### ${artifact.name}`);
+    lines.push(`\`\`\`${artifact.language || "text"}`);
+    lines.push(artifact.content.replace(/\s+$/, ""));
+    lines.push("```");
+  }
+
+  return lines.join("\n");
 }
 
 async function appendSessionLog(sessionId, entry) {
@@ -284,49 +366,51 @@ export async function updateClawCodeWorkspace(workspaceRoot) {
   };
 }
 
-function buildClawTools(accessMode) {
+function buildClawTools(accessMode, { workspaceRoot, forced } = {}) {
   const tools = [
-    {
-      type: "function",
-      function: {
-        name: "list_directory",
-        description: "List files and folders inside the allowed workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "Relative path inside the workspace. Use . for root." },
+    ...(workspaceRoot ? [
+      {
+        type: "function",
+        function: {
+          name: "list_directory",
+          description: "List files and folders inside the allowed workspace.",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Relative path inside the workspace. Use . for root." },
+            },
+            required: ["path"],
           },
-          required: ["path"],
         },
       },
-    },
-    {
-      type: "function",
-      function: {
-        name: "read_file",
-        description: "Read a text file inside the allowed workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "Relative file path inside the workspace." },
+      {
+        type: "function",
+        function: {
+          name: "read_file",
+          description: "Read a text file inside the allowed workspace.",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Relative file path inside the workspace." },
+            },
+            required: ["path"],
           },
-          required: ["path"],
         },
       },
-    },
+    ] : []),
   ];
 
-  if (accessMode === "fileEdits" || accessMode === "shellCommands") {
+  if (forced || accessMode === "fileEdits" || accessMode === "shellCommands") {
     tools.push({
       type: "function",
       function: {
         name: "write_file",
-        description: "Create or overwrite a text file inside the allowed workspace.",
+        description: "Prepare a downloadable generated code file. This does not write to disk.",
         parameters: {
           type: "object",
           properties: {
-            path: { type: "string", description: "Relative file path inside the workspace." },
-            content: { type: "string", description: "Full file contents to write." },
+            path: { type: "string", description: "Suggested relative file name or path for the generated code." },
+            content: { type: "string", description: "Full generated file contents." },
           },
           required: ["path", "content"],
         },
@@ -337,24 +421,32 @@ function buildClawTools(accessMode) {
   return tools;
 }
 
-async function executeToolCall({ workspaceRoot, accessMode, name, args }) {
+async function executeToolCall({ workspaceRoot, accessMode, name, args, artifacts, forced }) {
   if (name === "read_file") {
+    if (!workspaceRoot) {
+      return { ok: false, content: "No workspace is selected, so files cannot be read." };
+    }
+
     const content = await readWorkspaceFile(workspaceRoot, args.path);
     return { ok: true, content };
   }
 
   if (name === "list_directory") {
+    if (!workspaceRoot) {
+      return { ok: false, content: "No workspace is selected, so directories cannot be listed." };
+    }
+
     const listing = await listWorkspaceDirectory(workspaceRoot, args.path || ".");
     return { ok: true, content: listing || "(empty)" };
   }
 
   if (name === "write_file") {
-    if (accessMode !== "fileEdits" && accessMode !== "shellCommands") {
-      return { ok: false, content: "Write access is disabled for this coding mode." };
+    if (!forced && accessMode !== "fileEdits" && accessMode !== "shellCommands") {
+      return { ok: false, content: "Generated file artifacts are disabled for this coding mode." };
     }
 
-    const writtenPath = await writeWorkspaceFile(workspaceRoot, args.path, args.content);
-    return { ok: true, content: `Wrote ${writtenPath}` };
+    const artifact = upsertGeneratedFileArtifact(artifacts, args);
+    return { ok: true, content: `Prepared downloadable file ${artifact.name}. MiVA will not save it to disk automatically.` };
   }
 
   return { ok: false, content: `Unsupported tool: ${name}` };
@@ -421,30 +513,45 @@ export async function runClawCodeAgent({
 
   const workspaceRoot = resolveWorkspaceRoot(await loadState(), workspaceRootOverride);
   if (!workspaceRoot) {
-    return {
-      type: "direct-answer",
-      uiAction: "claw-pick-workspace",
-      answer: locale === "en"
-        ? "To edit files on this computer, choose a workspace folder below."
-        : "파일 수정을 원하시면 작업 폴더를 선택해 주세요.",
-    };
+    if (forced) {
+      // /code can still generate downloadable files without a workspace. It
+      // just cannot inspect local project files until the user picks a folder.
+    } else {
+      return {
+        type: "direct-answer",
+        uiAction: "claw-pick-workspace",
+        answer: locale === "en"
+          ? "To inspect project files on this computer, choose a workspace folder below."
+          : "이 컴퓨터의 프로젝트 파일을 확인하려면 작업 폴더를 선택해 주세요.",
+      };
+    }
   }
 
   const coding = profile?.prompt?.settings?.coding || {};
   const accessMode = coding.accessMode || "readOnly";
-  const tools = buildClawTools(accessMode);
+  const tools = buildClawTools(accessMode, { workspaceRoot, forced });
+  const artifacts = [];
   const sessionId = `${Date.now()}`;
+  const workspaceInstructions = workspaceRoot
+    ? [
+        `Workspace root: ${workspaceRoot}`,
+        "You may inspect files inside the workspace only. Do not write generated files to disk.",
+      ]
+    : [
+        "No workspace root is selected for this request.",
+        "Do not inspect local files. Generate code only from the user's request and conversation context.",
+      ];
   const conversation = [
     {
       role: "system",
       content: [
         "You are MiVA Claw Code, a local coding agent.",
-        `Workspace root: ${workspaceRoot}`,
-        "Use tools to inspect or modify files inside the workspace only.",
-        accessMode === "readOnly"
-          ? "This session is read-only. Explain code and inspect files, but do not write files."
-          : "You may create or update files when the user asks for implementation or fixes.",
-        "When you finish, answer in the user's language with a concise summary of what you inspected or changed.",
+        ...workspaceInstructions,
+        accessMode === "readOnly" && !forced
+          ? "This session is read-only. Explain code and inspect files, but do not prepare file artifacts."
+          : "When the user asks to create or generate code, call write_file with the intended filename/path and the full file contents. The write_file tool only prepares a downloadable artifact; it never saves to disk.",
+        "Do not claim that files were saved locally. MiVA will show the generated code and attach a downloadable filename link.",
+        "When you finish, answer in the user's language with a concise summary. Do not paste the full generated file contents in your final summary because MiVA appends the code blocks automatically.",
         `User locale: ${locale}.`,
       ].join("\n"),
     },
@@ -495,6 +602,8 @@ export async function runClawCodeAgent({
         accessMode,
         name: toolName,
         args: parsedArgs,
+        artifacts,
+        forced,
       });
 
       await appendSessionLog(sessionId, {
@@ -518,9 +627,15 @@ export async function runClawCodeAgent({
       : "Claw Code가 도구 실행은 마쳤지만 최종 요약을 반환하지 못했습니다.";
   }
 
+  const generatedCodeMarkdown = buildGeneratedCodeMarkdown(artifacts, locale);
+  if (generatedCodeMarkdown) {
+    finalAnswer = [finalAnswer, generatedCodeMarkdown].filter(Boolean).join("\n\n");
+  }
+
   return {
     type: "direct-answer",
     answer: finalAnswer,
+    files: artifacts,
     meta: {
       provider: "openai",
       model: OPENAI_DEFAULT_MODEL,

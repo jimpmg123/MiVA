@@ -34,7 +34,7 @@ export type CloudProviderManifest = ProviderManifest & {
 
 export type ProviderMetaRecord = Record<ProviderId, { label: string; mode: ProviderMode; icon: string }>;
 
-export type ToolConnectionKey = "googleWorkspace" | "daisoCli";
+export type ToolConnectionKey = "googleWorkspace";
 
 export type ToolCapability =
   | "readContext"

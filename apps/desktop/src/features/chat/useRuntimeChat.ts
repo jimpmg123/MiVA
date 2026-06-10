@@ -8,11 +8,15 @@ import {
   IMAGE_VISION_PROVIDER,
 } from "./imageVision";
 import { analyzeDocument, chooseDocumentPaths, isAttachmentImagePath, openDocument } from "../documents/documentRuntime";
-import { runDaisoRequest } from "../daiso/daisoRuntime";
 import { generateImageRequest, toImageDataUrl } from "../imageGen/imageGenRuntime";
 import { createLibraryItemFromDocument, createLibraryItemFromImageAttachment } from "../library/storage";
 import { runChatOnce } from "../models/ollamaRuntime";
 import { streamChatOnce } from "./chatStream";
+import {
+  applyPromptAssistantName,
+  applyPromptIdentityToProfile,
+  buildPromptAssistantIdentityLine,
+} from "../assistants/promptIdentity";
 import {
   clawCodeInstallRequiredCopy,
   clawWorkspaceSuccessCopy,
@@ -22,7 +26,7 @@ import { resolveWorkspaceBusyLabel } from "./workspaceBusyLabel";
 import { synthesizeVoice } from "../voice/voiceRuntime";
 import { loadUserProfile } from "../profile/storage";
 import {
-  detectEmotionFromText,
+  detectLocalCharacterCommand,
   parseMoodTag,
   stripMoodTag,
   MOOD_TAG_INSTRUCTION,
@@ -65,6 +69,7 @@ import type {
   CharacterEmotion,
   ChatMessage,
   ChatMetrics,
+  ChatGeneratedFile,
   ChatUiAction,
   DocumentAttachment,
   ImageAttachment,
@@ -189,6 +194,8 @@ export function useRuntimeChat({
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [chatBusyLabel, setChatBusyLabel] = useState<string | null>(null);
   const [characterEmotion, setCharacterEmotion] = useState<CharacterEmotion>("neutral");
+  const [characterExpressionTrigger, setCharacterExpressionTrigger] = useState(0);
+  const [characterPoseTrigger, setCharacterPoseTrigger] = useState(0);
   const emotionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -232,6 +239,19 @@ export function useRuntimeChat({
     const profile = activeLocalProfile ?? buildCurrentLocalAssistantProfile();
     return buildSlashCommandsForProfile(profile);
   }, [activeLocalProfile, buildCurrentLocalAssistantProfile, promptProfileId]);
+
+  useEffect(() => {
+    if (!selectedSlashCommand) {
+      return;
+    }
+
+    const commandStillAvailable = slashCommands.some((command) => (
+      command.id === selectedSlashCommand.id || command.aliases.some((alias) => selectedSlashCommand.aliases.includes(alias))
+    ));
+    if (!commandStillAvailable) {
+      setSelectedSlashCommand(null);
+    }
+  }, [selectedSlashCommand, slashCommands]);
 
   const activeChatMessages = appMode === "runtime" ? runtimeChatMessages : testChatMessages;
   const currentConversationId = activeRuntimeConversationId ?? runtimeChatStore.activeConversationIds[promptProfileId] ?? createRuntimeConversationId(promptProfileId);
@@ -552,15 +572,137 @@ export function useRuntimeChat({
     return trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
   }
 
-  function applyFixRuleToSystemPrompt(systemPrompt: string | undefined, rule: string) {
-    const base = systemPrompt?.trim();
+  function triggerCharacterExpression() {
+    setCharacterExpressionTrigger((current) => current + 1);
+  }
+
+  function triggerCharacterPose() {
+    setCharacterPoseTrigger((current) => current + 1);
+  }
+
+  function cleanGeneratedPromptFixRule(value: string) {
+    const firstContentLine = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !/^```/.test(line));
+    const cleaned = (firstContentLine || value)
+      .replace(/^rule\s*:\s*/i, "")
+      .replace(/^[-*]\s*/, "")
+      .replace(/^["'“”]+|["'“”]+$/g, "")
+      .trim();
+
+    return normalizePromptFixRule(cleaned);
+  }
+
+  function truncateForPrompt(value: string | undefined, maxChars: number) {
+    const text = value?.trim() ?? "";
+    if (text.length <= maxChars) {
+      return text;
+    }
+
+    return `${text.slice(0, maxChars)}\n...[truncated]`;
+  }
+
+  function buildPromptFixRuleGenerationPrompt(input: {
+    assistantProfile: LocalAssistantProfile;
+    promptSettings: PromptSettings;
+    userFeedback: string;
+    selectedExcerpt: string;
+    originalAssistantAnswer: string;
+    memorySummary: RuntimeMemorySummary | null | undefined;
+  }) {
+    const userProfile = loadUserProfile();
+    const profileMemory = buildProfileMemory(input.assistantProfile, userProfile);
+    const settings = input.promptSettings;
+    const assistantContext = {
+      name: input.assistantProfile.name,
+      description: input.assistantProfile.description,
+      useCase: input.assistantProfile.useCase,
+      answerStyle: input.assistantProfile.answerStyle,
+      priority: input.assistantProfile.priority,
+      languageUse: input.assistantProfile.languageUse,
+      localMode: input.assistantProfile.localMode,
+      assistantPurpose: settings.simple.assistantPurpose,
+      desiredTasks: settings.simple.desiredTasks,
+      preferredTone: settings.simple.preferredTone,
+      avoidances: settings.simple.avoidances,
+      persona: settings.persona,
+      roleGoal: settings.roleGoal,
+      existingResponseRules: settings.responseRules,
+      safetyRules: settings.safetyRules,
+      personalization: personalizationSettings,
+    };
+
+    return [
+      "You generate durable MiVA /fix prompt rules.",
+      "Return exactly one plain English instruction sentence.",
+      "Do not include markdown, bullets, quotes, labels, explanations, JSON, or examples.",
+      "The rule will be inserted into the assistant's system prompt and reused in future conversations.",
+      "Make the rule generalizable from the user's feedback. Do not overfit to one exact sentence unless the user explicitly asks for a literal phrase.",
+      "If the user says not to explain something, write a rule that suppresses that kind of explanation.",
+      "If the user asks for more explanation, write a rule that adds that kind of detail when relevant.",
+      "",
+      "Assistant configuration:",
+      JSON.stringify(assistantContext, null, 2),
+      "",
+      "User profile and memory:",
+      truncateForPrompt(profileMemory, 3000) || "(none)",
+      "",
+      "Current runtime memory:",
+      truncateForPrompt(input.memorySummary?.content, 3000) || "(none)",
+      "",
+      "Original assistant answer:",
+      truncateForPrompt(input.originalAssistantAnswer, 12000) || "(not provided)",
+      "",
+      "User-selected excerpt from that answer:",
+      truncateForPrompt(input.selectedExcerpt, 3000) || "(not provided)",
+      "",
+      "User's /fix feedback:",
+      input.userFeedback,
+      "",
+      "Output one durable rule sentence only.",
+    ].join("\n");
+  }
+
+  async function generatePromptFixRule(input: {
+    assistantProfile: LocalAssistantProfile;
+    userFeedback: string;
+    selectedExcerpt: string;
+    originalAssistantAnswer: string;
+  }) {
+    const promptSettings = input.assistantProfile.prompt.settings;
+    const memorySummary = runtimeChatStoreRef.current.summaries[promptProfileId] ?? null;
+    const prompt = buildPromptFixRuleGenerationPrompt({
+      assistantProfile: input.assistantProfile,
+      promptSettings,
+      userFeedback: input.userFeedback,
+      selectedExcerpt: input.selectedExcerpt,
+      originalAssistantAnswer: input.originalAssistantAnswer,
+      memorySummary,
+    });
+
+    const generated = await runChatOnce({
+      provider: "gemini",
+      model: "gemini-2.5-flash-lite",
+      prompt,
+      locale: activeLocale,
+      apiKey: null,
+      authToken: authSession?.token ?? null,
+      profile: input.assistantProfile,
+    });
+
+    return cleanGeneratedPromptFixRule(generated);
+  }
+
+  function applyFixRuleToSystemPrompt(systemPrompt: string | undefined, rule: string, promptSettings: PromptSettings) {
+    const base = applyPromptAssistantName(systemPrompt, promptSettings);
     const nextRule = `- ${rule}`;
     if (!base) {
       return [
         "# Role",
-        "You are MIVA, the user's personal AI assistant.",
+        buildPromptAssistantIdentityLine(promptSettings),
         "",
-        "# Style rules",
+        "# Runtime fixes",
         nextRule,
       ].join("\n");
     }
@@ -971,7 +1113,7 @@ export function useRuntimeChat({
     )));
   }
 
-  async function sendMessage(options?: { promptFixQuote?: string }) {
+  async function sendMessage(options?: { promptFixQuote?: string; promptFixOriginalAnswer?: string }) {
     const rawInput = chatInput.trim();
     const readyAttachments = documentAttachments.filter((attachment) => attachment.status === "ready");
     const readyImageAttachments = imageAttachments;
@@ -983,14 +1125,14 @@ export function useRuntimeChat({
       : readyAttachments.length > 0
         ? "Analyze the attached document data and summarize the information relevant to me."
         : ""));
-    const isDaisoSlashCommand = parsed?.command.id === "daiso";
     const isCodeSlashCommand = parsed?.command.id === "code";
     const isPromptFixSlashCommand = parsed?.command.id === "fix";
     const isImageSlashCommand = parsed?.command.id === "image";
     const isWorkspaceSlashCommand = Boolean(parsed?.command.workspaceService);
     const isImportedSkillSlashCommand = Boolean(parsed?.command.importedSkillId);
     const baseDisplayContent = parsed ? formatSlashUserMessage(parsed.command, parsed.prompt) : rawInput || (usesImageVision ? "Analyze the attached image(s)." : "Analyze the attached document data.");
-    const promptFixQuote = isPromptFixSlashCommand ? options?.promptFixQuote?.trim() : "";
+    const promptFixQuote: string = isPromptFixSlashCommand ? (options?.promptFixQuote?.trim() ?? "") : "";
+    const promptFixOriginalAnswer: string = isPromptFixSlashCommand ? (options?.promptFixOriginalAnswer?.trim() ?? "") : "";
     const attachmentLabel = readyAttachments.length > 0
       ? `\n\nAttached: ${readyAttachments.map((attachment) => attachment.name).join(", ")}`
       : "";
@@ -1079,8 +1221,8 @@ export function useRuntimeChat({
 
     if (isPromptFixSlashCommand) {
       const requestedAt = new Date().toISOString();
-      const fixRule = normalizePromptFixRule(prompt);
-      if (!fixRule) {
+      const userFixFeedback = prompt.trim();
+      if (!userFixFeedback) {
         return;
       }
 
@@ -1093,26 +1235,40 @@ export function useRuntimeChat({
       ]);
 
       try {
+        const fixRule = await generatePromptFixRule({
+          assistantProfile,
+          userFeedback: userFixFeedback,
+          selectedExcerpt: promptFixQuote,
+          originalAssistantAnswer: promptFixOriginalAnswer || promptFixQuote,
+        });
+        if (!fixRule) {
+          throw new Error("Gemini returned an empty prompt rule.");
+        }
+
         const updatedProfile = await updateAssistantPromptSettings(assistantProfile.id, (settings) => ({
           ...settings,
           responseRules: settings.responseRules.includes(fixRule)
             ? settings.responseRules
             : [...settings.responseRules, fixRule],
-          generatedFinalSystemPrompt: applyFixRuleToSystemPrompt(settings.generatedFinalSystemPrompt, fixRule),
+          generatedFinalSystemPrompt: applyFixRuleToSystemPrompt(
+            settings.generatedFinalSystemPrompt || assistantProfile.prompt.systemPrompt,
+            fixRule,
+            settings,
+          ),
         }));
         updateChatMessages(chatMode, (current) => [
           ...current,
           {
             role: "assistant",
             content: updatedProfile
-              ? `Saved this as a prompt rule:\n\n- ${fixRule}\n\nYou can review it in Studio > Prompts.`
+              ? `Generated and saved this prompt rule with Gemini:\n\n- ${fixRule}\n\nYou can review it in Studio > Prompts.`
               : "I could not find the active assistant profile to update.",
             createdAt: new Date().toISOString(),
             provider: activeProvider,
             model: providerModel,
           },
         ]);
-        onLog(`Prompt rule updated from /fix: ${fixRule}`);
+        onLog(`Prompt rule generated with Gemini from /fix: ${fixRule}`);
       } catch (error) {
         const message = `Prompt rule update failed: ${String(error)}`;
         updateChatMessages(chatMode, (current) => [
@@ -1134,7 +1290,7 @@ export function useRuntimeChat({
 
     const workspaceEnabled = isWorkspaceSlashCommand && assistantProfile.prompt.settings.toolConnections.googleWorkspace;
     const workspaceServices = assistantProfile.prompt.settings.toolConnections.googleWorkspaceServices;
-    if (!isDaisoSlashCommand && !isCodeSlashCommand && !isPromptFixSlashCommand && !isImageSlashCommand && !isImportedSkillSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
+    if (!isCodeSlashCommand && !isPromptFixSlashCommand && !isImageSlashCommand && !isImportedSkillSlashCommand && chatMode === "runtime" && workspaceEnabled && workspaceServices.length > 0) {
       const workspaceStatus = await refreshGoogleWorkspaceStatus();
       if (!workspaceStatus?.connected) {
         await onWorkspaceAuthRequired();
@@ -1222,9 +1378,12 @@ export function useRuntimeChat({
     ]);
 
     if (chatMode === "runtime" && assistantProfile.prompt.settings.character.enabled) {
-      const userEmotion = detectEmotionFromText(rawInput || prompt);
-      if (userEmotion) {
-        pulseEmotion(userEmotion);
+      const localCharacterCommand = detectLocalCharacterCommand(rawInput || prompt);
+      if (localCharacterCommand.expression) {
+        triggerCharacterExpression();
+      }
+      if (localCharacterCommand.pose) {
+        triggerCharacterPose();
       }
     }
 
@@ -1299,47 +1458,6 @@ export function useRuntimeChat({
         ].join("\n\n"));
       }
 
-      if (isDaisoSlashCommand) {
-        const daisoResult = await runDaisoRequest(prompt);
-        if (!daisoResult.ok || daisoResult.needsUserInput) {
-          const message = daisoResult.needsUserInput
-            ? daisoResult.message
-            : `Daiso CLI failed: ${daisoResult.message}`;
-          updateChatMessages(chatMode, (current) => [
-            ...current,
-            {
-              role: "assistant",
-              content: message,
-              createdAt: new Date().toISOString(),
-              provider: selectedProvider,
-              model: providerModel,
-            },
-          ]);
-          onLog(message);
-          return;
-        }
-        if (daisoResult.featureGuide && daisoResult.directReply?.trim()) {
-          const directReply = daisoResult.directReply.trim();
-          updateChatMessages(chatMode, (current) => [
-            ...current,
-            {
-              role: "assistant",
-              content: directReply,
-              createdAt: new Date().toISOString(),
-              provider: selectedProvider,
-              model: providerModel,
-            },
-          ]);
-          onLog("Daiso CLI feature guide shown without model inference.");
-          return;
-        }
-        toolContexts.push(daisoResult.context || [
-          "Daiso CLI result was retrieved by MiVA.",
-          `CLI command: ${daisoResult.commandLine || "unknown"}`,
-          daisoResult.stdout || JSON.stringify(daisoResult.data ?? null, null, 2),
-        ].join("\n"));
-        onLog(`Daiso CLI completed: ${daisoResult.commandLine || "unknown command"}`);
-      }
       if (
         chatMode === "runtime"
         && assistantProfile.prompt.settings.character.enabled
@@ -1377,6 +1495,8 @@ export function useRuntimeChat({
       };
 
       let answer = "";
+      let generatedFiles: ChatGeneratedFile[] = [];
+      const requestAssistantProfile = applyPromptIdentityToProfile(assistantProfile);
       const chatPayload = {
         provider: activeProvider,
         model: providerModel,
@@ -1387,7 +1507,7 @@ export function useRuntimeChat({
         clawCodeForced: isCodeSlashCommand,
         workspaceSlashForced: isWorkspaceSlashCommand,
         authToken: authSession?.token ?? null,
-        profile: assistantProfile,
+        profile: requestAssistantProfile,
         messages: recentContextMessages,
         memorySummary,
         toolContext,
@@ -1406,6 +1526,7 @@ export function useRuntimeChat({
         }, streamSignal);
         answer = streamResult.answer;
         chatUiAction = streamResult.uiAction;
+        generatedFiles = streamResult.files ?? [];
       } catch (streamError) {
         const streamMessage = streamError instanceof Error ? streamError.message : String(streamError);
         const fetchBlocked = streamError instanceof TypeError || /failed to fetch/i.test(streamMessage);
@@ -1418,7 +1539,13 @@ export function useRuntimeChat({
         chatUiAction = null;
         updateChatMessages(chatMode, (current) => current.map((message) => (
           message.role === "assistant" && message.createdAt === assistantCreatedAt
-            ? { ...message, content: answer, uiAction: null }
+            ? {
+                ...message,
+                content: answer,
+                files: generatedFiles.length ? generatedFiles : undefined,
+                uiAction: null,
+                showClawWorkspacePicker: isCodeSlashCommand || undefined,
+              }
             : message
         )));
       }
@@ -1428,9 +1555,8 @@ export function useRuntimeChat({
       const moodFromTag = parseMoodTag(answer);
       const cleanAnswer = stripMoodTag(answer);
       if (chatMode === "runtime" && assistantProfile.prompt.settings.character.enabled) {
-        const replyEmotion = moodFromTag ?? detectEmotionFromText(cleanAnswer);
-        if (replyEmotion) {
-          pulseEmotion(replyEmotion);
+        if (moodFromTag) {
+          pulseEmotion(moodFromTag);
         }
       }
       setChatMetrics({
@@ -1444,8 +1570,10 @@ export function useRuntimeChat({
           ? {
               ...message,
               content: cleanAnswer || message.content,
+              files: generatedFiles.length ? generatedFiles : undefined,
               latencyMs,
               uiAction: chatUiAction,
+              showClawWorkspacePicker: isCodeSlashCommand || undefined,
             }
           : message
       )));
@@ -1657,6 +1785,8 @@ export function useRuntimeChat({
     activeConversationId: currentConversationId,
     assistantConversationGroups,
     characterEmotion,
+    characterExpressionTrigger,
+    characterPoseTrigger,
     chatBusyLabel,
     chatEndRef,
     chatInput,

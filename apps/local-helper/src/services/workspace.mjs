@@ -257,6 +257,16 @@ function directWorkspaceAnswer(answer) {
   };
 }
 
+function workspaceActionService(action) {
+  if (String(action || "").startsWith("calendar.")) {
+    return "calendar";
+  }
+  if (String(action || "").startsWith("docs.")) {
+    return "docs";
+  }
+  return "";
+}
+
 export function userMessageUsesWorkspaceSlash(content) {
   const text = String(content || "").trim();
   if (WORKSPACE_SLASH_PATTERN.test(text)) {
@@ -301,6 +311,9 @@ function buildWorkspaceActionCompletedMessage(result, locale) {
     if (action === "calendar.delete") {
       return "Deleted the event from Google Calendar.";
     }
+    if (action === "docs.create") {
+      return `Created${documentTitle ? ` "${documentTitle}"` : " a new document"} in Google Docs.`;
+    }
     if (action === "docs.append") {
       return `Added the requested content to${documentTitle ? ` "${documentTitle}"` : " the Google Doc"}.`;
     }
@@ -316,6 +329,9 @@ function buildWorkspaceActionCompletedMessage(result, locale) {
   if (action === "calendar.delete") {
     return "Google Calendar\uc5d0\uc11c \uc77c\uc815\uc744 \uc0ad\uc81c\ud588\uc2b5\ub2c8\ub2e4.";
   }
+  if (action === "docs.create") {
+    return `Google Docs\uc5d0 ${documentTitle ? `"${documentTitle}" ` : "\uc0c8 "}\ubb38\uc11c\ub97c \ub9cc\ub4e4\uace0 \ub0b4\uc6a9\uc744 \uc791\uc131\ud588\uc2b5\ub2c8\ub2e4.`;
+  }
   if (action === "docs.append") {
     return `${documentTitle ? `"${documentTitle}"` : "Google Docs \ubb38\uc11c"}\uc5d0 \uc694\uccad\ud55c \ub0b4\uc6a9\uc744 \ucd94\uac00\ud588\uc2b5\ub2c8\ub2e4.`;
   }
@@ -326,13 +342,16 @@ function buildWorkspacePlannerPrompt({ prompt, locale, workspaceContext = "" }) 
   return [
     "You convert a user request into one Google Workspace write action JSON object.",
     "Return only JSON. Do not use markdown.",
+    "Only choose an action for the Workspace product explicitly selected by slash command or label in the user request.",
+    "Do not choose docs.* unless the request contains /docs, /google-docs, /gdocs, or [Google Docs].",
     "Supported actions:",
     "- calendar.create: params must include summary, start, end, timeZone. Optional description, location.",
     "- calendar.update: params must include eventId and at least one field to change: summary, start, end, timeZone, description, location.",
     "- calendar.delete: params must include eventId when available in context. If only summary/time are known, include summary and optional start so MiVA can resolve the event.",
+    "- docs.create: params must include title and text. Use this when the user asks to create or write a new Google Doc.",
     "- docs.append: params must include text. Optional documentId. If the user says latest/recent document and gives no id, omit documentId.",
     "Use ISO 8601 dateTime strings. Default timeZone is Asia/Seoul. Current date in Korea is " + new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }) + ".",
-    "If the request is not a concrete Calendar create/update/delete or Docs append request, return {\"action\":\"none\",\"params\":{},\"reason\":\"...\"}.",
+    "If the request is not a concrete Calendar create/update/delete or Docs create/append request, return {\"action\":\"none\",\"params\":{},\"reason\":\"...\"}.",
     `User locale: ${locale}.`,
     workspaceContext
       ? `Available Workspace context. Use event IDs and document IDs from this context when needed:\n${workspaceContext}`
@@ -499,7 +518,9 @@ export async function buildWorkspaceContext({ prompt, profile, authToken }) {
 
 export async function buildWorkspaceActionContext({ prompt, profile, authToken, provider, model, apiKey, locale, workspaceContext = "" }) {
   const settings = getProfileSettings(profile);
-  if (!workspaceEnabled(settings) || !promptRequestsWrite(prompt)) {
+  const allowedServices = requestedServices(prompt, settings);
+  const writableServices = allowedServices.filter((service) => service === "calendar" || service === "docs");
+  if (!workspaceEnabled(settings) || writableServices.length === 0 || !promptRequestsWrite(prompt)) {
     return null;
   }
 
@@ -534,8 +555,13 @@ export async function buildWorkspaceActionContext({ prompt, profile, authToken, 
       return null;
     }
 
-    if (!["calendar.create", "calendar.update", "calendar.delete", "docs.append"].includes(action)) {
+    if (!["calendar.create", "calendar.update", "calendar.delete", "docs.create", "docs.append"].includes(action)) {
       return directWorkspaceAnswer(`Google Workspace write action was requested, but the planned action is unsupported: ${action}.`);
+    }
+
+    const actionService = workspaceActionService(action);
+    if (!actionService || !allowedServices.includes(actionService)) {
+      return directWorkspaceAnswer(`Google Workspace write action was requested, but the planned action does not match the selected Google app: ${action}.`);
     }
 
     const result = await runCloudWorkspaceAction({

@@ -30,14 +30,21 @@ export class AssistantProfilesService {
 
   async createAssistantProfile(req: RequestLike, payload: any) {
     const requestUser = await this.auth.getRequestUser(req);
-    const existingProfile = payload.id
-      ? await this.prisma.assistantProfile.findFirst({ where: { id: payload.id, userId: requestUser.id } })
+    const requestedProfileId = typeof payload.id === "string" && payload.id.trim()
+      ? payload.id.trim()
       : null;
+    const profileWithRequestedId = requestedProfileId
+      ? await this.prisma.assistantProfile.findUnique({ where: { id: requestedProfileId } })
+      : null;
+    const existingProfile = profileWithRequestedId?.userId === requestUser.id
+      ? profileWithRequestedId
+      : null;
+    const canReuseRequestedId = Boolean(requestedProfileId && (!profileWithRequestedId || existingProfile));
     const normalizedProfile = normalizeAssistantProfile({
       ...existingProfile,
       ...(existingProfile ? serializeAssistantProfile(existingProfile) : {}),
       ...payload,
-      id: existingProfile?.id || payload.id,
+      id: existingProfile?.id || (canReuseRequestedId ? requestedProfileId : undefined),
       createdAt: existingProfile?.createdAt?.toISOString() || payload.createdAt,
     }, requestUser.id);
 
@@ -55,12 +62,12 @@ export class AssistantProfilesService {
         })
       : await this.prisma.assistantProfile.create({
           data: {
-            id: normalizedProfile.id,
+            ...(canReuseRequestedId ? { id: normalizedProfile.id } : {}),
             ...toAssistantProfileDbData(normalizedProfile, requestUser.id),
           },
         });
 
-    await this.recordAssistantProfileSyncEvents(normalizedProfile);
+    await this.recordAssistantProfileSyncEvents(serializeAssistantProfile(profile));
     return { profile: serializeAssistantProfile(profile) };
   }
 

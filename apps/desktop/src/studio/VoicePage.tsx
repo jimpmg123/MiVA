@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PromptSettings, SttProviderId, TtsProviderId } from "../types";
 import { Badge, InfoTile, Input, Panel, PrimaryButton, SecondaryButton, SectionHeader, Select, SelectionOptionCard, StatusAlert, Switch } from "../components/ui";
 import {
@@ -6,6 +6,7 @@ import {
   getVoiceWorkerStatus,
   installKokoroTts,
   startVoiceWorker,
+  synthesizeVoice,
 } from "../features/voice/voiceRuntime";
 import type { VoiceWorkerStatus } from "../types";
 
@@ -112,17 +113,21 @@ const fallbackKokoroVoices = [
   { id: "zm_yunxi", label: "Yunxi", language: "Mandarin Chinese", gender: "Male" },
 ];
 
+const TEST_VOICE_TEXT = "Hello, my name is Miva, your customized AI assistant";
+
 export function VoiceStudioPanel({
   settings,
   onOpenPythonSetup,
   onPromptSettingsChange,
 }: VoiceStudioPanelProps) {
   const voice = settings.voice;
+  const testAudioRef = useRef<HTMLAudioElement | null>(null);
   const [workerStatus, setWorkerStatus] = useState<VoiceWorkerStatus | null>(null);
   const [workerError, setWorkerError] = useState<string | null>(null);
   const [workerNotice, setWorkerNotice] = useState<string | null>(null);
   const [workerBusy, setWorkerBusy] = useState(false);
   const [installBusy, setInstallBusy] = useState(false);
+  const [testVoiceBusy, setTestVoiceBusy] = useState(false);
 
   const refreshVoiceWorker = useCallback(async () => {
     setWorkerBusy(true);
@@ -188,6 +193,11 @@ export function VoiceStudioPanel({
     void refreshVoiceWorker();
   }, [refreshVoiceWorker]);
 
+  useEffect(() => () => {
+    testAudioRef.current?.pause();
+    testAudioRef.current = null;
+  }, []);
+
   const updateVoice = (updater: (voice: PromptSettings["voice"]) => PromptSettings["voice"]) => {
     onPromptSettingsChange((current) => ({
       ...current,
@@ -226,8 +236,66 @@ export function VoiceStudioPanel({
     : fallbackKokoroVoices;
   const selectedVoiceKnown = kokoroVoices.some((option) => option.id === voice.tts.voiceId);
   const assistantVoiceEnabled = voice.enabled && (voice.stt.enabled || voice.tts.enabled);
+  const kokoroVoiceEnabled = voice.tts.enabled && voice.tts.provider === "localVoice";
   const ttsConfigured = voice.tts.enabled && voice.tts.provider !== "disabled";
   const sttConfigured = voice.stt.enabled && voice.stt.provider !== "disabled";
+  const canTestKokoroVoice = ttsInstalled && !testVoiceBusy;
+  const toggleKokoroVoice = () => {
+    updateVoice((current) => {
+      const nextTtsEnabled = !(current.tts.enabled && current.tts.provider === "localVoice");
+      return {
+        ...current,
+        enabled: current.stt.enabled || nextTtsEnabled,
+        tts: {
+          ...current.tts,
+          enabled: nextTtsEnabled,
+          provider: nextTtsEnabled ? "localVoice" : "disabled",
+        },
+      };
+    });
+  };
+  const playTestVoice = useCallback(async () => {
+    setTestVoiceBusy(true);
+    setWorkerError(null);
+    setWorkerNotice(null);
+
+    try {
+      testAudioRef.current?.pause();
+      testAudioRef.current = null;
+      const result = await synthesizeVoice({
+        text: TEST_VOICE_TEXT,
+        provider: "kokoro",
+        voiceId: voice.tts.voiceId || "af_heart",
+        speakingRate: voice.tts.speakingRate,
+        language: "en",
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+        audio.volume = voice.tts.volume;
+        testAudioRef.current = audio;
+        audio.onended = () => {
+          testAudioRef.current = null;
+          resolve();
+        };
+        audio.onerror = () => {
+          testAudioRef.current = null;
+          reject(new Error("Audio playback failed."));
+        };
+        void audio.play().catch((error) => {
+          testAudioRef.current = null;
+          reject(error);
+        });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkerError(/failed to fetch|error sending request/i.test(message)
+        ? "Local voice engine is not ready. Check the worker status and try again."
+        : message);
+    } finally {
+      setTestVoiceBusy(false);
+    }
+  }, [voice.tts.speakingRate, voice.tts.voiceId, voice.tts.volume]);
   const installSteps = [
     "Check active Python runtime",
     "Install Kokoro, SoundFile, and NumPy",
@@ -243,6 +311,16 @@ export function VoiceStudioPanel({
           body="This page stores per-assistant voice preferences. Worker status below only means the local runtime is available; these badges show whether this assistant is configured to use voice."
           actions={
             <>
+              <SecondaryButton
+                aria-pressed={kokoroVoiceEnabled}
+                className="h-9 px-3 text-xs"
+                onClick={toggleKokoroVoice}
+              >
+                <span className="material-symbols-outlined text-[17px]">
+                  {kokoroVoiceEnabled ? "volume_off" : "graphic_eq"}
+                </span>
+                {kokoroVoiceEnabled ? "Disable Kokoro" : "Enable Kokoro"}
+              </SecondaryButton>
               <Badge tone={assistantVoiceEnabled ? "success" : "neutral"}>{assistantVoiceEnabled ? "Assistant voice on" : "Assistant voice off"}</Badge>
               <Badge tone={sttConfigured ? "action" : "neutral"}>{sttConfigured ? "STT setting on" : "STT setting off"}</Badge>
               <Badge tone={ttsConfigured ? "action" : "neutral"}>{ttsConfigured ? "TTS setting on" : "TTS setting off"}</Badge>
@@ -513,6 +591,12 @@ export function VoiceStudioPanel({
             />
             <span className="mt-1 block text-sm font-semibold text-[var(--miva-text-muted)]">{Math.round(voice.tts.volume * 100)}%</span>
           </label>
+        </div>
+        <div className="mt-5 flex justify-end">
+          <SecondaryButton disabled={!canTestKokoroVoice} onClick={() => void playTestVoice()}>
+            <span className="material-symbols-outlined text-[18px]">{testVoiceBusy ? "progress_activity" : "play_arrow"}</span>
+            {testVoiceBusy ? "Playing test voice..." : "Test voice"}
+          </SecondaryButton>
         </div>
       </Panel>
 

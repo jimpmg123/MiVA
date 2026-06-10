@@ -2,6 +2,7 @@ import { invokeCommand, isTauriRuntime } from "../../app/tauri";
 import type { ChatMessage, RuntimeMemorySummary, RuntimeStoredConversation } from "../../types";
 
 const LEGACY_RUNTIME_CHAT_STORAGE_KEY = "miva.runtimeChat.v1";
+const RUNTIME_CHAT_STORE_STORAGE_KEY = "miva.runtimeChatStore.v2";
 const CHAT_HISTORY_SCHEMA_VERSION = 2;
 
 export type RuntimeChatStore = {
@@ -48,6 +49,7 @@ function normalizeMessages(value: unknown): ChatMessage[] {
       model: source.model,
       latencyMs: source.latencyMs,
       uiAction: source.uiAction ?? undefined,
+      showClawWorkspacePicker: source.showClawWorkspacePicker === true ? true : undefined,
     };
 
     if (Array.isArray(source.images) && source.images.length > 0) {
@@ -57,6 +59,28 @@ function normalizeMessages(value: unknown): ChatMessage[] {
         typeof image.dataUrl === "string" &&
         image.dataUrl.startsWith("data:")
       ));
+    }
+
+    if (Array.isArray(source.files) && source.files.length > 0) {
+      normalized.files = source.files.flatMap((file) => {
+        if (
+          !file ||
+          typeof file !== "object" ||
+          typeof file.id !== "string" ||
+          typeof file.name !== "string" ||
+          typeof file.content !== "string"
+        ) {
+          return [];
+        }
+
+        return [{
+          id: file.id,
+          name: file.name,
+          mimeType: typeof file.mimeType === "string" && file.mimeType.trim() ? file.mimeType : "text/plain",
+          content: file.content,
+          language: typeof file.language === "string" ? file.language : undefined,
+        }];
+      });
     }
 
     return [normalized];
@@ -222,10 +246,35 @@ function loadLegacyRuntimeChatMessages(assistantId: string): ChatMessage[] {
   }
 }
 
+function hasConversationForAssistant(store: RuntimeChatStore, assistantId: string) {
+  return Object.values(store.conversations).some((conversation) => conversation.assistantId === assistantId);
+}
+
+function loadBrowserRuntimeChatStore() {
+  if (typeof window === "undefined") {
+    return emptyRuntimeChatStore;
+  }
+
+  try {
+    const saved = window.localStorage.getItem(RUNTIME_CHAT_STORE_STORAGE_KEY);
+    return saved ? normalizeRuntimeChatStore(JSON.parse(saved)) : emptyRuntimeChatStore;
+  } catch {
+    return emptyRuntimeChatStore;
+  }
+}
+
+function saveBrowserRuntimeChatStore(store: RuntimeChatStore) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(RUNTIME_CHAT_STORE_STORAGE_KEY, JSON.stringify(store));
+}
+
 export async function loadRuntimeChatStore(activeAssistantId?: string): Promise<RuntimeChatStore> {
   if (isTauriRuntime()) {
     const store = normalizeRuntimeChatStore(await invokeCommand<unknown>("load_chat_history_store"));
-    if (activeAssistantId && !store.conversations[activeAssistantId]) {
+    if (activeAssistantId && !hasConversationForAssistant(store, activeAssistantId)) {
       const legacyMessages = loadLegacyRuntimeChatMessages(activeAssistantId);
       if (legacyMessages.length) {
         const migratedStore = {
@@ -253,10 +302,20 @@ export async function loadRuntimeChatStore(activeAssistantId?: string): Promise<
     return store;
   }
 
-  const messages = activeAssistantId ? loadLegacyRuntimeChatMessages(activeAssistantId) : [];
-  return normalizeRuntimeChatStore({
-    ...emptyRuntimeChatStore,
-    conversations: activeAssistantId && messages.length ? {
+  const store = loadBrowserRuntimeChatStore();
+  if (!activeAssistantId || hasConversationForAssistant(store, activeAssistantId)) {
+    return store;
+  }
+
+  const messages = loadLegacyRuntimeChatMessages(activeAssistantId);
+  if (!messages.length) {
+    return store;
+  }
+
+  const migratedStore = normalizeRuntimeChatStore({
+    ...store,
+    conversations: {
+      ...store.conversations,
       [`runtime_${activeAssistantId}_current`]: {
         id: `runtime_${activeAssistantId}_current`,
         assistantId: activeAssistantId,
@@ -265,10 +324,16 @@ export async function loadRuntimeChatStore(activeAssistantId?: string): Promise<
         createdAt: messages[0]?.createdAt ?? new Date().toISOString(),
         updatedAt: messages[messages.length - 1]?.createdAt ?? new Date().toISOString(),
       },
-    } : {},
-    activeConversationIds: activeAssistantId && messages.length ? { [activeAssistantId]: `runtime_${activeAssistantId}_current` } : {},
-    summaries: {},
+    },
+    activeConversationIds: {
+      ...store.activeConversationIds,
+      [activeAssistantId]: `runtime_${activeAssistantId}_current`,
+    },
+    summaries: store.summaries,
+    updatedAt: new Date().toISOString(),
   });
+  saveBrowserRuntimeChatStore(migratedStore);
+  return migratedStore;
 }
 
 export async function saveRuntimeChatMessages(
@@ -282,22 +347,24 @@ export async function saveRuntimeChatMessages(
   },
 ): Promise<RuntimeChatStore> {
   const normalizedMessages = normalizeMessages(messages);
+  if (!normalizedMessages.length) {
+    return store;
+  }
+
   const conversationId = options?.conversationId || store.activeConversationIds[assistantId] || createRuntimeConversationId(assistantId);
   const existing = store.conversations[conversationId];
   const now = new Date().toISOString();
   const conversations = { ...store.conversations };
-  if (normalizedMessages.length) {
-    conversations[conversationId] = {
-      id: conversationId,
-      assistantId,
-      assistantName: options?.assistantName ?? existing?.assistantName,
-      title: existing?.title && existing.title !== "New chat" ? existing.title : createConversationTitle(normalizedMessages),
-      messages: normalizedMessages,
-      createdAt: existing?.createdAt ?? normalizedMessages[0]?.createdAt ?? now,
-      updatedAt: normalizedMessages[normalizedMessages.length - 1]?.createdAt ?? now,
-      modelLabel: options?.modelLabel ?? existing?.modelLabel,
-    };
-  }
+  conversations[conversationId] = {
+    id: conversationId,
+    assistantId,
+    assistantName: options?.assistantName ?? existing?.assistantName,
+    title: existing?.title && existing.title !== "New chat" ? existing.title : createConversationTitle(normalizedMessages),
+    messages: normalizedMessages,
+    createdAt: existing?.createdAt ?? normalizedMessages[0]?.createdAt ?? now,
+    updatedAt: normalizedMessages[normalizedMessages.length - 1]?.createdAt ?? now,
+    modelLabel: options?.modelLabel ?? existing?.modelLabel,
+  };
 
   const nextStore = normalizeRuntimeChatStore({
     ...store,
@@ -313,6 +380,7 @@ export async function saveRuntimeChatMessages(
     return normalizeRuntimeChatStore(await invokeCommand<unknown>("save_chat_history_store", { store: nextStore }));
   }
 
+  saveBrowserRuntimeChatStore(nextStore);
   window.localStorage.setItem(legacyRuntimeChatStorageKey(assistantId), JSON.stringify(nextStore.conversations[conversationId]?.messages ?? []));
   return nextStore;
 }
@@ -335,6 +403,7 @@ export async function saveRuntimeMemorySummary(
     return normalizeRuntimeChatStore(await invokeCommand<unknown>("save_chat_history_store", { store: nextStore }));
   }
 
+  saveBrowserRuntimeChatStore(nextStore);
   return nextStore;
 }
 
@@ -360,6 +429,7 @@ export async function deleteRuntimeChatMessages(store: RuntimeChatStore, assista
   }
 
   window.localStorage.removeItem(legacyRuntimeChatStorageKey(assistantId));
+  saveBrowserRuntimeChatStore(nextStore);
   return nextStore;
 }
 

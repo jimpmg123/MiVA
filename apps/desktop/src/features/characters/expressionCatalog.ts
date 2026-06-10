@@ -68,9 +68,13 @@ export const expressionMaps: Record<string, Live2DExpressionMap> = {
     // "Highlight OFF" / "Running OFF" are state toggles and are intentionally excluded.
     casual: ["Exp1", "Exp2", "Exp3", "Exp4", "Exp5"],
     emotions: {
+      neutral: "Exp1",
       playful: "TongueOut",
       happy: "Exp2",
+      angry: "TongueOut",
+      sad: "TongueOut",
       surprised: "Exp4",
+      shy: "Exp4",
     },
   },
 };

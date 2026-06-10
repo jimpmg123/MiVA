@@ -11,6 +11,8 @@ export type CharacterOverlayState = {
   character: PromptSettings["character"];
   activity: "Idle" | "Thinking" | "Speaking";
   emotion?: CharacterEmotion;
+  expressionTrigger?: number;
+  poseTrigger?: number;
 };
 
 export async function showCharacterOverlay() {

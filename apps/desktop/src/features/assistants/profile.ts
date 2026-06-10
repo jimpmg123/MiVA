@@ -7,6 +7,7 @@
   CodingProviderPolicy,
   LocalAssistantProfile,
   MemorySyncMode,
+  MivaPromptLayerSettings,
   ProfileDetailsDraft,
   PromptSettings,
   SttProviderId,
@@ -23,28 +24,110 @@ export const defaultProfileDetails: ProfileDetailsDraft = {
 };
 const legacySimpleAvoidance = "Do not make tool actions sound completed unless a connected tool confirms them.";
 const defaultSimpleAvoidance = "Only say an action is done when MiVA actually completed it. If not, explain what still needs to be done.";
+export const legacyDefaultAssistantPurpose = "Help me organize daily tasks, answer questions, and plan practical next actions.";
+export const legacyDefaultDesiredTasks = "Write what you want this assistant to help with. Example: plan my study schedule, summarize notes, prepare calendar reminders.";
+const legacyCodeResponseRules = new Set([
+  "For code-related answers, put non-trivial snippets in fenced code blocks with a language label such as ```tsx, ```jsx, ```ts, ```js, ```css, ```json, or ```bash.",
+  "For code-related answers, use fenced code blocks with language labels so MiVA renders code as copyable dark cards.",
+  "For code-related answers, use fenced code blocks with language labels so MiVA renders them as copyable dark code cards",
+]);
 const legacyCharacterUserAddress = "Use the user's displayed name when it feels natural.";
 const defaultCharacterUserAddress = "Use my profile name unless I set a nickname.";
+const legacyMivaResponseSurfacePrompt = [
+  "MiVA renders assistant messages as GitHub Flavored Markdown inside the Runtime chat surface.",
+  "Use plain Markdown paragraphs for short answers. Use headings only when they improve scanning, ordered lists for sequences, bullets for options, blockquotes for quoted notes, and tables only for compact comparisons.",
+  "Emphasize important text with Markdown bold or italic. Do not request custom fonts, colors, CSS, raw HTML, or unsupported UI widgets; MiVA will render them as text rather than controls.",
+  "Put every non-trivial code snippet in a fenced code block with a language label such as ```tsx, ```jsx, ```ts, ```js, ```css, ```json, or ```bash so MiVA can show a code card with copy controls.",
+  "Images attached by the assistant can be displayed after the message, but normal answers should not claim an image was generated unless an image tool or runtime result confirms it.",
+  "Preserve meaningful line breaks from user-provided text when rewriting, translating, or reviewing it."
+].join("\n");
+const legacyMivaCapabilityPrompt = [
+  "MiVA capabilities are runtime-gated. Only claim a capability is available when the current assistant settings, slash command, attachment context, or tool result says it is connected.",
+  "Workspace tools include Google Calendar, Gmail, Drive, Docs, and Sheets context when Workspace authentication and service settings are enabled. Read from provided Workspace context directly; write actions require an explicit confirmed tool result.",
+  "Coding tools include local chat-only code help and workspace actions when the assistant's coding settings allow them. Repository edits, shell commands, and file reads require an explicit allowed workspace and matching tool context.",
+  "Image understanding is available when image attachments are present; MiVA routes those requests through Gemini vision. Image generation is available only through the image slash command or a confirmed image tool flow.",
+  "Voice and 2D character settings affect runtime presentation only when enabled. Do not invent microphone, TTS playback, Live2D movement, or character actions without runtime confirmation.",
+  "Imported skills are lightweight extra instructions. Use them only when the enabled skill context is relevant to the user's task."
+].join("\n");
+const legacyMivaCapabilityPromptWithCoding = [
+  "MiVA capabilities are runtime-gated. Only claim a capability is available when the current assistant settings, slash command, attachment context, or tool result says it is connected.",
+  "When workspace tools are enabled, read from provided workspace context directly; write actions require an explicit confirmed tool result.",
+  "When local CLI or coding tools are enabled, use only MiVA-provided tool context and confirmed results. Repository edits, shell commands, and file reads require an explicit allowed workspace and matching tool context.",
+  "Image understanding is available when image attachments are present; MiVA routes those requests through Gemini vision. Image generation is available only through the image slash command or a confirmed image tool flow.",
+  "Voice and 2D character settings affect runtime presentation only when enabled. Do not invent microphone, TTS playback, Live2D movement, or character actions without runtime confirmation.",
+  "Imported skills are lightweight extra instructions. Use them only when the enabled skill context is relevant to the user's task."
+].join("\n");
+
+export const defaultMivaPromptLayerSettings: MivaPromptLayerSettings = {
+  responseSurfacePrompt: [
+    "MiVA renders assistant messages as GitHub Flavored Markdown inside the Runtime chat surface.",
+    "Use plain Markdown paragraphs for short answers. Use headings only when they improve scanning, ordered lists for sequences, bullets for options, blockquotes for quoted notes, and tables only for compact comparisons.",
+    "Emphasize important text with Markdown bold or italic. Do not request custom fonts, colors, CSS, raw HTML, or unsupported UI widgets; MiVA will render them as text rather than controls.",
+    "Images attached by the assistant can be displayed after the message, but normal answers should not claim an image was generated unless an image tool or runtime result confirms it.",
+    "Preserve meaningful line breaks from user-provided text when rewriting, translating, or reviewing it."
+  ].join("\n"),
+  capabilityPrompt: [
+    "MiVA capabilities are runtime-gated. Only claim a capability is available when the current assistant settings, slash command, attachment context, or tool result says it is connected.",
+    "When workspace tools are enabled, read from provided workspace context directly; write actions require an explicit confirmed tool result.",
+    "Image understanding is available when image attachments are present; MiVA routes those requests through Gemini vision. Image generation is available only through the image slash command or a confirmed image tool flow.",
+    "Voice and 2D character settings affect runtime presentation only when enabled. Do not invent microphone, TTS playback, Live2D movement, or character actions without runtime confirmation.",
+    "Imported skills are lightweight extra instructions. Use them only when the enabled skill context is relevant to the user's task."
+  ].join("\n"),
+};
+
+export function normalizeMivaPromptLayerSettings(value: unknown): MivaPromptLayerSettings {
+  const source = value && typeof value === "object"
+    ? value as Partial<MivaPromptLayerSettings>
+    : {};
+  const responseSurfacePrompt = typeof source.responseSurfacePrompt === "string"
+    ? source.responseSurfacePrompt.trim()
+    : "";
+  const capabilityPrompt = typeof source.capabilityPrompt === "string"
+    ? source.capabilityPrompt.trim()
+    : "";
+  const hasLegacyCodingWorkspacePrompt = capabilityPrompt.includes("Coding tools include local chat-only code help")
+    && capabilityPrompt.includes("workspace actions")
+    && capabilityPrompt.includes("Repository edits, shell commands, and file reads require an explicit allowed workspace");
+
+  return {
+    responseSurfacePrompt: !responseSurfacePrompt || responseSurfacePrompt === legacyMivaResponseSurfacePrompt
+      ? defaultMivaPromptLayerSettings.responseSurfacePrompt
+      : responseSurfacePrompt,
+    capabilityPrompt: !capabilityPrompt || capabilityPrompt === legacyMivaCapabilityPrompt || capabilityPrompt === legacyMivaCapabilityPromptWithCoding || hasLegacyCodingWorkspacePrompt
+      ? defaultMivaPromptLayerSettings.capabilityPrompt
+      : capabilityPrompt,
+  };
+}
+
+function normalizeSimpleText(value: unknown, fallback: string, legacyDefault?: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized === legacyDefault) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
 export const defaultPromptSettings: PromptSettings = {
+  mivaPromptLayers: defaultMivaPromptLayerSettings,
   simple: {
-    assistantPurpose: "Help me organize daily tasks, answer questions, and plan practical next actions.",
-    desiredTasks: "Write what you want this assistant to help with. Example: plan my study schedule, summarize notes, prepare calendar reminders.",
+    assistantPurpose: "",
+    desiredTasks: "",
     preferredTone: "Clear, practical, and friendly.",
     avoidances: defaultSimpleAvoidance,
   },
   toolConnections: {
     googleWorkspace: false,
     googleWorkspaceServices: ["drive", "gmail", "calendar"],
-    daisoCli: false,
   },
+  assistantName: "",
   persona: "A practical personal assistant named MiVA.",
   roleGoal: "Help the user think clearly, plan next actions, and use the selected model responsibly.",
-  responseRules: [
-    "Start with the direct answer, then add context only when it helps.",
-    "Use natural line breaks for readability when an answer is more than a few sentences.",
-    "Ask a short clarifying question when the request is ambiguous.",
-    "Keep local/private data assumptions explicit.",
-  ],
+  responseRules: [],
   scheduleRules: {
     mode: "draftOnly",
     timezone: "Asia/Seoul",
@@ -153,6 +236,15 @@ function normalizeStringList(value: unknown, fallback: string[]) {
     .filter(Boolean);
 
   return normalized.length ? normalized : [...fallback];
+}
+
+function normalizeResponseRules(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [...defaultPromptSettings.responseRules];
+  }
+
+  return normalizeStringList(value, [])
+    .filter((rule) => !legacyCodeResponseRules.has(rule) && !/code-related answers?.*fenced code blocks?/i.test(rule));
 }
 
 const workspaceServiceIds: WorkspaceServiceId[] = ["drive", "gmail", "calendar", "docs", "sheets"];
@@ -274,16 +366,19 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
       : defaultPromptSettings.character.reactionMode
   );
   return {
+    mivaPromptLayers: normalizeMivaPromptLayerSettings(source.mivaPromptLayers),
     simple: {
-      assistantPurpose: typeof simple.assistantPurpose === "string" && simple.assistantPurpose.trim()
-        ? simple.assistantPurpose.trim()
-        : defaultPromptSettings.simple.assistantPurpose,
-      desiredTasks: typeof simple.desiredTasks === "string" && simple.desiredTasks.trim()
-        ? simple.desiredTasks.trim()
-        : defaultPromptSettings.simple.desiredTasks,
-      preferredTone: typeof simple.preferredTone === "string" && simple.preferredTone.trim()
-        ? simple.preferredTone.trim()
-        : defaultPromptSettings.simple.preferredTone,
+      assistantPurpose: normalizeSimpleText(
+        simple.assistantPurpose,
+        defaultPromptSettings.simple.assistantPurpose,
+        legacyDefaultAssistantPurpose,
+      ),
+      desiredTasks: normalizeSimpleText(
+        simple.desiredTasks,
+        defaultPromptSettings.simple.desiredTasks,
+        legacyDefaultDesiredTasks,
+      ),
+      preferredTone: normalizeSimpleText(simple.preferredTone, defaultPromptSettings.simple.preferredTone),
       avoidances: typeof simple.avoidances === "string" && simple.avoidances.trim()
         ? simple.avoidances.trim() === legacySimpleAvoidance
           ? defaultSimpleAvoidance
@@ -295,17 +390,15 @@ export function normalizePromptSettings(value: unknown): PromptSettings {
         ? toolConnections.googleWorkspace
         : defaultPromptSettings.toolConnections.googleWorkspace,
       googleWorkspaceServices: normalizeWorkspaceServices(toolConnections.googleWorkspaceServices),
-      daisoCli: typeof toolConnections.daisoCli === "boolean"
-        ? toolConnections.daisoCli
-        : defaultPromptSettings.toolConnections.daisoCli,
     },
+    assistantName: typeof source.assistantName === "string" ? source.assistantName.trim() : defaultPromptSettings.assistantName,
     persona: typeof source.persona === "string" && source.persona.trim()
       ? source.persona.trim()
       : defaultPromptSettings.persona,
     roleGoal: typeof source.roleGoal === "string" && source.roleGoal.trim()
       ? source.roleGoal.trim()
       : defaultPromptSettings.roleGoal,
-    responseRules: normalizeStringList(source.responseRules, defaultPromptSettings.responseRules),
+    responseRules: normalizeResponseRules(source.responseRules),
     scheduleRules: {
       mode: scheduleMode,
       timezone: typeof scheduleRules.timezone === "string" && scheduleRules.timezone.trim()

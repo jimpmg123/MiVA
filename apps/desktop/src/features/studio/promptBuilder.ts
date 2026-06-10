@@ -1,6 +1,8 @@
 import type { LocalAssistantProfile, ProfileDetailsDraft, PromptSettings, UserProfile } from "../../types";
 import { fetchCloudJson } from "../cloud/client";
 
+export type AssistantCategoryId = "study" | "writing" | "work" | "coding" | "planning" | "creative" | "personal";
+
 export type StudioOption = {
   id: string;
   label: string;
@@ -10,6 +12,7 @@ export type StudioOption = {
 
 export type StudioQuestion = {
   id: string;
+  slot?: string;
   title: string;
   description?: string;
   type: "single_choice" | "multi_choice" | "text";
@@ -57,6 +60,12 @@ type SourceMeta = {
 
 export type StudioQuestionsResponse = {
   questions: StudioQuestion[];
+  detectedDomain?: string;
+  coverage?: {
+    filledSlots: string[];
+    missingSlots: string[];
+    isSufficient: boolean;
+  };
 } & SourceMeta;
 
 export type StudioRulesResponse = {
@@ -68,6 +77,8 @@ export type StudioRulesResponse = {
 
 export type FinalizePromptResponse = {
   assistantName: string;
+  assistantDescription: string;
+  assistantCategory: AssistantCategoryId;
   assistantRecipe: AssistantRecipeDraft;
   finalSystemPrompt: string;
 } & SourceMeta;
@@ -135,6 +146,7 @@ export function finalizeStudioPrompt(input: {
 
 export function saveStudioAssistantRecipe(input: {
   profile: LocalAssistantProfile;
+  assistantCategory: AssistantCategoryId;
   profileDetails: ProfileDetailsDraft;
   promptSettings: PromptSettings;
   finalSystemPrompt: string;
@@ -144,7 +156,7 @@ export function saveStudioAssistantRecipe(input: {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify({
-      id: input.profile.id,
+      id: input.profile.sync.cloudProfileId ?? input.profile.id,
       name: input.profileDetails.name || input.assistantRecipe.name,
       description: input.profileDetails.description || input.assistantRecipe.purpose,
       useCase: input.profile.useCase ?? "work",
@@ -166,6 +178,7 @@ export function saveStudioAssistantRecipe(input: {
         },
         variables: {
           ...input.profile.prompt.variables,
+          assistantCategory: input.assistantCategory,
           assistantRecipe: input.assistantRecipe,
         },
       },

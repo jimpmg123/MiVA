@@ -24,6 +24,7 @@ export type AppMode = "setup" | "studio" | "runtime" | "history" | "library" | "
 export type SettingsSection = "general" | "personalization" | "aiModels" | "clawCode" | "logs";
 export type StudioSection =
   | "myAssistants"
+  | "assistantStore"
   | "overview"
   | "models"
   | "prompts"
@@ -73,6 +74,11 @@ export type PersonalizationSettings = {
   customInstructions: string;
 };
 
+export type MivaPromptLayerSettings = {
+  responseSurfacePrompt: string;
+  capabilityPrompt: string;
+};
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -118,6 +124,7 @@ export type GoogleWorkspaceStatus = {
 };
 
 export type PromptSettings = {
+  mivaPromptLayers: MivaPromptLayerSettings;
   simple: {
     assistantPurpose: string;
     desiredTasks: string;
@@ -127,8 +134,8 @@ export type PromptSettings = {
   toolConnections: {
     googleWorkspace: boolean;
     googleWorkspaceServices: WorkspaceServiceId[];
-    daisoCli: boolean;
   };
+  assistantName: string;
   persona: string;
   roleGoal: string;
   responseRules: string[];
@@ -361,6 +368,14 @@ export type ChatGeneratedImage = {
   model?: string;
 };
 
+export type ChatGeneratedFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  content: string;
+  language?: string;
+};
+
 export type ImportedSkill = {
   id: string;
   slug: string;
@@ -387,7 +402,9 @@ export type ChatMessage = {
   model?: string;
   latencyMs?: number;
   uiAction?: ChatUiAction | null;
+  showClawWorkspacePicker?: boolean;
   images?: ChatGeneratedImage[];
+  files?: ChatGeneratedFile[];
 };
 
 export type DocumentAttachmentStatus = "analyzing" | "ready" | "error";

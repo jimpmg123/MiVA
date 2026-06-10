@@ -11,19 +11,19 @@ type ChatSlashChipProps = {
 const toneClasses: Record<ReturnType<typeof getSlashCommandTone>, { input: string; onPrimary: string }> = {
   workspace: {
     input: "border-[var(--miva-success)]/25 bg-[var(--miva-success-soft)] text-[var(--miva-success)]",
-    onPrimary: "border-white/25 bg-white/15 text-white",
+    onPrimary: "border-emerald-200 bg-emerald-50 text-emerald-700",
   },
   code: {
     input: "border-[var(--miva-primary)]/25 bg-[var(--miva-primary-surface)] text-[var(--miva-primary)]",
-    onPrimary: "border-white/25 bg-white/15 text-white",
+    onPrimary: "border-blue-200 bg-blue-50 text-blue-700",
   },
   tool: {
     input: "border-[var(--miva-warning)]/25 bg-[var(--miva-warning-soft)] text-[var(--miva-warning)]",
-    onPrimary: "border-white/25 bg-white/15 text-white",
+    onPrimary: "border-amber-200 bg-amber-50 text-amber-700",
   },
   skill: {
     input: "border-violet-300/40 bg-violet-50 text-violet-700",
-    onPrimary: "border-white/25 bg-white/15 text-white",
+    onPrimary: "border-violet-200 bg-violet-50 text-violet-700",
   },
 };
 

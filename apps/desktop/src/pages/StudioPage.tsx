@@ -1,7 +1,8 @@
-import { PrimaryButton, SectionHeader } from "../components/ui";
+import { useState } from "react";
+import { PrimaryButton } from "../components/ui";
 import { codingAccessModeCopy, codingCapabilityCopy, codingProviderPolicyCopy, normalizePromptSettings } from "../features/assistants/profile";
 import { providerMeta } from "../features/models/catalog";
-import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, ImportedSkill, LocalAssistantProfile, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, StudioSection } from "../types";
+import type { AppMode, AssistantProfileSyncState, ClawCodeRuntimeInfo, GoogleWorkspaceStatus, ImportedSkill, LocalAssistantProfile, ModelDownloadProgress, ProfileDetailsDraft, PromptEditorMode, PromptSettings, ProviderId, ProviderKeyState, StudioSection } from "../types";
 import { ModelsPanel } from "../studio/ModelsPage";
 import { MyAssistantsPanel } from "../studio/MyAssistantsPage";
 import { CharacterStudioPanel } from "../studio/CharacterPage";
@@ -11,62 +12,6 @@ import { StudioOverviewPanel } from "../studio/OverviewPage";
 import { StudioCodePanel } from "../studio/CodePage";
 import { SkillsStudioPanel } from "../studio/SkillsPage";
 import { VoiceStudioPanel } from "../studio/VoicePage";
-
-const placeholderCards: Record<StudioSection, Array<[string, string, string]>> = {
-  myAssistants: [
-    ["Assistant library", "Saved assistants from Setup and Studio are shown here.", "supervisor_account"],
-    ["Cloud sync", "Local assistants can be pushed to the web console manually.", "cloud_sync"],
-    ["Runtime launch", "Choose one assistant before entering Runtime.", "rocket_launch"],
-  ],
-  overview: [
-    ["Assistant profile", "Current setup choices and selected model will be edited here.", "account_circle"],
-    ["Prompt stack", "Persona, rules, and tool instructions will be assembled here.", "edit_note"],
-    ["Runtime preview", "Studio changes will be tested before they affect runtime chat.", "play_circle"],
-  ],
-  models: [
-    ["Local model library", "Browse Ollama models and download them onto this computer.", "deployed_code_update"],
-    ["Cloud model routing", "Choose OpenAI or Gemini models without local downloads.", "cloud"],
-    ["Model policy", "Set fallback and quality preferences after provider rules are finalized.", "rule"],
-  ],
-  prompts: [
-    ["Persona", "Define assistant role, tone, and boundaries.", "badge"],
-    ["System prompt", "Compose model instructions from survey answers and user edits.", "subject"],
-    ["Prompt presets", "Save multiple prompt configurations per assistant.", "bookmark"],
-  ],
-  character: [
-    ["2D avatar", "Attach Live2D or image-based assistant characters later.", "face"],
-    ["Expression states", "Map listening, thinking, speaking, and idle states.", "mood"],
-    ["Scene layout", "Control where the assistant appears in runtime mode.", "dashboard_customize"],
-  ],
-  tts: [
-    ["Text to speech", "Choose voice providers and speaking style.", "record_voice_over"],
-    ["Speech to text", "Microphone input and wake controls will be configured here.", "mic"],
-    ["Voice test", "Preview latency and quality before enabling runtime voice.", "graphic_eq"],
-  ],
-  googleWorkspace: [
-    ["Google Workspace", "Calendar, Gmail, Drive, Docs, and Sheets context settings live here.", "workspaces"],
-    ["OAuth connection", "Account connection and granted scopes are handled through MiVA Google login.", "verified_user"],
-    ["Tool permissions", "Users will decide what the assistant can read or change.", "rule"],
-  ],
-  code: [
-    ["Code explanation", "Use local models for bounded read-only code help.", "terminal"],
-    ["Repository editing", "Use cloud coding models for larger multi-file changes.", "edit_square"],
-    ["Shell access", "Keep command execution behind explicit workspace controls.", "security"],
-  ],
-  skills: [
-    ["Rules", "Apply lightweight behavioral guidance to this assistant.", "rule"],
-    ["Agent skills", "Load specialized instructions only when they are relevant.", "menu_book"],
-    ["Local model fit", "Prefer short, bounded skills for lightweight models.", "memory"],
-  ],
-};
-
-const studioSectionDescription: Partial<Record<StudioSection, string>> = {
-  character: "Configure this assistant's visual persona, user address style, and future Live2D behavior. Runtime rendering is prepared here and connected later.",
-  tts: "Prepare voice input and spoken output for this assistant. STT, TTS, and runtime voice behavior can be configured here.",
-  googleWorkspace: "Connect Google Workspace tools for this assistant. Choose products and set permission levels for direct Google API context.",
-  code: "Set code explanation, repository editing, and shell-access boundaries for this assistant.",
-  skills: "Preview assistant rules and progressively loaded Agent Skills without adding every instruction to each prompt.",
-};
 
 type StudioPageProps = {
   activeLocale: "en" | "ko";
@@ -106,12 +51,16 @@ type StudioPageProps = {
   renameLocalAssistantProfile: (profileId: string, name: string) => Promise<void>;
   applyLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
   editLocalAssistantProfile: (profile: LocalAssistantProfile) => void;
-  addCurrentLocalAssistantProfile: () => Promise<unknown>;
+  addCurrentLocalAssistantProfile: (options?: { promptVariables?: Record<string, unknown> }) => Promise<unknown>;
   buildCurrentLocalAssistantProfile: () => LocalAssistantProfile;
   downloadModel: (modelName: string) => Promise<void>;
+  downloadProgress: ModelDownloadProgress | null;
+  onCancelModelDownload: (modelName: string) => void;
+  onDeleteModel: (modelName: string) => void;
+  providerKeys: ProviderKeyState;
   enterAiModelSettings: () => void;
   enterClawCodeSettings: () => void;
-  saveCurrentLocalAssistantProfile: () => Promise<unknown>;
+  saveCurrentLocalAssistantProfile: (options?: { promptVariables?: Record<string, unknown> }) => Promise<unknown>;
   setActiveLocalProfileId: (id: string) => void;
   setAppMode: (mode: AppMode) => void;
   setPromptEditorMode: (mode: PromptEditorMode) => void;
@@ -154,6 +103,10 @@ export function StudioPage({
   installedModels,
   isNewAssistantDraft,
   modelCatalog,
+  downloadProgress,
+  onCancelModelDownload,
+  onDeleteModel,
+  providerKeys,
   newAssistantConfiguredSections,
   profileDetailsDraft,
   promptSettingsDraft,
@@ -164,7 +117,6 @@ export function StudioPage({
   signedIn,
   status,
   studioSection,
-  studioSections,
   syncAllAssistantProfilesToCloud,
   syncAllAssistantProfilesFromCloud,
   syncAssistantProfileToCloud,
@@ -197,8 +149,8 @@ export function StudioPage({
   t,
   tauriRuntime,
 }: StudioPageProps) {
-    const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
-    const isAssistantEditorSection = studioSection !== "myAssistants";
+    const [promptDevModeOpen, setPromptDevModeOpen] = useState(false);
+    const isAssistantEditorSection = studioSection !== "myAssistants" && studioSection !== "assistantStore";
     const currentEditorProfile = buildCurrentLocalAssistantProfile();
     const editingExistingAssistant = !isNewAssistantDraft
       && assistantProfileStore.profiles.some((profile) => profile.id === activeLocalProfileId);
@@ -252,6 +204,16 @@ export function StudioPage({
       );
     };
 
+    const renderAssistantStore = () => (
+      <div className="rounded-lg border border-[var(--miva-border)] bg-[var(--miva-surface)] px-6 py-8 text-center shadow-sm">
+        <span className="material-symbols-outlined mx-auto grid h-12 w-12 place-items-center rounded-lg bg-[var(--miva-primary-soft)] text-[24px] text-[var(--miva-primary)]">storefront</span>
+        <h3 className="mt-4 font-heading text-lg font-bold text-[var(--miva-text)]">Assistant Store is not connected yet.</h3>
+        <p className="mx-auto mt-2 max-w-[560px] text-sm leading-6 text-[var(--miva-text-muted)]">
+          This section is prepared for shared assistants, but no store models or template cards are added in the desktop UI yet.
+        </p>
+      </div>
+    );
+
     const renderStudioOverview = () => {
       const profile = buildCurrentLocalAssistantProfile();
       const localChangesPending = Boolean(
@@ -298,7 +260,6 @@ export function StudioPage({
           duplicateNameMessage={duplicateNameMessage}
           isNewAssistantDraft={isNewAssistantDraft}
           onProfileDetailsChange={setProfileDetailsDraft}
-          placeholderCards={placeholderCards.overview.slice(1)}
           profile={profile}
           profileDetailsDraft={profileDetailsDraft}
           providerLabel={providerMeta[profile.provider]?.label ?? profile.provider}
@@ -312,15 +273,25 @@ export function StudioPage({
 
     const renderPromptStudio = () => {
       const profile = buildCurrentLocalAssistantProfile();
+      const hasSavedPrompt = Boolean((promptSettingsDraft.generatedFinalSystemPrompt || activeLocalProfile?.prompt?.systemPrompt || "").trim());
 
       return (
         <PromptStudioPanel
+          key={profile.id}
           profile={profile}
           profileDetailsDraft={profileDetailsDraft}
+          hasSavedPrompt={hasSavedPrompt}
+          mivaDevModeOpen={promptDevModeOpen}
+          mivaPromptLayers={promptSettingsDraft.mivaPromptLayers}
           settings={promptSettingsDraft}
+          onMivaDevModeOpenChange={setPromptDevModeOpen}
+          onMivaPromptLayersChange={(mivaPromptLayers) => setPromptSettingsDraft((current) => ({
+            ...current,
+            mivaPromptLayers,
+          }))}
           onProfileDetailsChange={setProfileDetailsDraft}
           onPromptSettingsChange={(updater) => setPromptSettingsDraft((current) => updater(current))}
-          onSaveLocal={() => editingExistingAssistant ? saveCurrentLocalAssistantProfile() : addCurrentLocalAssistantProfile()}
+          onSaveLocal={(options) => editingExistingAssistant ? saveCurrentLocalAssistantProfile(options) : addCurrentLocalAssistantProfile(options)}
         />
       );
     };
@@ -405,8 +376,10 @@ export function StudioPage({
         activeLocale={activeLocale}
         busyAction={busyAction}
         cloudModelCatalog={cloudModelCatalog}
+        downloadProgress={downloadProgress}
         installedModels={installedModels}
         modelCatalog={modelCatalog}
+        providerKeys={providerKeys}
         providerMeta={providerMeta}
         providerText={providerText}
         selectedCloudModel={selectedCloudModel}
@@ -416,6 +389,9 @@ export function StudioPage({
         status={status}
         t={t}
         tauriRuntime={tauriRuntime}
+        onCancelModelDownload={onCancelModelDownload}
+        onDeleteModel={onDeleteModel}
+        onOpenApiKeySettings={enterAiModelSettings}
         onDownloadModel={(modelName) => void downloadModel(modelName)}
         onSelectCloudModel={(provider, modelId) => {
           if (!signedIn) {
@@ -434,16 +410,28 @@ export function StudioPage({
     );
 
     return (
-      <div className={`mx-auto w-full min-w-0 max-w-[980px] ${isAssistantEditorSection ? "pb-28" : ""}`}>
-        <SectionHeader
-          className="mb-8"
-          eyebrow="Studio"
-          title={activeStudioSection.label}
-          body={studioSectionDescription[studioSection] ?? "Studio is the free-editing workspace after initial Setup. Prompts, 2D character, TTS, Google Workspace, and tools will be configured here."}
-        />
+      <div className={`min-w-0 ${studioSection === "myAssistants" ? "-m-8 h-[calc(100%+4rem)] w-[calc(100%+4rem)] max-w-none" : "h-full w-full max-w-none overflow-auto pr-8"} ${isAssistantEditorSection ? "pb-28" : ""}`}>
+        {studioSection === "prompts" && promptSurveyComplete ? (
+          <div className="mb-5 flex justify-start">
+            <button
+              className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-black transition ${
+                promptDevModeOpen
+                  ? "border-[var(--miva-primary)] bg-[var(--miva-primary-soft)] text-[var(--miva-primary)]"
+                  : "border-[var(--miva-border)] bg-[var(--miva-surface)] text-[var(--miva-text)] hover:border-[var(--miva-primary)] hover:text-[var(--miva-primary)]"
+              }`}
+              type="button"
+              onClick={() => setPromptDevModeOpen(true)}
+            >
+              <span className="material-symbols-outlined text-[18px]">tune</span>
+              MiVA dev mode
+            </button>
+          </div>
+        ) : null}
 
         {studioSection === "myAssistants" ? (
           renderMyAssistants()
+        ) : studioSection === "assistantStore" ? (
+          renderAssistantStore()
         ) : studioSection === "overview" ? (
           renderStudioOverview()
         ) : studioSection === "models" ? (

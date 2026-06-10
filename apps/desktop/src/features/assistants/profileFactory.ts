@@ -42,16 +42,17 @@ export function buildLocalAssistantProfile(input: {
     : input.assistantProfiles.find((profile) => profile.id === input.activeLocalProfileId);
   const profileId = input.profileId ?? existing?.id ?? input.activeLocalProfileId;
   const now = new Date().toISOString();
-  const safeSurvey: SurveyState = {
-    useCase: input.survey.useCase,
-    answerStyle: input.survey.answerStyle,
-    priority: input.survey.priority,
-    languageUse: input.survey.languageUse,
-    localMode: input.survey.localMode,
-    futureFeatures: [...input.survey.futureFeatures],
-    memorySyncMode: input.survey.memorySyncMode,
-  };
   const promptSettings = normalizePromptSettings(input.promptSettingsDraft);
+  const hasStudioFinalPrompt = Boolean(promptSettings.generatedFinalSystemPrompt?.trim());
+  const safeSurvey: SurveyState = {
+    useCase: hasStudioFinalPrompt ? null : input.survey.useCase,
+    answerStyle: hasStudioFinalPrompt ? null : input.survey.answerStyle,
+    priority: hasStudioFinalPrompt ? null : input.survey.priority,
+    languageUse: hasStudioFinalPrompt ? null : input.survey.languageUse,
+    localMode: hasStudioFinalPrompt ? null : input.survey.localMode,
+    futureFeatures: hasStudioFinalPrompt ? [] : [...input.survey.futureFeatures],
+    memorySyncMode: hasStudioFinalPrompt ? "profileOnly" : input.survey.memorySyncMode,
+  };
   const profileBase = {
     useCase: safeSurvey.useCase,
     answerStyle: safeSurvey.answerStyle,

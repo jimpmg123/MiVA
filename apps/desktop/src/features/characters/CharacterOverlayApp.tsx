@@ -16,6 +16,8 @@ const defaultOverlayState: CharacterOverlayState = {
   character: defaultPromptSettings.character,
   activity: "Idle",
   emotion: "neutral",
+  expressionTrigger: 0,
+  poseTrigger: 0,
 };
 
 type ContextMenuState = {
@@ -176,9 +178,11 @@ export function CharacterOverlayApp() {
           <Live2DStage
             activity={overlayState.activity}
             emotion={overlayState.emotion}
+            expressionTrigger={overlayState.expressionTrigger}
             blockPointerEvents
             bottomReservePx={32}
             character={character}
+            poseTrigger={overlayState.poseTrigger}
             topReservePx={20}
           />
         ) : (

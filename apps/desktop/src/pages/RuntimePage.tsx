@@ -1,6 +1,6 @@
-import type { Dispatch, MouseEvent, RefObject, SetStateAction } from "react";
+import type { Dispatch, MouseEvent, ReactNode, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppMode, CharacterEmotion, ChatMessage, ChatMetrics, DocumentAttachment, ImageAttachment, OllamaStatus, PromptSettings, ProviderId, ProviderMode } from "../types";
+import type { AppMode, CharacterEmotion, ChatMessage, ChatMetrics, ClawCodeRuntimeInfo, DocumentAttachment, ImageAttachment, OllamaStatus, PromptSettings, ProviderId, ProviderMode, RuntimeMemorySummary } from "../types";
 import type { Locale } from "../i18n";
 import { ClawCodeWorkspaceChatAction } from "../components/ClawCodeWorkspaceChatAction";
 import { PrimaryButton } from "../components/ui";
@@ -28,6 +28,8 @@ type RuntimePageProps = {
   chooseAndAttachDocuments: () => Promise<void> | void;
   chooseAndAttachImages: () => Promise<void> | void;
   chooseClawCodeWorkspace: () => Promise<string | null> | string | null;
+  applyClawCodeWorkspace: (workspaceRoot: string) => Promise<void> | void;
+  clawCodeStatus: ClawCodeRuntimeInfo | null;
   completeClawCodeWorkspaceFromChat: (messageCreatedAt: string, workspaceRoot: string) => Promise<void> | void;
   documentAttachments: DocumentAttachment[];
   imageAttachments: ImageAttachment[];
@@ -38,6 +40,9 @@ type RuntimePageProps = {
   chatIntroKey: string;
   chatMetrics: ChatMetrics | null;
   characterSettings: PromptSettings["character"];
+  activeAssistantName: string;
+  promptSettings: PromptSettings;
+  runtimeMemorySummary: RuntimeMemorySummary | null;
   chatScrollRef: RefObject<HTMLDivElement | null>;
   providerText: Record<string, string>;
   selectedModelInstalled: boolean;
@@ -53,10 +58,12 @@ type RuntimePageProps = {
   ttsError: string | null;
   ttsPlaybackState: "idle" | "starting" | "speaking" | "error";
   characterEmotion: CharacterEmotion;
+  characterExpressionTrigger: number;
+  characterPoseTrigger: number;
   saveSetupAssistantProfile: () => Promise<boolean> | boolean;
   handleChatScroll: () => void;
   scrollChatToLatest: (behavior?: ScrollBehavior) => void;
-  sendMessage: (options?: { promptFixQuote?: string }) => Promise<void> | void;
+  sendMessage: (options?: { promptFixQuote?: string; promptFixOriginalAnswer?: string }) => Promise<void> | void;
   stopChat: () => void;
   removeDocumentAttachment: (id: string) => void;
   removeImageAttachment: (id: string) => void;
@@ -73,9 +80,36 @@ type RuntimePageProps = {
 
 const LONG_ASSISTANT_JUMP_MIN_CHARS = 600;
 const CHAT_INPUT_MAX_HEIGHT_PX = 240;
+type RuntimePanelTab = "Context" | "Memory" | "Tools";
+const runtimePanelTabs: RuntimePanelTab[] = ["Context", "Memory", "Tools"];
+type RuntimeContextSectionId = "assistantProfile" | "systemRules" | "recentContext" | "voiceEngine";
+const mockRuntimeTools = [
+  { name: "Figma", icon: "ph-figma-logo" },
+  { name: "GitHub", icon: "ph-github-logo" },
+  { name: "Lovable", icon: "ph-sparkle" },
+  { name: "Notion", icon: "ph-notion-logo" },
+];
 
 function getRuntimeMessageKey(message: ChatMessage, index: number) {
   return `${message.role}-${message.createdAt ?? "draft"}-${index}`;
+}
+
+function getRuntimeInitials(value: string, fallback: string) {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return fallback;
+  }
+
+  return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+}
+
+function formatRuntimeMessageTime(value?: string) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function getNormalizedMessageCharCount(content: string) {
@@ -101,6 +135,423 @@ function getPromptFixQuotePreview(value: string) {
   return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
 }
 
+function splitRuntimePanelLines(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function RuntimeInspectorPanel({
+  activeAssistantName,
+  activeModelLabel,
+  activeProviderLabel,
+  activeProviderMode,
+  activeTab,
+  chatMetrics,
+  documentAttachments,
+  onTabChange,
+  promptSettings,
+  runtimeMemorySummary,
+  runtimeTtsAvailable,
+  runtimeTtsEnabled,
+  ttsPlaybackState,
+}: {
+  activeAssistantName: string;
+  activeModelLabel: string;
+  activeProviderLabel: string;
+  activeProviderMode: ProviderMode;
+  activeTab: RuntimePanelTab;
+  chatMetrics: ChatMetrics | null;
+  documentAttachments: DocumentAttachment[];
+  onTabChange: (tab: RuntimePanelTab) => void;
+  promptSettings: PromptSettings;
+  runtimeMemorySummary: RuntimeMemorySummary | null;
+  runtimeTtsAvailable: boolean;
+  runtimeTtsEnabled: boolean;
+  ttsPlaybackState: "idle" | "starting" | "speaking" | "error";
+}) {
+  const rolePurpose = promptSettings.roleGoal.trim()
+    || promptSettings.simple.assistantPurpose.trim()
+    || "No role configured yet.";
+  const ruleItems = promptSettings.responseRules.map((rule) => rule.trim()).filter(Boolean).slice(0, 4);
+  const pinnedMemoryItems = splitRuntimePanelLines(runtimeMemorySummary?.pinnedMemory);
+  const sessionMemoryItems = splitRuntimePanelLines(runtimeMemorySummary?.sessionSummary);
+  const googleWorkspaceEnabled = promptSettings.toolConnections.googleWorkspace;
+  const activeRuntimeTools = [
+    googleWorkspaceEnabled
+      ? {
+          description: `${promptSettings.toolConnections.googleWorkspaceServices.length} Google service${promptSettings.toolConnections.googleWorkspaceServices.length === 1 ? "" : "s"} configured`,
+          icon: "ph-google-logo",
+          name: "Google Workspace",
+        }
+      : null,
+  ].filter((tool): tool is { description: string; icon: string; name: string } => Boolean(tool));
+  const [collapsedContextSectionIds, setCollapsedContextSectionIds] = useState<RuntimeContextSectionId[]>([]);
+
+  const toggleContextSection = (sectionId: RuntimeContextSectionId) => {
+    setCollapsedContextSectionIds((current) => (
+      current.includes(sectionId)
+        ? current.filter((id) => id !== sectionId)
+        : [...current, sectionId]
+    ));
+  };
+
+  const isContextSectionCollapsed = (sectionId: RuntimeContextSectionId) => collapsedContextSectionIds.includes(sectionId);
+
+  return (
+    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-slate-200 bg-[#F8FAFC] text-slate-900">
+      <div className="flex border-b border-slate-200 bg-white">
+        {runtimePanelTabs.map((tab) => (
+          <button
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider transition ${
+              activeTab === tab
+                ? "border-b-2 border-blue-600 text-blue-600"
+                : "text-slate-400 hover:text-slate-600"
+            }`}
+            key={tab}
+            onClick={() => onTabChange(tab)}
+            type="button"
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      <div className="miva-scrollbar-hidden flex-1 space-y-6 overflow-y-auto p-4">
+        {activeTab === "Context" ? (
+          <>
+            <RuntimePanelSection
+              collapsed={isContextSectionCollapsed("assistantProfile")}
+              onToggle={() => toggleContextSection("assistantProfile")}
+              title="Assistant Profile"
+            >
+              <div className="space-y-3">
+                <RuntimePanelText label="Assistant" value={activeAssistantName} />
+                <RuntimePanelText label="Role & Purpose" value={rolePurpose} />
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">Core Model</label>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">{activeModelLabel}</span>
+                    <span className="text-[10px] text-slate-400">{activeProviderMode === "local" ? "Local" : activeProviderLabel}</span>
+                  </div>
+                </div>
+                <RuntimePanelText label="Last Latency" value={chatMetrics ? formatChatLatency(chatMetrics.latencyMs) : "No response yet."} />
+              </div>
+            </RuntimePanelSection>
+
+            <RuntimePanelSection
+              collapsed={isContextSectionCollapsed("systemRules")}
+              onToggle={() => toggleContextSection("systemRules")}
+              title="System Rules"
+            >
+              <div className="space-y-2">
+                {ruleItems.length ? ruleItems.map((rule) => (
+                  <RuntimePanelLine icon="ph-check-circle-fill" iconClassName="text-green-500" key={rule} text={rule} />
+                )) : (
+                  <RuntimePanelEmpty text="No response rules." />
+                )}
+              </div>
+            </RuntimePanelSection>
+
+            <RuntimePanelSection
+              collapsed={isContextSectionCollapsed("recentContext")}
+              onToggle={() => toggleContextSection("recentContext")}
+              title="Recent Context"
+            >
+              <div className="space-y-2">
+                {documentAttachments.length ? documentAttachments.map((attachment) => (
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2" key={attachment.id}>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-400">
+                      <i className="ph ph-file-text text-xl" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[11px] font-semibold text-slate-700">{attachment.name}</p>
+                      <p className="text-[9px] text-slate-400">{attachment.status}</p>
+                    </div>
+                  </div>
+                )) : (
+                  <RuntimePanelEmpty text="No active files." />
+                )}
+              </div>
+            </RuntimePanelSection>
+
+            <RuntimePanelSection
+              collapsed={isContextSectionCollapsed("voiceEngine")}
+              onToggle={() => toggleContextSection("voiceEngine")}
+              title="Voice Engine"
+            >
+              <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Runtime Voice</span>
+                  <span className={`h-2 w-2 rounded-full ${runtimeTtsAvailable && runtimeTtsEnabled ? "bg-green-500" : "bg-slate-300"}`} />
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-blue-100 bg-blue-50">
+                    <i className="ph ph-wave-sine text-xl text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-900">{runtimeTtsAvailable ? "Configured" : "Disabled"}</p>
+                    <p className="text-[10px] text-slate-500">{ttsPlaybackState === "speaking" ? "Speaking" : runtimeTtsEnabled ? "Ready" : "Off"}</p>
+                  </div>
+                </div>
+              </div>
+            </RuntimePanelSection>
+          </>
+        ) : null}
+
+        {activeTab === "Memory" ? (
+          <div className="space-y-6">
+            <RuntimePanelSection title="User-Pinned Memory">
+              <div className="space-y-2">
+                {pinnedMemoryItems.length ? pinnedMemoryItems.map((item) => (
+                  <RuntimePanelLine icon="ph-brain" iconClassName="text-blue-500" key={item} text={item} />
+                )) : (
+                  <RuntimePanelEmpty text="No pinned memory yet." />
+                )}
+              </div>
+            </RuntimePanelSection>
+
+            <RuntimePanelSection title="Session Summary">
+              <div className="space-y-2">
+                {sessionMemoryItems.length ? sessionMemoryItems.slice(0, 6).map((item) => (
+                  <RuntimePanelLine icon="ph-clock-counter-clockwise" iconClassName="text-slate-400" key={item} text={item} />
+                )) : (
+                  <RuntimePanelEmpty text="No compacted session memory." />
+                )}
+              </div>
+            </RuntimePanelSection>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Memory Stats</span>
+              </div>
+              <RuntimePanelStat label="Pinned Items" value={String(pinnedMemoryItems.length)} />
+              <RuntimePanelStat label="Compacted Messages" value={String(runtimeMemorySummary?.compactedMessageCount ?? 0)} />
+              <RuntimePanelStat label="Estimated Tokens" value={String(runtimeMemorySummary?.estimatedTokens ?? 0)} />
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "Tools" ? (
+          <div className="space-y-6">
+            <RuntimePanelSection title="Active Tools">
+              <div className="space-y-2">
+                {activeRuntimeTools.length ? activeRuntimeTools.map((tool) => (
+                  <RuntimeToolStatus
+                    description={tool.description}
+                    icon={tool.icon}
+                    key={tool.name}
+                    name={tool.name}
+                  />
+                )) : (
+                  <RuntimePanelEmpty text="No active tools configured for this assistant." />
+                )}
+              </div>
+            </RuntimePanelSection>
+
+            <RuntimePanelSection title="Mockup Tools">
+              <div className="grid grid-cols-2 gap-2">
+                {mockRuntimeTools.map((tool) => (
+                  <button
+                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
+                    key={tool.name}
+                    type="button"
+                  >
+                    <i className={`ph ${tool.icon}`} />
+                    {tool.name}
+                  </button>
+                ))}
+              </div>
+            </RuntimePanelSection>
+          </div>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function RuntimePanelSection({
+  children,
+  collapsed = false,
+  onToggle,
+  title,
+  trailingIcon,
+}: {
+  children: ReactNode;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  title: string;
+  trailingIcon?: string;
+}) {
+  return (
+    <section>
+      <h4 className="mb-3 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        {title}
+        {onToggle ? (
+          <button
+            aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+            className="grid h-6 w-6 place-items-center rounded text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            onClick={onToggle}
+            type="button"
+          >
+            <i className={`ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} text-sm`} />
+          </button>
+        ) : trailingIcon ? (
+          <i className={`ph ${trailingIcon}`} />
+        ) : null}
+      </h4>
+      {collapsed ? null : children}
+    </section>
+  );
+}
+
+function RuntimePanelText({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <label className="mb-1 block text-[10px] font-semibold text-slate-500">{label}</label>
+      <p className="text-xs leading-relaxed text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+function RuntimePanelLine({ icon, iconClassName, text }: { icon: string; iconClassName: string; text: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white p-2">
+      <i className={`ph ${icon} mt-0.5 ${iconClassName}`} />
+      <span className="text-xs leading-5 text-slate-600">{text}</span>
+    </div>
+  );
+}
+
+function RuntimePanelEmpty({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-200 bg-white/60 p-3 text-xs text-slate-400">
+      {text}
+    </div>
+  );
+}
+
+function RuntimePanelStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mt-1 flex items-center justify-between text-xs text-slate-700">
+      <span>{label}</span>
+      <span className="font-bold">{value}</span>
+    </div>
+  );
+}
+
+function RuntimeToolStatus({
+  description,
+  icon,
+  name,
+}: {
+  description: string;
+  icon: string;
+  name: string;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <i className="ph ph-check-circle-fill text-green-500" />
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold text-slate-700">
+            <i className={`ph ${icon} mr-1 text-slate-400`} />
+            {name}
+          </p>
+          <p className="truncate text-[10px] text-slate-400">{description}</p>
+        </div>
+      </div>
+      <span className="rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-bold uppercase text-green-600">On</span>
+    </div>
+  );
+}
+
+function getWorkspaceDisplayName(workspaceRoot: string | null) {
+  if (!workspaceRoot) {
+    return null;
+  }
+
+  const normalized = workspaceRoot.replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1] || workspaceRoot;
+}
+
+function ClawCodeWorkspaceQuickPicker({
+  activeLocale,
+  busy,
+  currentWorkspaceRoot,
+  onApplyWorkspace,
+  onChooseFolder,
+}: {
+  activeLocale: Locale;
+  busy: boolean;
+  currentWorkspaceRoot: string | null;
+  onApplyWorkspace: (workspaceRoot: string) => Promise<void> | void;
+  onChooseFolder: () => Promise<string | null> | string | null;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const workspaceName = getWorkspaceDisplayName(currentWorkspaceRoot);
+  const chooseTitle = activeLocale === "en" ? "Set code file location" : "코드 파일 저장 위치 지정";
+  const currentLabel = currentWorkspaceRoot
+    ? activeLocale === "en"
+      ? `Current: ${currentWorkspaceRoot}`
+      : `현재 위치: ${currentWorkspaceRoot}`
+    : activeLocale === "en"
+      ? "No code file location selected"
+      : "코드 파일 저장 위치가 아직 없습니다";
+  const displayLabel = feedback ?? (workspaceName
+    ? activeLocale === "en"
+      ? `Files: ${workspaceName}`
+      : `저장: ${workspaceName}`
+    : activeLocale === "en"
+      ? "Pick file location"
+      : "파일 위치 선택");
+
+  return (
+    <div className="mt-3 flex items-center gap-2 text-[11px] leading-none text-[var(--miva-text-soft)]">
+      <button
+        aria-label={chooseTitle}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+          currentWorkspaceRoot
+            ? "border-[var(--miva-border)] bg-[var(--miva-bg)] text-[var(--miva-text-soft)] hover:border-[var(--miva-primary)] hover:text-[var(--miva-primary)]"
+            : "border-[var(--miva-primary)] bg-[var(--miva-primary-surface)] text-[var(--miva-primary)] hover:bg-[var(--miva-bg)]"
+        }`}
+        disabled={busy || saving}
+        onClick={() => {
+          void (async () => {
+            setFeedback(null);
+            setSaving(true);
+            try {
+              const selected = await onChooseFolder();
+              if (!selected) {
+                return;
+              }
+
+              await onApplyWorkspace(selected);
+              setFeedback(activeLocale === "en" ? "Default location saved" : "기본 위치 저장됨");
+            } catch {
+              setFeedback(activeLocale === "en" ? "Location save failed" : "위치 저장 실패");
+            } finally {
+              setSaving(false);
+            }
+          })();
+        }}
+        title={`${chooseTitle}\n${currentLabel}`}
+        type="button"
+      >
+        <span className={`material-symbols-outlined text-[16px] ${saving ? "animate-spin" : ""}`}>
+          {saving ? "progress_activity" : "drive_folder_upload"}
+        </span>
+      </button>
+      <span className="max-w-[220px] truncate" title={currentWorkspaceRoot ?? undefined}>
+        {displayLabel}
+      </span>
+    </div>
+  );
+}
+
 export function RuntimePage({
   activeLocale,
   activeChatMessages,
@@ -114,6 +565,8 @@ export function RuntimePage({
   chooseAndAttachDocuments,
   chooseAndAttachImages: _chooseAndAttachImages,
   chooseClawCodeWorkspace,
+  applyClawCodeWorkspace,
+  clawCodeStatus,
   completeClawCodeWorkspaceFromChat,
   documentAttachments,
   imageAttachments,
@@ -124,6 +577,9 @@ export function RuntimePage({
   chatIntroKey,
   chatMetrics,
   characterSettings,
+  activeAssistantName,
+  promptSettings,
+  runtimeMemorySummary,
   chatScrollRef,
   providerText,
   selectedModelInstalled,
@@ -139,6 +595,8 @@ export function RuntimePage({
   ttsError,
   ttsPlaybackState,
   characterEmotion,
+  characterExpressionTrigger,
+  characterPoseTrigger,
   saveSetupAssistantProfile,
   handleChatScroll,
   scrollChatToLatest,
@@ -161,10 +619,13 @@ const userMessageRefs = useRef<Record<string, HTMLDivElement | null>>({});
 const previousBusyActionRef = useRef(busyAction);
 const previousMessageCountRef = useRef(activeChatMessages.length);
 const [hoveredJumpTooltip, setHoveredJumpTooltip] = useState<{ label: string; top: number } | null>(null);
-const [assistantSelectionAction, setAssistantSelectionAction] = useState<{ text: string; left: number; top: number } | null>(null);
+const [assistantSelectionAction, setAssistantSelectionAction] = useState<{ text: string; originalAnswer: string; left: number; top: number } | null>(null);
 const [promptFixQuote, setPromptFixQuote] = useState<string | null>(null);
+const [promptFixOriginalAnswer, setPromptFixOriginalAnswer] = useState<string | null>(null);
 const [promptFixSaving, setPromptFixSaving] = useState(false);
 const [composerNotice, setComposerNotice] = useState<string | null>(null);
+const [runtimePanelTab, setRuntimePanelTab] = useState<RuntimePanelTab>("Context");
+const [runtimeInspectorCollapsed, setRuntimeInspectorCollapsed] = useState(false);
 const chatGenerating = busyAction === "chat";
 
 const focusChatInput = useCallback(() => {
@@ -204,7 +665,13 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
         : "Idle";
     const usesFloatingCharacterWindow = characterRuntimeEnabled && characterSettings.renderer === "live2d";
     const overlaySyncState = usesFloatingCharacterWindow
-      ? { character: characterSettings, activity: characterActivity, emotion: characterEmotion }
+      ? {
+          character: characterSettings,
+          activity: characterActivity,
+          emotion: characterEmotion,
+          expressionTrigger: characterExpressionTrigger,
+          poseTrigger: characterPoseTrigger,
+        }
       : null;
     const { overlayOpen, openOverlay } = useCharacterOverlaySync(overlaySyncState);
     const canUseCharacterOverlay = isTauriRuntime() && Boolean(overlaySyncState);
@@ -264,10 +731,18 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       : characterActivity === "Thinking"
         ? "psychology"
         : "self_improvement";
-    const greeting =
-      selectedProvider === "ollama"
-        ? t.chatGreeting.replace("{model}", activeModelLabel)
-        : `Hello. MiVA has prepared ${activeProviderLabel} / ${activeModelLabel}. If an API key is configured, you can test responses now.`;
+    const roleSummary = (
+      promptSettings.roleGoal.trim()
+      || promptSettings.simple.assistantPurpose.trim()
+      || "I help you answer questions and turn them into clear next steps."
+    ).replace(/\s+/g, " ");
+    const desiredTasks = promptSettings.simple.desiredTasks.trim();
+    const taskSummary = desiredTasks.startsWith("Write what you want this assistant")
+      ? ""
+      : desiredTasks.replace(/\s+/g, " ");
+    const greeting = taskSummary
+      ? `My role is to ${roleSummary.charAt(0).toLowerCase()}${roleSummary.slice(1)}\n\nI can help with: ${taskSummary}\n\nWhat would you like to work on first?`
+      : `My role is to ${roleSummary.charAt(0).toLowerCase()}${roleSummary.slice(1)}\n\nWhat would you like to work on first?`;
     const sandboxBody = runtimeChat
       ? selectedProvider === "ollama"
         ? t.chatSandboxBody.replace("{model}", activeModelLabel)
@@ -308,7 +783,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       ? runtimeTtsEnabled ? "Turn off runtime TTS" : "Turn on runtime TTS"
       : "Enable TTS in Studio > TTS / Voice";
 
-    const handleAssistantMessageSelection = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const handleAssistantMessageSelection = useCallback((event: MouseEvent<HTMLDivElement>, originalAnswer: string) => {
       if (busyAction === "chat") {
         return;
       }
@@ -331,6 +806,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       const top = Math.max(rect.top - 46, 16);
       setAssistantSelectionAction({
         text: selectedText,
+        originalAnswer,
         left,
         top,
       });
@@ -342,6 +818,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       }
 
       setPromptFixQuote(assistantSelectionAction.text);
+      setPromptFixOriginalAnswer(assistantSelectionAction.originalAnswer);
       setAssistantSelectionAction(null);
       if (fixPromptCommand) {
         setSelectedSlashCommand(fixPromptCommand);
@@ -354,6 +831,7 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
 
     const cancelPromptFix = useCallback(() => {
       setPromptFixQuote(null);
+      setPromptFixOriginalAnswer(null);
       setPromptFixSaving(false);
       if (selectedSlashCommand?.id === "fix") {
         setSelectedSlashCommand(null);
@@ -376,9 +854,9 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
       if (promptFixMode && chatInput.trim()) {
         setPromptFixSaving(true);
       }
-      void sendMessage(promptFixQuote ? { promptFixQuote } : undefined);
+      void sendMessage(promptFixQuote ? { promptFixQuote, promptFixOriginalAnswer: promptFixOriginalAnswer ?? undefined } : undefined);
       focusChatInput();
-    }, [chatInput, focusChatInput, hasPendingAttachments, promptFixMode, promptFixQuote, sendMessage, slashMenu.menuOpen, t]);
+    }, [chatInput, focusChatInput, hasPendingAttachments, promptFixMode, promptFixOriginalAnswer, promptFixQuote, sendMessage, slashMenu.menuOpen, t]);
 
     useEffect(() => {
       const element = chatInputRef.current;
@@ -435,20 +913,23 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
         latestMessage?.role === "assistant"
         && (
           latestMessage.content.startsWith("Saved this as a prompt rule")
+          || latestMessage.content.startsWith("Generated and saved this prompt rule")
           || latestMessage.content.startsWith("Prompt rule update failed")
           || latestMessage.content.startsWith("I could not find the active assistant profile")
         )
       ) {
         setPromptFixSaving(false);
         setPromptFixQuote(null);
+        setPromptFixOriginalAnswer(null);
       }
     }, [activeChatMessages, promptFixSaving]);
 
     const showAssistantRuntimePanel = characterRuntimeEnabled;
-    const chatShellClass = "relative min-h-0 w-full flex-1 overflow-hidden bg-[var(--miva-surface)]";
-    const chatSectionClass = "relative flex h-full min-h-0 flex-col overflow-hidden";
-    const chatMessagesClass = "miva-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain pb-8 pt-0";
-    const assistantCardClass = "pointer-events-none absolute bottom-24 right-3 top-4 z-20 flex w-[340px] flex-col overflow-visible";
+    const chatShellClass = "relative flex min-h-0 w-full flex-1 overflow-hidden bg-white text-slate-900";
+    const chatSectionClass = "relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-white";
+    const chatMessagesClass = "miva-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white px-6 pb-8 pt-0";
+    const inspectorAwareRightClass = runtimeInspectorCollapsed ? "right-4" : "right-[21rem]";
+    const assistantCardClass = `pointer-events-none absolute bottom-24 ${inspectorAwareRightClass} top-4 z-20 flex w-[340px] flex-col overflow-visible`;
     const compactAssistantLauncherVisible = showAssistantRuntimePanel
       && (assistantPanelMinimized || usesFloatingCharacterWindow)
       && !(usesFloatingCharacterWindow && overlayOpen);
@@ -534,8 +1015,19 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             </section>
           )}
 
-          <div className="miva-assistant-message self-start">
-            <p className="whitespace-pre-wrap break-words text-[15px] leading-7">{greeting}</p>
+          <div className="flex max-w-[74ch] items-start gap-3 self-start">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-100 text-xs font-bold text-blue-600">
+              {getRuntimeInitials(activeAssistantName, "AI")}
+            </div>
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-900">{activeAssistantName}</span>
+                <span className="text-[11px] font-medium text-slate-400">{formatRuntimeMessageTime()}</span>
+              </div>
+              <div className="miva-assistant-message">
+                <p className="whitespace-pre-wrap break-words text-[15px] leading-7">{greeting}</p>
+              </div>
+            </div>
           </div>
 
           {activeChatMessages.map((message, index) => {
@@ -545,24 +1037,16 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
             const isAwaitingFirstToken = isStreamingAssistant && !message.content.trim();
             const isStreamingTokens = isStreamingAssistant && Boolean(message.content.trim());
             const generatingLabel = chatBusyLabel || t.generatingResponse;
+            const messageTime = formatRuntimeMessageTime(message.createdAt);
 
-            return (
-              <div
-                className={message.role === "user" ? "miva-user-message self-end px-4 py-3" : "miva-assistant-message self-start"}
-                key={messageKey}
-                ref={message.role === "user"
-                  ? (element) => {
-                    userMessageRefs.current[messageKey] = element;
-                  }
-                  : undefined}
-              >
+            const messageBody = (
                 <div
                   className={`break-words ${
                     message.role === "user"
                       ? "whitespace-pre-wrap text-[15px] leading-7"
                       : "text-[15px] leading-7 text-[var(--miva-text)]"
                   }`}
-                  onMouseUp={message.role === "assistant" ? handleAssistantMessageSelection : undefined}
+                  onMouseUp={message.role === "assistant" ? (event) => handleAssistantMessageSelection(event, message.content) : undefined}
                 >
                   {isAwaitingFirstToken ? (
                     <div aria-live="polite" className="flex items-center gap-3 font-semibold text-[var(--miva-primary)]">
@@ -581,10 +1065,20 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                       ) : (
                         <ChatAssistantMarkdownContent
                           content={message.content}
+                          files={message.files}
                           images={message.images}
                           imageKeyPrefix={messageKey}
                         />
                       )}
+                      {message.role === "assistant" && message.showClawWorkspacePicker && isTauriRuntime() ? (
+                        <ClawCodeWorkspaceQuickPicker
+                          activeLocale={activeLocale}
+                          busy={busyAction !== null}
+                          currentWorkspaceRoot={clawCodeStatus?.workspaceRoot ?? null}
+                          onApplyWorkspace={applyClawCodeWorkspace}
+                          onChooseFolder={chooseClawCodeWorkspace}
+                        />
+                      ) : null}
                       {message.uiAction === "claw-pick-workspace" && message.createdAt && isTauriRuntime() ? (
                         <ClawCodeWorkspaceChatAction
                           activeLocale={activeLocale}
@@ -598,6 +1092,45 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
                       ) : null}
                     </>
                   )}
+                </div>
+            );
+
+            return message.role === "user" ? (
+              <div
+                className="flex w-full justify-end"
+                key={messageKey}
+                ref={(element) => {
+                  userMessageRefs.current[messageKey] = element;
+                }}
+              >
+                <div className="flex w-full min-w-0 items-start justify-end gap-3 pl-10">
+                  <div className="flex min-w-0 flex-1 flex-col items-end">
+                    <div className="mb-1 flex items-center justify-end gap-2">
+                      <span className="text-[11px] font-medium text-slate-400">{messageTime}</span>
+                      <span className="text-xs font-bold text-slate-900">You</span>
+                    </div>
+                    <div className="miva-user-message px-4 py-3">
+                      {messageBody}
+                    </div>
+                  </div>
+                  <div className="mt-5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-500">
+                    U
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex max-w-[74ch] items-start gap-3 self-start" key={messageKey}>
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-100 text-xs font-bold text-blue-600">
+                  {getRuntimeInitials(activeAssistantName, "AI")}
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900">{activeAssistantName}</span>
+                    <span className="text-[11px] font-medium text-slate-400">{messageTime}</span>
+                  </div>
+                  <div className="miva-assistant-message">
+                    {messageBody}
+                  </div>
                 </div>
               </div>
             );
@@ -985,10 +1518,38 @@ const shouldShowChatIntroCard = runtimeChat && showChatIntroCard;
         </div>
         </section>
 
+        {!runtimeInspectorCollapsed && (
+          <RuntimeInspectorPanel
+            activeAssistantName={activeAssistantName}
+            activeModelLabel={activeModelLabel}
+            activeProviderLabel={activeProviderLabel}
+            activeProviderMode={activeProviderMode}
+            activeTab={runtimePanelTab}
+            chatMetrics={chatMetrics}
+            documentAttachments={documentAttachments}
+            onTabChange={setRuntimePanelTab}
+            promptSettings={promptSettings}
+            runtimeMemorySummary={runtimeMemorySummary}
+            runtimeTtsAvailable={runtimeTtsAvailable}
+            runtimeTtsEnabled={runtimeTtsEnabled}
+            ttsPlaybackState={ttsPlaybackState}
+          />
+        )}
+
+        <button
+          aria-label={runtimeInspectorCollapsed ? "Open runtime context panel" : "Close runtime context panel"}
+          className="absolute bottom-4 right-4 z-50 grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-md transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
+          onClick={() => setRuntimeInspectorCollapsed((current) => !current)}
+          title={runtimeInspectorCollapsed ? "Open context panel" : "Close context panel"}
+          type="button"
+        >
+          <i className={`ph ${runtimeInspectorCollapsed ? "ph-caret-left" : "ph-caret-right"} text-lg`} />
+        </button>
+
         {compactAssistantLauncherVisible && (
           <button
             aria-label={compactAssistantLauncherTitle}
-            className={`absolute right-4 top-4 z-40 flex max-w-[210px] items-center gap-2 rounded-[10px] border border-[var(--miva-border)] bg-[var(--miva-floating-surface)] px-3 py-2 text-left shadow-[var(--miva-shadow-sm)] transition ${
+            className={`absolute ${inspectorAwareRightClass} top-4 z-40 flex max-w-[210px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition ${
               compactAssistantLauncherDisabled ? "cursor-not-allowed opacity-60" : "hover:border-[var(--miva-primary)]"
             }`}
             disabled={compactAssistantLauncherDisabled}

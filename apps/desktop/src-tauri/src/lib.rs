@@ -1900,6 +1900,23 @@ fn build_personalization_prompt_lines(profile: Option<&Value>) -> Vec<String> {
     lines
 }
 
+fn prompt_assistant_name(profile: Option<&Value>) -> String {
+    profile
+        .and_then(|value| value.pointer("/prompt/settings/character"))
+        .filter(|character| {
+            character
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .and_then(|character| character.get("displayName"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("MiVA")
+        .to_string()
+}
+
 fn chat_ollama_direct_inner(
     model: String,
     prompt: String,
@@ -1910,12 +1927,12 @@ fn chat_ollama_direct_inner(
         return Err(format!("{model} is not allowed in Phase 1."));
     }
 
+    let assistant_name = prompt_assistant_name(profile.as_ref());
     let mut system_prompt = if locale == "ko" {
-        "You are MiVA, the user's local personal AI assistant. Reply in natural Korean unless the user asks otherwise. Do not mix in unrelated languages. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful."
+        format!("You are {assistant_name}, the user's local personal AI assistant. Reply in natural Korean unless the user asks otherwise. Do not mix in unrelated languages. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful.")
     } else {
-        "You are MiVA, the user's local personal AI assistant. Reply in English. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful."
-    }
-    .to_string();
+        format!("You are {assistant_name}, the user's local personal AI assistant. Reply in English. Keep answers short and practical. Format normal answers as GitHub Flavored Markdown, using headings, lists, blockquotes, and fenced code blocks with language labels when helpful.")
+    };
     let personalization_lines = build_personalization_prompt_lines(profile.as_ref());
     if !personalization_lines.is_empty() {
         system_prompt.push('\n');
@@ -2042,6 +2059,7 @@ fn request_local_helper_json_once(
 ) -> Result<Value, String> {
     let timeout = match path {
         "/voice/install-kokoro" => Duration::from_secs(12 * 60),
+        "/voice/tts" => Duration::from_secs(4 * 60),
         _ => Duration::from_secs(30),
     };
     let client = Client::builder()
@@ -2508,6 +2526,13 @@ async fn cancel_model_pull(model: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn delete_model(model: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || delete_ollama_model_inner(&model))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn chat_once(
     provider: String,
     model: String,
@@ -2869,6 +2894,7 @@ pub fn run() {
             pull_model,
             pause_model_pull,
             cancel_model_pull,
+            delete_model,
             chat_once,
             read_image_attachment,
             analyze_document,

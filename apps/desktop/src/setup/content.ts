@@ -57,6 +57,7 @@ export const settingsSections: Array<{ id: SettingsSection; label: string; detai
 
 export const studioSections: Array<{ id: StudioSection; label: string; detail: string; icon: string }> = [
   { id: "myAssistants", label: "My Assistants", detail: "Saved assistants", icon: "supervisor_account" },
+  { id: "assistantStore", label: "Assistant Store", detail: "Shared assistants", icon: "storefront" },
   { id: "overview", label: "Overview", detail: "Assistant build status", icon: "dashboard" },
   { id: "models", label: "Models", detail: "Browse and download", icon: "deployed_code_update" },
   { id: "prompts", label: "Prompts", detail: "Persona and instructions", icon: "edit_note" },

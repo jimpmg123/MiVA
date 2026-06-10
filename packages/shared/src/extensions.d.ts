@@ -50,7 +50,7 @@ export type SharedCloudProviderManifest = SharedProviderManifest & {
 };
 
 export type SharedToolManifest = {
-  id: "googleWorkspace" | "daisoCli";
+  id: "googleWorkspace";
   title: string;
   label: string;
   icon: string;

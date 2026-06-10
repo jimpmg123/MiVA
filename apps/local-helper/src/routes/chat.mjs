@@ -214,6 +214,7 @@ export async function handleChat(req, res, origin) {
           done: true,
           answer,
           uiAction: clawResult.uiAction || null,
+          files: Array.isArray(clawResult.files) ? clawResult.files : [],
           provider: clawResult.meta?.provider || "openai",
           model: clawResult.meta?.model || "gpt-4o-mini",
         })}\n`);
@@ -227,6 +228,7 @@ export async function handleChat(req, res, origin) {
         model: clawResult.meta?.model || "gpt-4o-mini",
         answer,
         uiAction: clawResult.uiAction || null,
+        files: Array.isArray(clawResult.files) ? clawResult.files : [],
       }, origin);
       return;
     }

@@ -362,6 +362,10 @@ export class WorkspaceService {
       if (action === "docs.append") {
         return await this.appendGoogleDoc(accessToken, params);
       }
+
+      if (action === "docs.create") {
+        return await this.createGoogleDoc(accessToken, params);
+      }
     } catch (error) {
       if (error instanceof GoogleWorkspaceAuthError) {
         await this.markGoogleNeedsAuth(user.id);
@@ -899,6 +903,57 @@ export class WorkspaceService {
       document: {
         id: documentId,
         title: document.title || "(untitled)",
+      },
+      replies: result.replies || [],
+    };
+  }
+
+  private async createGoogleDoc(accessToken: string, params: Record<string, unknown>) {
+    const title = asString(params.title) || asString(params.documentTitle) || "MiVA Document";
+    const text = asString(params.text) || asString(params.content) || asString(params.body);
+    if (!text) {
+      throwHttp(400, "DOCS_CREATE_REQUIRES_TEXT");
+    }
+
+    const document = await this.googleFetchWithBody(
+      "https://docs.googleapis.com/v1/documents",
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({ title }),
+      },
+    );
+    const documentId = asString(document.documentId) || asString(document.id);
+    if (!documentId) {
+      throwHttp(502, "DOCS_CREATE_RETURNED_NO_ID");
+    }
+
+    const result = await this.googleFetchWithBody(
+      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}:batchUpdate`,
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text,
+              },
+            },
+          ],
+        }),
+      },
+    );
+
+    return {
+      ok: true,
+      status: "DONE",
+      action: "docs.create",
+      document: {
+        id: documentId,
+        title: document.title || title,
+        url: `https://docs.google.com/document/d/${documentId}/edit`,
       },
       replies: result.replies || [],
     };

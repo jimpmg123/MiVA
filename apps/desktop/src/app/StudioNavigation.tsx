@@ -1,6 +1,5 @@
 import type { AuthSession, StudioSection } from "../types";
 import { BrandLogo } from "./BrandLogo";
-import { SidebarToggleIcon } from "./SidebarToggleIcon";
 import { UserNavButton } from "./UserNavButton";
 
 type StudioSectionItem = { id: StudioSection; label: string; detail: string; icon: string };
@@ -21,6 +20,23 @@ type StudioNavigationProps = {
   promptSurveyAlertVisible: boolean;
 };
 
+const studioNavIconBySection: Partial<Record<StudioSection, string>> = {
+  myAssistants: "ph-users",
+  assistantStore: "ph-storefront",
+  overview: "ph-house",
+  models: "ph-cube",
+  prompts: "ph-note-pencil",
+  character: "ph-smiley",
+  tts: "ph-microphone",
+  googleWorkspace: "ph-squares-four",
+  code: "ph-code",
+  skills: "ph-book-open",
+};
+
+function getStudioNavIcon(section: StudioSectionItem) {
+  return studioNavIconBySection[section.id] ?? "ph-circle";
+}
+
 export function StudioNavigation({
   authSession,
   editorExpanded,
@@ -37,108 +53,85 @@ export function StudioNavigation({
   promptSurveyAlertVisible,
 }: StudioNavigationProps) {
   const librarySection = studioSections.find((section) => section.id === "myAssistants");
-  const overviewSection = studioSections.find((section) => section.id === "overview");
-  const editorSections = studioSections.filter((section) => section.id !== "myAssistants" && section.id !== "overview");
-  const showPromptSurveyAlert = promptSurveyAlertVisible && editorExpanded;
+  const storeSection = studioSections.find((section) => section.id === "assistantStore");
+  const editorSections = studioSections.filter((section) => section.id !== "myAssistants" && section.id !== "assistantStore");
+  const showEditorSections = editorExpanded && editorSections.length > 0;
+  const showPromptSurveyAlert = promptSurveyAlertVisible && showEditorSections;
 
   return (
-    <aside className="miva-sidebar relative flex h-screen shrink-0 flex-col overflow-visible">
-      <div className="miva-sidebar-header">
-        <BrandLogo className="h-7 w-7 rounded-lg" />
-        <div className="min-w-0 flex-1">
-          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
-          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">Assistant Studio</p>
+    <aside className="miva-studio-design relative flex h-screen w-full shrink-0 flex-col overflow-visible border-r border-slate-200 bg-white text-slate-900">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo className="h-7 w-7 rounded-lg" />
+          <span className="min-w-0 truncate text-lg font-bold tracking-tight">
+            MiVA <span className="font-normal text-slate-400">Studio</span>
+          </span>
         </div>
         <button
           aria-label="Close navigation"
-          className="miva-sidebar-toggle"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           onClick={onToggleSidebar}
           title="Close navigation"
           type="button"
         >
-          <SidebarToggleIcon className="h-[16px] w-[16px]" />
+          <i className="ph ph-sidebar-simple text-lg" />
         </button>
       </div>
 
-      <nav className="miva-sidebar-nav">
-        <p className="miva-nav-section-label px-2 pb-1.5">Studio</p>
-        <div className="grid gap-0.5">
-          {librarySection && (
+      <nav className="custom-scrollbar flex-1 space-y-1 overflow-y-auto p-3">
+        <div className="space-y-1">
+          {[librarySection, storeSection].filter((section): section is StudioSectionItem => Boolean(section)).map((section) => (
             <button
-              className={`miva-nav-item relative flex w-full items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition ${
-                studioSection === "myAssistants"
-                  ? "miva-nav-item-active"
-                  : ""
+              key={section.id}
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] font-medium leading-5 transition ${
+                studioSection === section.id
+                  ? "bg-blue-50 text-blue-600"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-800"
               }`}
-              onClick={() => onStudioSectionChange("myAssistants")}
+              onClick={() => onStudioSectionChange(section.id)}
               type="button"
             >
-              <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
-                studioSection === "myAssistants" ? "miva-nav-icon-active" : "miva-nav-icon"
-              }`}>
-                <span className="material-symbols-outlined text-[16px]">{librarySection.icon}</span>
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[13px]">{librarySection.label}</span>
-                <span className="block truncate text-[10px] font-medium leading-4 opacity-70">{librarySection.detail}</span>
-              </span>
+              <i className={`ph ${getStudioNavIcon(section)} text-lg`} />
+              <span className="min-w-0 truncate">{section.label}</span>
             </button>
-          )}
+          ))}
+        </div>
 
+        {showEditorSections && (
           <div
-            className={`grid transition-all duration-300 ease-out ${
-              editorExpanded ? "mt-2 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"
-            }`}
+            className="pt-4"
           >
-            <div className="min-h-0 overflow-hidden">
-              <div className="grid gap-0.5 pt-0.5">
-                {[...(overviewSection ? [overviewSection] : []), ...editorSections].map((section, index) => {
-                  const active = studioSection === section.id;
-                  const childOfOverview = section.id !== "overview";
+            <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Assistant setup</div>
+            <div className="space-y-1">
+              {editorSections.map((section) => {
+                const active = studioSection === section.id;
 
-                  return (
-                    <div className="grid gap-1" key={section.id}>
-                      <button
-                        className={`miva-nav-item relative flex items-center rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left font-semibold transition-all duration-300 ${
-                          active ? "miva-nav-item-active" : ""
-                        } ${editorExpanded ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"} ${
-                          childOfOverview ? "mr-1 w-[calc(100%-0.25rem)] gap-1.5 pl-3.5 text-[12px]" : "w-full gap-2"
-                        }`}
-                        onClick={() => onStudioSectionChange(section.id)}
-                        style={{ transitionDelay: editorExpanded ? `${index * 35}ms` : "0ms" }}
-                        type="button"
-                      >
-                        <span className={`grid shrink-0 place-items-center rounded-full transition-colors ${
-                          active ? "miva-nav-icon-active" : "miva-nav-icon"
-                        } ${childOfOverview ? "h-6 w-6" : "h-7 w-7"}`}>
-                          <span className={`material-symbols-outlined ${
-                            section.id === "googleWorkspace"
-                              ? "text-[12px]"
-                              : childOfOverview
-                                ? "text-[14px]"
-                                : "text-[16px]"
-                          }`}>{section.icon}</span>
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
-                          <span className="block truncate">{section.label}</span>
-                        </span>
-                        {promptSurveyAlertVisible && section.id === "prompts" ? (
-                          <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--miva-danger)]">error</span>
-                        ) : null}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                return (
+                  <button
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] font-medium leading-5 transition ${
+                      active ? "bg-blue-50 text-blue-600" : "text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+                    }`}
+                    key={section.id}
+                    onClick={() => onStudioSectionChange(section.id)}
+                    type="button"
+                  >
+                    <i className={`ph ${getStudioNavIcon(section)} text-lg`} />
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    {promptSurveyAlertVisible && section.id === "prompts" ? (
+                      <i className="ph ph-warning-circle shrink-0 text-base text-[var(--miva-danger)]" />
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
           </div>
-        </div>
+        )}
       </nav>
 
       {showPromptSurveyAlert && (
         <div className="pointer-events-none absolute left-[calc(100%+12px)] top-[164px] z-[120] w-[280px] rounded-lg border border-[color:rgba(186,26,26,0.38)] bg-[var(--miva-danger-soft)] px-4 py-3 text-[12px] font-semibold leading-5 text-[var(--miva-danger-hover)] shadow-[var(--miva-shadow-md)] ring-1 ring-[color:rgba(186,26,26,0.12)]">
           <div className="flex items-start gap-2">
-            <span className="material-symbols-outlined mt-0.5 shrink-0 text-[17px] text-[var(--miva-danger)]">error</span>
+            <i className="ph ph-warning-circle mt-0.5 shrink-0 text-[17px] text-[var(--miva-danger)]" />
             <span>Complete Prompts before saving this assistant.</span>
           </div>
         </div>

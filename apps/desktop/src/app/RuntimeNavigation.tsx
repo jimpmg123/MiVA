@@ -1,27 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AuthSession } from "../types";
 import { BrandLogo } from "./BrandLogo";
-import { SidebarToggleIcon } from "./SidebarToggleIcon";
 import { UserNavButton } from "./UserNavButton";
 
 type RuntimeNavigationProps = {
   activeAssistantId: string;
-  authSession: AuthSession | null;
   assistantConversationGroups: RuntimeAssistantConversationGroup[];
   activeConversationId: string | null;
-  t: Record<string, string>;
+  authSession: AuthSession | null;
   onClearCurrentChat: () => void;
   onConversationSelect: (conversation: RuntimeConversationNavItem) => void;
-  onEnterPersonalization: () => void;
-  onEnterSettings: () => void;
   onOpenChatSearch: () => void;
-  onOpenLibrary: () => void;
   onNewChatForAssistant: (assistantId: string) => void;
+  onToggleSidebar: () => void;
+  onEnterSettings: () => void;
+  onEnterPersonalization: () => void;
   onOpenAuth: () => void;
   onOpenBilling: () => void;
   onOpenWebConsole: () => void;
   onSignOut: () => void;
-  onToggleSidebar: () => void;
 };
 
 export type RuntimeConversationNavItem = {
@@ -46,21 +43,24 @@ export function RuntimeNavigation({
   activeConversationId,
   assistantConversationGroups,
   authSession,
-  t,
   onClearCurrentChat,
   onConversationSelect,
-  onEnterPersonalization,
-  onEnterSettings,
   onOpenChatSearch,
-  onOpenLibrary,
   onNewChatForAssistant,
+  onToggleSidebar,
+  onEnterSettings,
+  onEnterPersonalization,
   onOpenAuth,
   onOpenBilling,
   onOpenWebConsole,
   onSignOut,
-  onToggleSidebar,
 }: RuntimeNavigationProps) {
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<string[]>([activeAssistantId]);
+  const activeAssistantGroup = useMemo(() => (
+    assistantConversationGroups.find((group) => group.assistantId === activeAssistantId)
+      ?? { assistantId: activeAssistantId, assistantName: "Assistant", conversations: [] }
+  ), [activeAssistantId, assistantConversationGroups]);
+  const otherAssistantGroups = assistantConversationGroups.filter((group) => group.assistantId !== activeAssistantId);
 
   useEffect(() => {
     setExpandedAssistantIds((current) => (
@@ -77,156 +77,217 @@ export function RuntimeNavigation({
   }
 
   return (
-    <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
-      <div className="miva-sidebar-header">
-        <BrandLogo className="h-7 w-7 rounded-lg" />
-        <div className="min-w-0 flex-1">
-          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
-          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.assistantWorkspace}</p>
+    <aside className="miva-sidebar flex h-screen shrink-0 flex-col bg-[#F8FAFC] text-slate-900">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandLogo className="h-7 w-7 rounded" />
+          <span className="min-w-0 truncate text-lg font-bold tracking-tight">
+            MiVA <span className="font-normal text-slate-400">Runtime</span>
+          </span>
         </div>
         <button
           aria-label="Close navigation"
-          className="miva-sidebar-toggle"
+          className="grid h-7 w-7 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           onClick={onToggleSidebar}
           title="Close navigation"
           type="button"
         >
-          <SidebarToggleIcon className="h-[16px] w-[16px]" />
+          <i className="ph ph-sidebar-simple text-lg" />
         </button>
       </div>
 
-      <div className="grid gap-0.5 border-b border-[var(--miva-border)]/80 px-2.5 py-2">
-        <RuntimeNavAction icon="edit_square" label="New Chat" onClick={onClearCurrentChat} />
-        <RuntimeNavAction icon="search" label="Search Chats" onClick={onOpenChatSearch} />
-        <RuntimeNavAction icon="view_carousel" label="Library" onClick={onOpenLibrary} />
+      <div className="border-b border-slate-200 bg-white p-3">
+        <button
+          className="relative flex h-9 w-full items-center rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-4 text-left text-sm text-slate-400 transition hover:border-blue-200 hover:bg-white hover:text-slate-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+          onClick={onOpenChatSearch}
+          type="button"
+        >
+          <i className="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" />
+          <span className="truncate">Search assistants or chats...</span>
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <nav className="miva-scrollbar-hidden flex-1 space-y-4 overflow-y-auto p-2">
         <section>
-          <h2 className="miva-nav-section-label miva-runtime-nav-section-title px-2">Conversations</h2>
-          <div className="mt-2 grid gap-1">
-            {assistantConversationGroups.map((group) => {
-              const expanded = expandedAssistantIds.includes(group.assistantId);
-              const isActiveAssistant = group.assistantId === activeAssistantId;
+          <div className="flex items-center justify-between px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span>Active Assistant</span>
+            <i className="ph ph-caret-down" />
+          </div>
+          <AssistantHeader
+            active
+            assistantName={activeAssistantGroup.assistantName}
+            modelLabel={activeAssistantGroup.conversations[0]?.modelLabel}
+          />
+          <NewChatRow inset onClick={onClearCurrentChat} />
+          <ConversationList
+            activeConversationId={activeConversationId}
+            conversations={activeAssistantGroup.conversations}
+            inset
+            onConversationSelect={onConversationSelect}
+          />
+        </section>
 
-              return (
-                <div key={group.assistantId}>
-                  <div className={`flex items-center justify-between gap-1.5 rounded-[var(--miva-radius-sm)] px-2 py-1.5 ${isActiveAssistant ? "text-[var(--miva-primary)]" : ""}`}>
-                    <div className="min-w-0">
-                      <p className="truncate text-[13px] font-semibold">{group.assistantName}</p>
-                    </div>
+        {otherAssistantGroups.length ? (
+          <section>
+            <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Assistants
+            </div>
+            <div className="space-y-2">
+              {otherAssistantGroups.map((group) => {
+                const expanded = expandedAssistantIds.includes(group.assistantId);
+
+                return (
+                  <div key={group.assistantId}>
                     <button
-                      aria-label={expanded ? `Collapse ${group.assistantName}` : `Expand ${group.assistantName}`}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[var(--miva-text-muted)] transition hover:bg-[var(--miva-surface-muted)] hover:text-[var(--miva-text)]"
+                      className="group flex w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left transition hover:bg-white hover:shadow-sm"
                       onClick={() => toggleAssistant(group.assistantId)}
                       type="button"
                     >
-                      <span className={`material-symbols-outlined text-[17px] transition-transform duration-200 ${expanded ? "rotate-90" : "rotate-0"}`}>
-                        chevron_right
-                      </span>
+                      <AssistantAvatar assistantName={group.assistantName} small />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{group.assistantName}</span>
+                      <i className={`ph ${expanded ? "ph-caret-down" : "ph-caret-right"} text-slate-400 transition-colors group-hover:text-slate-600`} />
                     </button>
-                  </div>
-
-                  <div
-                    className={`grid overflow-hidden transition-[grid-template-rows,opacity,transform,margin] duration-300 ease-out ${
-                      expanded ? "mt-0 grid-rows-[1fr] opacity-100 translate-y-0" : "mt-0 grid-rows-[0fr] opacity-0 -translate-y-1"
-                    }`}
-                  >
-                    <div className="min-h-0 overflow-hidden">
-                      <div className="grid gap-0 pl-2">
-                        {group.conversations.length ? (
-                          group.conversations.map((conversation) => (
-                            <ConversationButton
-                              active={conversation.id === activeConversationId}
-                              compact
-                              conversation={conversation}
-                              key={conversation.id}
-                              onSelect={onConversationSelect}
-                            />
-                          ))
-                        ) : (
-                          <div className="flex items-center justify-between gap-1.5 rounded-[var(--miva-radius-sm)] px-3 py-1">
-                            <p className="min-w-0 truncate text-[13px] text-[var(--miva-text-muted)]">No conversations yet.</p>
-                            <button
-                              aria-label={`Start new chat with ${group.assistantName}`}
-                              className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-transparent text-[var(--miva-primary)] transition hover:bg-white/70 hover:shadow-[inset_0_0_0_1px_rgba(59,130,246,0.22),0_4px_14px_rgba(31,57,88,0.08)] focus-visible:bg-white/70 focus-visible:shadow-[inset_0_0_0_1px_rgba(59,130,246,0.28),0_4px_14px_rgba(31,57,88,0.08)]"
-                              onClick={() => onNewChatForAssistant(group.assistantId)}
-                              type="button"
-                            >
-                              <span className="text-[22px] font-semibold leading-none">+</span>
-                            </button>
-                          </div>
-                        )}
+                    {expanded ? (
+                      <div className="ml-11 mt-1 border-l border-slate-200 pl-2">
+                        <NewChatRow onClick={() => onNewChatForAssistant(group.assistantId)} />
+                        <ConversationList
+                          activeConversationId={activeConversationId}
+                          conversations={group.conversations}
+                          onConversationSelect={onConversationSelect}
+                        />
                       </div>
-                    </div>
+                    ) : null}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+      </nav>
 
-        <section className="mt-6 border-t border-[var(--miva-border)]/80 pt-4">
-          <h2 className="miva-nav-section-label miva-runtime-nav-section-title px-2">Workspace</h2>
-          <div className="mt-2 grid gap-0.5">
-            <button className="miva-nav-item flex min-h-9 items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left transition" type="button">
-              <span className="material-symbols-outlined text-[15px] text-[var(--miva-text-muted)]">bookmark</span>
-              {t.savedSnippets}
-            </button>
-            <button className="miva-nav-item flex min-h-9 items-center gap-2 rounded-[var(--miva-radius-sm)] px-2 py-1.5 text-left transition" type="button">
-              <span className="material-symbols-outlined text-[15px] text-[var(--miva-text-muted)]">monitoring</span>
-              {t.systemLogs}
-            </button>
-          </div>
-        </section>
-      </div>
-
-      <UserNavButton authSession={authSession} onEnterPersonalization={onEnterPersonalization} onEnterSettings={onEnterSettings} onOpenAuth={onOpenAuth} onOpenBilling={onOpenBilling} onOpenWebConsole={onOpenWebConsole} onSignOut={onSignOut} />
+      <UserNavButton
+        authSession={authSession}
+        onEnterPersonalization={onEnterPersonalization}
+        onEnterSettings={onEnterSettings}
+        onOpenAuth={onOpenAuth}
+        onOpenBilling={onOpenBilling}
+        onOpenWebConsole={onOpenWebConsole}
+        onSignOut={onSignOut}
+      />
     </aside>
   );
 }
 
-function RuntimeNavAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
+function AssistantHeader({
+  active,
+  assistantName,
+  modelLabel,
+}: {
+  active?: boolean;
+  assistantName: string;
+  modelLabel?: string;
+}) {
   return (
-    <button
-      className="flex min-h-8 w-full items-center gap-2 rounded-[10px] px-2 py-1.5 text-left text-[13px] font-medium leading-4 text-[var(--miva-text)] transition hover:bg-white/64"
-      onClick={onClick}
-      type="button"
-    >
-      <span className="material-symbols-outlined text-[17px] text-[var(--miva-primary)]">{icon}</span>
-      <span className="min-w-0 truncate">{label}</span>
-    </button>
+    <div className={`group flex items-center gap-3 rounded-lg border px-3 py-2 shadow-sm ${active ? "border-blue-100 bg-white" : "border-slate-200 bg-white"}`}>
+      <AssistantAvatar assistantName={assistantName} />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="truncate text-sm font-semibold text-slate-900">{assistantName}</p>
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
+        </div>
+        <p className="truncate text-[10px] text-slate-500">{modelLabel || "Ready"}</p>
+      </div>
+    </div>
+  );
+}
+
+function NewChatRow({ inset = false, onClick }: { inset?: boolean; onClick: () => void }) {
+  return (
+    <div className={`${inset ? "ml-11 border-l border-slate-200 pl-2" : ""} mt-1`}>
+      <button
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
+        onClick={onClick}
+        type="button"
+      >
+        <i className="ph ph-plus-circle text-sm" />
+        <span className="truncate">New Chat</span>
+      </button>
+    </div>
+  );
+}
+
+function ConversationList({
+  activeConversationId,
+  conversations,
+  inset = false,
+  onConversationSelect,
+}: {
+  activeConversationId: string | null;
+  conversations: RuntimeConversationNavItem[];
+  inset?: boolean;
+  onConversationSelect: (conversation: RuntimeConversationNavItem) => void;
+}) {
+  if (!conversations.length) {
+    return null;
+  }
+
+  return (
+    <div className={`${inset ? "ml-11 border-l border-slate-200 pl-2" : ""} mt-1 space-y-0.5`}>
+      {conversations.map((conversation) => (
+        <ConversationButton
+          active={conversation.id === activeConversationId}
+          conversation={conversation}
+          key={conversation.id}
+          onSelect={onConversationSelect}
+        />
+      ))}
+    </div>
   );
 }
 
 function ConversationButton({
   active,
-  compact = false,
   conversation,
   onSelect,
 }: {
   active: boolean;
-  compact?: boolean;
   conversation: RuntimeConversationNavItem;
   onSelect: (conversation: RuntimeConversationNavItem) => void;
 }) {
   return (
     <button
-      className={`flex min-w-0 items-center gap-2 rounded-[var(--miva-radius-sm)] px-2.5 text-left transition ${
-        compact ? "py-2" : "py-3"
-      } miva-nav-item ${active ? "miva-nav-item-active font-bold" : ""}`}
+      className={`flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] transition ${
+        active
+          ? "bg-blue-50 font-semibold text-blue-600"
+          : "text-slate-600 hover:bg-white hover:shadow-sm"
+      }`}
       onClick={() => onSelect(conversation)}
       type="button"
     >
-      <span className="material-symbols-outlined shrink-0 text-[15px] text-[var(--miva-text-muted)]">chat_bubble</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">{conversation.title}</span>
-        {!compact && (
-          <span className="block truncate text-[13px] font-medium text-[var(--miva-text-muted)]">
-            {conversation.assistantName} - {conversation.updatedAtLabel}
-          </span>
-        )}
-      </span>
+      <i className="ph ph-chat-text shrink-0 text-xs" />
+      <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+      <span className={`shrink-0 text-[9px] ${active ? "text-blue-400" : "text-slate-400"}`}>{conversation.updatedAtLabel}</span>
     </button>
   );
+}
+
+function AssistantAvatar({ assistantName, small = false }: { assistantName: string; small?: boolean }) {
+  const initials = getAssistantInitials(assistantName);
+
+  return (
+    <div className={`${small ? "h-7 w-7 text-[10px]" : "h-8 w-8 text-xs"} flex shrink-0 items-center justify-center rounded-md bg-blue-100 font-bold text-blue-600`}>
+      {initials}
+    </div>
+  );
+}
+
+function getAssistantInitials(name: string) {
+  const words = name
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const value = words.length >= 2
+    ? `${words[0][0] ?? ""}${words[1][0] ?? ""}`
+    : (words[0] ?? "AI").slice(0, 2);
+  return value.toUpperCase();
 }

@@ -14,7 +14,9 @@ type AppShellProps = {
 export function AppShell({ appMode, authView, content, downloadModal, navigation, sidebarOpen, topBar }: AppShellProps) {
   const contentClassName = appMode === "runtime"
     ? "miva-scrollbar-hidden flex min-h-0 flex-1 overflow-hidden"
-    : "min-h-0 flex-1 overflow-y-auto px-8 py-8";
+    : appMode === "studio"
+      ? "min-h-0 flex-1 overflow-hidden pl-8 pr-2 py-8"
+    : "min-h-0 flex-1 overflow-auto px-8 py-8";
 
   return (
     <main className="miva-app-shell flex h-screen min-w-[1000px] overflow-hidden">

@@ -5,6 +5,7 @@ import { AppShell } from "./app/AppShell";
 import { useAppBoot } from "./app/useAppBoot";
 import { RuntimeNavigation, SetupNavigation, StudioNavigation, HistoryNavigation } from "./app/AppNavigation";
 import { AppTopBar } from "./app/AppTopBar";
+import { StudioTopBar, type StudioTopBarChip } from "./app/StudioTopBar";
 import { isTauriRuntime } from "./app/tauri";
 import { useAppNavigation } from "./app/useAppNavigation";
 import { SetupFlow } from "./setup/SetupFlow";
@@ -38,7 +39,6 @@ import { useUiTheme } from "./features/theme/useUiTheme";
 import { loadPersonalizationSettings, savePersonalizationSettings } from "./features/profile/storage";
 import { copy, providerUiCopy, settingsSections, steps, studioSections, surveyQuestions } from "./setup/content";
 import type {
-  AppMode,
   PersonalizationSettings,
   ProfileDetailsDraft,
   PromptEditorMode,
@@ -137,6 +137,7 @@ function App() {
     pauseModelDownload,
     resumeModelDownload,
     cancelModelDownload,
+    deleteModel,
     refreshStatus,
     refreshHardware,
     refreshRuntimeRequirements,
@@ -275,7 +276,6 @@ function App() {
     hasUnsavedStudioDraftChanges,
     discardUnsavedStudioChanges,
     startNewAssistantDraft,
-    saveStudioDraft,
   } = useAssistantProfiles({
     appMode,
     activeStep,
@@ -356,15 +356,6 @@ function App() {
     startNewAssistantDraft();
   }, [startNewAssistantDraft]);
 
-  const saveStudioDraftWithPromptGuard = useCallback(() => {
-    if (isNewAssistantDraft && !promptSurveyComplete) {
-      showPromptSurveyRequired();
-      return;
-    }
-
-    saveStudioDraft();
-  }, [isNewAssistantDraft, promptSurveyComplete, saveStudioDraft, showPromptSurveyRequired]);
-
   const runtimeReady = !tauriRuntime || status !== null;
   const {
     bootProgress,
@@ -401,6 +392,10 @@ function App() {
     onLog: log,
   });
   const activeVoiceSettings = activeLocalProfile?.prompt.settings.voice ?? promptSettingsDraft.voice;
+  const activePromptSettings = useMemo(
+    () => activeLocalProfile ? normalizePromptSettings(activeLocalProfile.prompt?.settings) : promptSettingsDraft,
+    [activeLocalProfile, promptSettingsDraft],
+  );
   const activeTtsSettings = activeVoiceSettings.tts;
   const runtimeTtsAvailable =
     activeVoiceSettings.enabled &&
@@ -449,6 +444,8 @@ function App() {
     setSelectedSlashCommand,
     showJumpToLatest,
     characterEmotion,
+    characterExpressionTrigger,
+    characterPoseTrigger,
     stopRuntimeTts,
     stopChat,
     startRuntimeChatForAssistant,
@@ -502,6 +499,20 @@ function App() {
     onLibraryItemsAdd: addLibraryItems,
     onLog: log,
   });
+  const runtimeMemorySummary = runtimeChatStore.summaries[promptProfileId] ?? null;
+  const runtimeMemoryItemCount = useMemo(() => {
+    if (!runtimeMemorySummary) {
+      return 0;
+    }
+
+    const memoryLines = [runtimeMemorySummary.pinnedMemory, runtimeMemorySummary.sessionSummary]
+      .join("\n")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean);
+
+    return memoryLines.length || (runtimeMemorySummary.content.trim() ? 1 : 0);
+  }, [runtimeMemorySummary]);
   const {
     activeIndex,
     goToNextStep,
@@ -621,7 +632,7 @@ function App() {
   const renderStudioNavigation = () => (
     <StudioNavigation
       authSession={authSession}
-      editorExpanded={studioSection !== "myAssistants"}
+      editorExpanded={studioSection !== "myAssistants" && studioSection !== "assistantStore"}
       onEnterSettings={enterGeneralSettingsFromProfileMenu}
       onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
       onOpenAuth={openAuth}
@@ -633,7 +644,7 @@ function App() {
           return;
         }
 
-        if (section === "myAssistants") {
+        if (section === "myAssistants" || section === "assistantStore") {
           runAfterUnsavedCheck(() => setStudioSection(section));
           return;
         }
@@ -651,11 +662,6 @@ function App() {
     setChatSearchOpen(true);
   });
 
-  const openAssistantLibrary = () => runAfterUnsavedCheck(() => {
-    setAppMode("library");
-    void updateLastAppMode("library");
-  });
-
   const renderRuntimeNavigation = () => (
     <RuntimeNavigation
       activeAssistantId={promptProfileId}
@@ -664,17 +670,15 @@ function App() {
       authSession={authSession}
       onClearCurrentChat={clearCurrentChat}
       onConversationSelect={selectRuntimeConversation}
+      onOpenChatSearch={openChatSearch}
+      onNewChatForAssistant={startRuntimeChatForAssistant}
+      onToggleSidebar={() => setSidebarOpen(false)}
       onEnterSettings={enterGeneralSettingsFromProfileMenu}
       onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
-      onOpenChatSearch={openChatSearch}
-      onOpenLibrary={openAssistantLibrary}
-      onNewChatForAssistant={startRuntimeChatForAssistant}
       onOpenAuth={openAuth}
       onOpenBilling={() => void openWebConsole("billing")}
       onOpenWebConsole={() => void openWebConsole()}
       onSignOut={clearAuthSession}
-      onToggleSidebar={() => setSidebarOpen(false)}
-      t={t}
     />
   );
 
@@ -685,10 +689,15 @@ function App() {
       onEnterPersonalization={enterPersonalizationSettingsFromProfileMenu}
       onOpenAuth={openAuth}
       onOpenBilling={() => void openWebConsole("billing")}
+      onOpenRuntime={() => {
+        runAfterUnsavedCheck(() => {
+          setAppMode("runtime");
+          void updateLastAppMode("runtime");
+        });
+      }}
       onOpenWebConsole={() => void openWebConsole()}
       onSignOut={clearAuthSession}
       onToggleSidebar={() => setSidebarOpen(false)}
-      t={t}
     />
   );
 
@@ -705,41 +714,140 @@ function App() {
     });
   };
 
-  const changeAppMode = (mode: AppMode) => {
-    if (mode === appMode) {
-      return;
-    }
-
-    runAfterUnsavedCheck(() => {
-      setAppMode(mode);
-      if (mode === "studio" || mode === "runtime" || mode === "history" || mode === "library") {
-        void updateLastAppMode(mode);
-      }
-    });
-  };
-
   const enterGeneralSettingsFromProfileMenu = () => runAfterUnsavedCheck(() => enterSettings("general"));
   const enterPersonalizationSettingsFromProfileMenu = () => runAfterUnsavedCheck(() => enterSettings("personalization"));
 
-  const renderTopBar = () => (
-    <AppTopBar
-      activeModelLabel={activeModelLabel}
-      activeProviderIcon={activeProviderMeta.icon}
-      activeProviderLabel={activeProviderLabel}
-      activeProviderMode={activeProviderMode}
-      appMode={appMode}
-      centerHidden={appMode === "studio" || appMode === "history" || appMode === "library" || appMode === "setup"}
-      onModeChange={changeAppMode}
-      onStudioSave={saveStudioDraftWithPromptGuard}
-      onToggleSidebar={() => setSidebarOpen(true)}
-      providerText={providerText}
-      settingsOpen={appMode === "setup" && activeStep === "settings"}
-      sidebarOpen={sidebarOpen}
-      studioSaveLabel="Save changes"
-      studioSaveVisible={false}
-      t={t}
-    />
-  );
+  const renderTopBar = () => {
+    const activeAssistantName = activeLocalProfile?.name ?? profileDetailsDraft.name;
+    const activeAssistantSubtitle =
+      activeLocalProfile?.description
+      || activePromptSettings.simple.assistantPurpose
+      || `${activeProviderLabel} / ${activeModelLabel}`;
+    const synced = Boolean(activeLocalProfile?.sync.cloudEnabled && activeLocalProfile.sync.lastSyncedAt);
+    const syncLabel = synced ? "Synced" : "Local";
+
+    return (
+      <AppTopBar
+        activeAssistantName={activeAssistantName}
+        activeAssistantSubtitle={activeAssistantSubtitle}
+        memoryItemCount={runtimeMemoryItemCount}
+        onNewChat={() => {
+          runAfterUnsavedCheck(() => {
+            clearCurrentChat();
+            if (appMode !== "runtime") {
+              setAppMode("runtime");
+              void updateLastAppMode("runtime");
+            }
+          });
+        }}
+        onOpenHistory={() => {
+          if (appMode === "history") {
+            return;
+          }
+          runAfterUnsavedCheck(() => {
+            setAppMode("history");
+            void updateLastAppMode("history");
+          });
+        }}
+        onOpenModelUpload={() => {
+          runAfterUnsavedCheck(() => {
+            setStudioSection("models");
+            setAppMode("studio");
+            void updateLastAppMode("studio");
+          });
+        }}
+        onOpenStudio={() => {
+          runAfterUnsavedCheck(() => {
+            if (studioSection === "models") {
+              setStudioSection("overview");
+            }
+            setAppMode("studio");
+            void updateLastAppMode("studio");
+          });
+        }}
+        onToggleSidebar={() => setSidebarOpen(true)}
+        runtimeActionsVisible={appMode === "runtime" || appMode === "history"}
+        sidebarOpen={sidebarOpen}
+        syncLabel={syncLabel}
+        synced={synced}
+      />
+    );
+  };
+
+  const renderStudioTopBar = () => {
+    const activeStudioSection = studioSections.find((section) => section.id === studioSection) ?? studioSections[0];
+    const localModelTotal = modelCatalog.length;
+    const activeDownloadCount = downloadProgress && !downloadProgress.done && !downloadProgress.error ? 1 : 0;
+    const ollamaChip: StudioTopBarChip = !status
+      ? { label: "Ollama checking", tone: "neutral" }
+      : status.running
+        ? { label: "Ollama connected", tone: "green", icon: "ph-circle-fill" }
+        : status.installed
+          ? { label: "Ollama stopped", tone: "orange" }
+          : { label: "Ollama missing", tone: "red" };
+
+    const studioChipsBySection: Partial<Record<StudioSection, StudioTopBarChip[]>> = {
+      myAssistants: [
+        { label: `${visibleAssistantProfileStore.profiles.length} total`, tone: "neutral" },
+        ...(assistantProfileSyncState === "syncing"
+          ? [{ label: "Syncing", tone: "blue" } satisfies StudioTopBarChip]
+          : assistantProfileSyncState === "error"
+            ? [{ label: "Sync error", tone: "red" } satisfies StudioTopBarChip]
+            : []),
+      ],
+      assistantStore: [
+        { label: "Preview", tone: "neutral" },
+        { label: "Not connected", tone: "orange" },
+      ],
+      overview: [
+        { label: isNewAssistantDraft ? "New assistant" : "Editing", tone: "blue" },
+        { label: activeProviderLabel, tone: "neutral" },
+      ],
+      models: [
+        { label: `${localModelTotal} total`, tone: "neutral" },
+        { label: `${installedModels.length} installed`, tone: "blue" },
+        ollamaChip,
+        ...(activeDownloadCount > 0
+          ? [{ label: `${activeDownloadCount} downloading`, tone: "orange", icon: "ph-spinner-gap" } satisfies StudioTopBarChip]
+          : []),
+      ],
+      prompts: [
+        { label: promptSurveyComplete ? "Prompt ready" : "Needs prompt", tone: promptSurveyComplete ? "green" : "orange" },
+      ],
+      character: [
+        { label: promptSettingsDraft.character.enabled ? "Character on" : "Character off", tone: promptSettingsDraft.character.enabled ? "green" : "neutral" },
+        { label: promptSettingsDraft.character.renderer, tone: "blue" },
+      ],
+      tts: [
+        { label: promptSettingsDraft.voice.enabled ? "Voice on" : "Voice off", tone: promptSettingsDraft.voice.enabled ? "green" : "neutral" },
+        { label: runtimeTtsAvailable ? "Runtime ready" : "Runtime offline", tone: runtimeTtsAvailable ? "green" : "orange" },
+      ],
+      googleWorkspace: [
+        {
+          label: googleWorkspaceStatus?.connected ? "Google connected" : "Google disconnected",
+          tone: googleWorkspaceStatus?.connected ? "green" : "orange",
+        },
+        { label: `${promptSettingsDraft.toolConnections.googleWorkspaceServices.length} services`, tone: "neutral" },
+      ],
+      code: [
+        { label: promptSettingsDraft.coding.capability, tone: "blue" },
+        { label: clawCodeStatus?.installed ? "Claw Code ready" : "Claw Code missing", tone: clawCodeStatus?.installed ? "green" : "orange" },
+      ],
+      skills: [
+        { label: `${importedSkillsDraft.length} imported`, tone: "neutral" },
+        { label: `${importedSkillsDraft.filter((skill) => skill.enabled).length} enabled`, tone: "blue" },
+      ],
+    };
+
+    return (
+      <StudioTopBar
+        chips={studioChipsBySection[studioSection] ?? []}
+        onToggleSidebar={() => setSidebarOpen(true)}
+        sectionLabel={activeStudioSection.label}
+        sidebarOpen={sidebarOpen}
+      />
+    );
+  };
   const renderHistory = () => (
     <HistoryHost
       conversations={historyConversations}
@@ -774,7 +882,10 @@ function App() {
       slashCommands={slashCommands}
       chatIntroKey={chatIntroKey}
       chatMetrics={chatMetrics}
-      characterSettings={(activeLocalProfile ? normalizePromptSettings(activeLocalProfile.prompt?.settings) : promptSettingsDraft).character}
+      characterSettings={activePromptSettings.character}
+      activeAssistantName={activeLocalProfile?.name ?? "Assistant"}
+      promptSettings={activePromptSettings}
+      runtimeMemorySummary={runtimeMemorySummary}
       chatScrollRef={chatScrollRef}
       providerText={providerText}
       selectedModelInstalled={selectedModelInstalled}
@@ -790,9 +901,13 @@ function App() {
       ttsError={ttsError}
       ttsPlaybackState={ttsPlaybackState}
       characterEmotion={characterEmotion}
+      characterExpressionTrigger={characterExpressionTrigger}
+      characterPoseTrigger={characterPoseTrigger}
       chooseAndAttachDocuments={chooseAndAttachDocuments}
       chooseAndAttachImages={chooseAndAttachImages}
       chooseClawCodeWorkspace={chooseClawCodeWorkspace}
+      applyClawCodeWorkspace={applyClawCodeWorkspace}
+      clawCodeStatus={clawCodeStatus}
       completeClawCodeWorkspaceFromChat={completeClawCodeWorkspaceFromChat}
       documentAttachments={documentAttachments}
       imageAttachments={imageAttachments}
@@ -858,6 +973,10 @@ function App() {
       cloudModelCatalog={cloudModelCatalog}
       deleteLocalAssistantProfile={deleteLocalAssistantProfile}
       downloadModel={downloadModel}
+      downloadProgress={downloadProgress}
+      onCancelModelDownload={(model) => void cancelModelDownload(model)}
+      onDeleteModel={(model) => void deleteModel(model)}
+      providerKeys={effectiveProviderKeys}
       clawCodeStatus={clawCodeStatus}
       enterAiModelSettings={() => enterSettings("aiModels")}
       enterClawCodeSettings={() => enterSettings("clawCode")}
@@ -1084,7 +1203,7 @@ function App() {
               : renderRuntimeNavigation()
       }
       sidebarOpen={sidebarOpen}
-      topBar={renderTopBar()}
+      topBar={appMode === "studio" ? renderStudioTopBar() : renderTopBar()}
     />
   );
 }

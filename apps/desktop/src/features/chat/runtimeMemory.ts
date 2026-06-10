@@ -64,6 +64,7 @@ function formatOptionalLine(label: string, value: unknown) {
 export function buildProfileMemory(profile: LocalAssistantProfile, userProfile?: UserProfile | null) {
   const settings = profile.prompt.settings;
   const personalization = profile.personalization;
+  const hasStudioFinalPrompt = Boolean(settings.generatedFinalSystemPrompt?.trim());
   const lines = [
     formatOptionalLine("User profile summary", userProfile?.profileSummary),
     formatOptionalLine("User age group", userProfile?.ageGroup),
@@ -79,10 +80,10 @@ export function buildProfileMemory(profile: LocalAssistantProfile, userProfile?:
     formatOptionalLine("Additional user background", userProfile?.additionalBackground),
     formatOptionalLine("Assistant profile name", profile.name),
     formatOptionalLine("Assistant profile description", profile.description),
-    formatOptionalLine("Initial user need", profile.useCase),
-    formatOptionalLine("Preferred answer style", profile.answerStyle),
-    formatOptionalLine("Language preference", profile.languageUse),
-    formatOptionalLine("Operation preference", profile.localMode),
+    hasStudioFinalPrompt ? null : formatOptionalLine("Initial user need", profile.useCase),
+    hasStudioFinalPrompt ? null : formatOptionalLine("Preferred answer style", profile.answerStyle),
+    hasStudioFinalPrompt ? null : formatOptionalLine("Language preference", profile.languageUse),
+    hasStudioFinalPrompt ? null : formatOptionalLine("Operation preference", profile.localMode),
     formatOptionalLine("Assistant purpose", settings.simple.assistantPurpose),
     formatOptionalLine("User-requested tasks", settings.simple.desiredTasks),
     formatOptionalLine("Preferred tone", settings.simple.preferredTone),

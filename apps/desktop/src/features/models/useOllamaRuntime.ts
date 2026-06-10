@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { HardwareInfo, ModelDownloadDockMode, ModelDownloadProgress, OllamaStatus, ProviderId, RuntimeRequirements } from "../../types";
 import {
   cancelOllamaModelPull,
+  deleteOllamaModel,
   getDefaultPythonInstallDir,
   getHardwareInfo,
   getOllamaStatus,
@@ -287,6 +288,19 @@ export function useOllamaRuntime({
     }
   }, [onLog, refreshStatus, setBusyAction]);
 
+  const deleteModel = useCallback(async (model: string) => {
+    setBusyAction(`delete:${model}`);
+    try {
+      await deleteOllamaModel(model);
+      onLog(`Deleted model: ${model}`);
+      await refreshStatus();
+    } catch (error) {
+      onLog(`Delete failed: ${String(error)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [onLog, refreshStatus, setBusyAction]);
+
   useEffect(() => {
     if (tauriRuntime) {
       void (async () => {
@@ -351,6 +365,7 @@ export function useOllamaRuntime({
     pauseModelDownload,
     resumeModelDownload,
     cancelModelDownload,
+    deleteModel,
     refreshStatus,
     refreshHardware,
     refreshRuntimeRequirements,

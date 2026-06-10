@@ -1,4 +1,4 @@
-import type { ChatUiAction, ImageAttachmentPayload, LocalAssistantProfile, ProviderId } from "../../types";
+import type { ChatGeneratedFile, ChatUiAction, ImageAttachmentPayload, LocalAssistantProfile, ProviderId } from "../../types";
 import type { ChatMessage } from "../../types";
 
 const LOCAL_HELPER_URL = "http://127.0.0.1:43110";
@@ -32,7 +32,35 @@ function parseStreamError(text: string) {
 export type StreamChatResult = {
   answer: string;
   uiAction: ChatUiAction | null;
+  files?: ChatGeneratedFile[];
 };
+
+function normalizeGeneratedFiles(value: unknown): ChatGeneratedFile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((file) => {
+    if (
+      !file ||
+      typeof file !== "object" ||
+      typeof (file as ChatGeneratedFile).id !== "string" ||
+      typeof (file as ChatGeneratedFile).name !== "string" ||
+      typeof (file as ChatGeneratedFile).content !== "string"
+    ) {
+      return [];
+    }
+
+    const source = file as ChatGeneratedFile;
+    return [{
+      id: source.id,
+      name: source.name,
+      mimeType: typeof source.mimeType === "string" && source.mimeType.trim() ? source.mimeType : "text/plain",
+      content: source.content,
+      language: typeof source.language === "string" ? source.language : undefined,
+    }];
+  });
+}
 
 export async function streamChatOnce(
   input: StreamChatInput,
@@ -67,6 +95,7 @@ export async function streamChatOnce(
   let buffer = "";
   let answer = "";
   let uiAction: ChatUiAction | null = null;
+  let files: ChatGeneratedFile[] = [];
 
   while (true) {
     const { value, done } = await reader.read();
@@ -88,6 +117,7 @@ export async function streamChatOnce(
         done?: boolean;
         answer?: string;
         uiAction?: ChatUiAction | null;
+        files?: unknown;
         message?: { content?: string };
       };
 
@@ -113,6 +143,7 @@ export async function streamChatOnce(
         if (event.uiAction === "claw-pick-workspace") {
           uiAction = event.uiAction;
         }
+        files = normalizeGeneratedFiles(event.files);
       }
     }
   }
@@ -127,6 +158,7 @@ export async function streamChatOnce(
       if (payload.uiAction === "claw-pick-workspace") {
         uiAction = payload.uiAction;
       }
+      files = normalizeGeneratedFiles((payload as { files?: unknown }).files);
     } catch {
       // Ignore non-JSON fallback payloads.
     }
@@ -135,5 +167,6 @@ export async function streamChatOnce(
   return {
     answer: answer.trim(),
     uiAction,
+    files,
   };
 }

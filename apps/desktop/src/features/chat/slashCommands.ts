@@ -7,7 +7,6 @@ export type BuiltinChatSlashCommandId =
   | "google-drive"
   | "gmail"
   | "google-sheets"
-  | "daiso"
   | "code"
   | "fix"
   | "image";
@@ -35,7 +34,7 @@ const GOOGLE_SLASH_COMMANDS: ChatSlashCommand[] = [
     id: "google-docs",
     aliases: ["docs", "google-docs", "gdocs"],
     label: "Google Docs",
-    description: "Read or append content in Google Docs with confirmation",
+    description: "Read, create, or append content in Google Docs with confirmation",
     icon: "description",
     workspaceService: "docs",
   },
@@ -75,13 +74,6 @@ export const CHAT_SLASH_COMMANDS: ChatSlashCommand[] = [
     icon: "code",
   },
   {
-    id: "daiso",
-    aliases: ["daiso-cli", "daiso_cli", "daiso"],
-    label: "Daiso CLI",
-    description: "Run approved local Daiso CLI workflows",
-    icon: "terminal",
-  },
-  {
     id: "fix",
     aliases: ["fix", "prompt-fix", "rule"],
     label: "Fix prompt",
@@ -97,6 +89,8 @@ export const CHAT_SLASH_COMMANDS: ChatSlashCommand[] = [
   },
 ];
 
+const ALWAYS_AVAILABLE_SLASH_COMMAND_IDS = new Set(["code", "fix", "image"]);
+
 function importedSkillToSlashCommand(skill: ImportedSkill): ChatSlashCommand {
   return {
     id: skill.slug,
@@ -109,11 +103,20 @@ function importedSkillToSlashCommand(skill: ImportedSkill): ChatSlashCommand {
 }
 
 export function buildSlashCommandsForProfile(profile: LocalAssistantProfile) {
+  const settings = profile.prompt.settings;
+  const selectedWorkspaceServices = new Set(settings.toolConnections.googleWorkspaceServices);
+  const builtin = CHAT_SLASH_COMMANDS.filter((command) => {
+    if (command.workspaceService) {
+      return settings.toolConnections.googleWorkspace && selectedWorkspaceServices.has(command.workspaceService);
+    }
+
+    return ALWAYS_AVAILABLE_SLASH_COMMAND_IDS.has(command.id);
+  });
   const imported = (profile.capabilities.skills?.imported ?? [])
     .filter((skill) => skill.enabled)
     .map(importedSkillToSlashCommand);
 
-  return [...CHAT_SLASH_COMMANDS, ...imported];
+  return [...builtin, ...imported];
 }
 
 export function getImportedSkillContent(profile: LocalAssistantProfile, command: ChatSlashCommand) {
@@ -210,10 +213,6 @@ const slashHelpExamples: Record<BuiltinChatSlashCommandId, { en: string; ko: str
   fix: {
     en: "always answer travel plans with a day-by-day checklist",
     ko: "응답 규칙을 영구 반영해줘",
-  },
-  daiso: {
-    en: "list available workflows",
-    ko: "사용 가능한 워크플로 보여줘",
   },
   image: {
     en: "a cozy desk with a laptop and coffee",
@@ -312,28 +311,6 @@ export function parseSlashUserMessage(content: string, commands: ChatSlashComman
   };
 }
 
-function enableGoogleWorkspaceService(
-  profile: LocalAssistantProfile,
-  service: WorkspaceServiceId,
-): LocalAssistantProfile {
-  const settings = profile.prompt.settings;
-
-  return {
-    ...profile,
-    prompt: {
-      ...profile.prompt,
-      settings: {
-        ...settings,
-        toolConnections: {
-          ...settings.toolConnections,
-          googleWorkspace: true,
-          googleWorkspaceServices: [service],
-        },
-      },
-    },
-  };
-}
-
 function enableImageGeneration(profile: LocalAssistantProfile): LocalAssistantProfile {
   const skills = profile.capabilities.skills ?? { enabled: false, skillIds: [], imported: [] };
   const skillIds = skills.skillIds ?? [];
@@ -391,7 +368,7 @@ export function applySlashCommandProfile(
   }
 
   if (command?.workspaceService) {
-    return enableGoogleWorkspaceService(profile, command.workspaceService);
+    return profile;
   }
 
   if (commandId === "code") {
@@ -406,19 +383,5 @@ export function applySlashCommandProfile(
     return profile;
   }
 
-  const settings = profile.prompt.settings;
-
-  return {
-    ...profile,
-    prompt: {
-      ...profile.prompt,
-      settings: {
-        ...settings,
-        toolConnections: {
-          ...settings.toolConnections,
-          daisoCli: true,
-        },
-      },
-    },
-  };
+  return profile;
 }

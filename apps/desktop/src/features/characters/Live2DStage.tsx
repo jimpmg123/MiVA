@@ -13,6 +13,8 @@ type Live2DStageProps = {
   character: PromptSettings["character"];
   activity: "Idle" | "Thinking" | "Speaking";
   emotion?: CharacterEmotion;
+  expressionTrigger?: number;
+  poseTrigger?: number;
   fallback?: ReactNode;
   bottomReservePx?: number;
   topReservePx?: number;
@@ -36,6 +38,8 @@ type Live2DExpressionSettings = { expressions?: Array<{ Name?: string }> };
 
 /** How long an emotion expression is held before idle cycling resumes. */
 const EMOTION_HOLD_MS = 6000;
+/** How long a direct "change pose" command holds a pose transform. */
+const POSE_HOLD_MS = 6000;
 /** Random idle expression cadence bounds. */
 const CASUAL_MIN_MS = 6000;
 const CASUAL_MAX_MS = 14000;
@@ -100,6 +104,8 @@ function loadScriptOnce(src: string) {
 export function Live2DStage({
   activity,
   emotion = "neutral",
+  expressionTrigger = 0,
+  poseTrigger = 0,
   blockPointerEvents = false,
   character,
   fallback,
@@ -111,7 +117,12 @@ export function Live2DStage({
   const basePoseRef = useRef({ x: 0, y: 0, scale: 1 });
   const activityRef = useRef(activity);
   const emotionRef = useRef(emotion);
+  const expressionTriggerRef = useRef(expressionTrigger);
+  const poseTriggerRef = useRef(poseTrigger);
+  const poseVariantRef = useRef(0);
+  const poseHoldUntilRef = useRef(0);
   const applyEmotionRef = useRef<((emotion: CharacterEmotion) => void) | null>(null);
+  const applyExpressionTriggerRef = useRef<(() => void) | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<Live2DRuntimeStatus | null>(null);
   const [stageState, setStageState] = useState<StageState>("loading");
   const [stageMessage, setStageMessage] = useState("Preparing Live2D runtime...");
@@ -126,6 +137,23 @@ export function Live2DStage({
       applyEmotionRef.current?.(emotion);
     }
   }, [emotion]);
+
+  useEffect(() => {
+    if (expressionTrigger === expressionTriggerRef.current) {
+      return;
+    }
+    expressionTriggerRef.current = expressionTrigger;
+    applyExpressionTriggerRef.current?.();
+  }, [expressionTrigger]);
+
+  useEffect(() => {
+    if (poseTrigger === poseTriggerRef.current) {
+      return;
+    }
+    poseTriggerRef.current = poseTrigger;
+    poseVariantRef.current = (poseVariantRef.current % 3) + 1;
+    poseHoldUntilRef.current = performance.now() + POSE_HOLD_MS;
+  }, [poseTrigger]);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,6 +250,11 @@ export function Live2DStage({
         );
         const hasExpressions = Boolean(expressionMap) && availableExpressions.size > 0;
         const casualPool = (expressionMap?.casual ?? []).filter((name) => availableExpressions.has(name));
+        const expressionPool = Array.from(new Set([
+          ...casualPool,
+          ...Object.values(expressionMap?.emotions ?? {}).filter((name): name is string => Boolean(name)),
+        ])).filter((name) => availableExpressions.has(name));
+        let lastDirectExpressionName: string | null = null;
 
         const applyExpression = (name: string | undefined) => {
           if (name && availableExpressions.has(name)) {
@@ -229,8 +262,30 @@ export function Live2DStage({
           }
         };
 
+        const pickDirectExpression = () => {
+          if (!expressionPool.length) {
+            return null;
+          }
+          const candidates = expressionPool.filter((name) => name !== lastDirectExpressionName);
+          return candidates[Math.floor(Math.random() * candidates.length)] ?? expressionPool[0] ?? null;
+        };
+
         let emotionHoldUntil = 0;
         let nextCasualAt = performance.now() + nextCasualDelay();
+
+        applyExpressionTriggerRef.current = () => {
+          if (!hasExpressions) {
+            return;
+          }
+          const name = pickDirectExpression();
+          if (!name) {
+            return;
+          }
+          applyExpression(name);
+          lastDirectExpressionName = name;
+          emotionHoldUntil = performance.now() + EMOTION_HOLD_MS;
+          nextCasualAt = performance.now() + nextCasualDelay();
+        };
 
         applyEmotionRef.current = (nextEmotion) => {
           if (!hasExpressions || !expressionMap) {
@@ -246,6 +301,13 @@ export function Live2DStage({
         // Apply an emotion that arrived before the model finished loading.
         if (emotionRef.current && emotionRef.current !== "neutral") {
           applyEmotionRef.current(emotionRef.current);
+        }
+        if (expressionTriggerRef.current > 0) {
+          applyExpressionTriggerRef.current();
+        }
+        if (poseTriggerRef.current > 0) {
+          poseVariantRef.current = ((poseTriggerRef.current - 1) % 3) + 1;
+          poseHoldUntilRef.current = performance.now() + POSE_HOLD_MS;
         }
 
         const fitModel = () => {
@@ -288,15 +350,20 @@ export function Live2DStage({
             const pose = basePoseRef.current;
             const speaking = currentActivity === "Speaking";
             const thinking = currentActivity === "Thinking";
+            const poseVariant = now < poseHoldUntilRef.current ? poseVariantRef.current : 0;
             const lift = speaking ? Math.sin(elapsed * 8.5) * 4 : thinking ? Math.sin(elapsed * 3.2) * 2 : Math.sin(elapsed * 1.3) * 1.4;
             const sway = speaking ? Math.sin(elapsed * 4.8) * 4 : thinking ? Math.sin(elapsed * 2.1) * 2.2 : Math.sin(elapsed * 0.9) * 1.2;
             const tilt = speaking ? Math.sin(elapsed * 5.8) * 0.018 : thinking ? Math.sin(elapsed * 1.8) * 0.012 : Math.sin(elapsed * 0.8) * 0.006;
             const pulse = speaking ? 1 + Math.sin(elapsed * 7.2) * 0.006 : thinking ? 1 + Math.sin(elapsed * 2.4) * 0.003 : 1;
+            const poseX = poseVariant === 1 ? -18 : poseVariant === 2 ? 18 : 0;
+            const poseY = poseVariant === 3 ? -12 : 0;
+            const poseTilt = poseVariant === 1 ? -0.045 : poseVariant === 2 ? 0.045 : poseVariant === 3 ? Math.sin(elapsed * 4.2) * 0.025 : 0;
+            const poseScale = poseVariant === 3 ? 1.018 : 1;
 
-            liveModel.scale.set(pose.scale * pulse);
-            liveModel.x = pose.x + sway;
-            liveModel.y = pose.y - lift;
-            liveModel.rotation = tilt;
+            liveModel.scale.set(pose.scale * pulse * poseScale);
+            liveModel.x = pose.x + sway + poseX;
+            liveModel.y = pose.y - lift + poseY;
+            liveModel.rotation = tilt + poseTilt;
 
             // Cycle a random everyday expression while idle and not holding an emotion.
             if (
@@ -319,6 +386,7 @@ export function Live2DStage({
           cancelAnimationFrame(animationFrame);
           resizeObserver.disconnect();
           applyEmotionRef.current = null;
+          applyExpressionTriggerRef.current = null;
           modelRef.current = null;
           model.destroy();
           app.destroy(true, true);

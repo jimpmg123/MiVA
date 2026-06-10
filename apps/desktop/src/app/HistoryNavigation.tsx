@@ -5,33 +5,39 @@ import { UserNavButton } from "./UserNavButton";
 
 type HistoryNavigationProps = {
   authSession: AuthSession | null;
-  t: Record<string, string>;
   onEnterPersonalization: () => void;
   onEnterSettings: () => void;
   onOpenAuth: () => void;
   onOpenBilling: () => void;
+  onOpenRuntime: () => void;
   onOpenWebConsole: () => void;
   onSignOut: () => void;
   onToggleSidebar: () => void;
 };
 
-export function HistoryNavigation({ authSession, t, onEnterPersonalization, onEnterSettings, onOpenAuth, onOpenBilling, onOpenWebConsole, onSignOut, onToggleSidebar }: HistoryNavigationProps) {
+export function HistoryNavigation({ authSession, onEnterPersonalization, onEnterSettings, onOpenAuth, onOpenBilling, onOpenRuntime, onOpenWebConsole, onSignOut, onToggleSidebar }: HistoryNavigationProps) {
   return (
     <aside className="miva-sidebar flex h-screen shrink-0 flex-col">
-      <div className="miva-sidebar-header">
-        <BrandLogo className="h-7 w-7 rounded-lg" />
-        <div className="min-w-0 flex-1">
-          <h1 className="miva-sidebar-brand-title font-heading truncate">MiVA</h1>
-          <p className="miva-nav-section-label truncate normal-case tracking-[0.08em]">{t.historyConversationHistory}</p>
-        </div>
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
+        <button
+          className="flex min-w-0 items-center gap-2 rounded-md text-left transition hover:text-blue-600"
+          onClick={onOpenRuntime}
+          title="Back to Runtime"
+          type="button"
+        >
+          <BrandLogo className="h-7 w-7 rounded-lg" />
+          <span className="min-w-0 truncate text-lg font-bold tracking-tight">
+            MiVA <span className="font-normal text-slate-400">Runtime</span>
+          </span>
+        </button>
         <button
           aria-label="Close navigation"
-          className="miva-sidebar-toggle"
+          className="grid h-7 w-7 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           onClick={onToggleSidebar}
           title="Close navigation"
           type="button"
         >
-          <SidebarToggleIcon className="h-[16px] w-[16px]" />
+          <SidebarToggleIcon className="h-3.5 w-3.5" />
         </button>
       </div>
 

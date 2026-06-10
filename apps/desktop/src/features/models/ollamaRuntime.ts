@@ -25,6 +25,10 @@ export function cancelOllamaModelPull(model: string) {
   return invokeCommand<string>("cancel_model_pull", { model });
 }
 
+export function deleteOllamaModel(model: string) {
+  return invokeCommand<{ ok: boolean; model: string; alreadyRemoved?: boolean }>("delete_model", { model });
+}
+
 export function getHardwareInfo() {
   return invokeCommand<HardwareInfo>("get_hardware_info");
 }
